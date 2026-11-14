@@ -16,6 +16,8 @@ static TOKEN: Mutex<String> = Mutex::new(String::new());
 
 /// Lists refresh this often while an Online page shows (presence).
 const LISTS_S: f32 = 20.;
+/// Lap Attack's setup reads the friend list (its ghost tags) this often.
+const GHOST_LISTS_S: f32 = 60.;
 /// The stored secret is compared with the registered one this often (a
 /// Pass Key on another device may hand this one its rider).
 const SECRET_S: f32 = 10.;
@@ -41,6 +43,10 @@ pub enum Purpose {
     Act,
     Settings,
     NewCode,
+    /// The room's verified riders, for quick chat (research/QUICK_CHAT.md).
+    Room,
+    /// A quick-chat block or unblock mirrored to the identity list.
+    Sync,
 }
 
 #[derive(Default)]
@@ -201,6 +207,18 @@ impl App {
         }
     }
 
+    /// Quick chat's Block on a verified rider is the identity block too
+    /// (research/QUICK_CHAT.md "Block"), so it holds on every device on the
+    /// Pass Key and in the Friends lists.
+    pub(crate) fn online_block(&mut self, id: &str, on: bool) {
+        let action = if on { "block" } else { "unblock" };
+        self.online_send(
+            Purpose::Sync,
+            &format!("/multiplayer/friends/{action}"),
+            json!({"id": id}),
+        );
+    }
+
     /// Each event-loop pass: register a rider who uses online, follow a
     /// secret a Pass Key brought, and keep an open Online page's presence
     /// fresh.
@@ -233,16 +251,34 @@ impl App {
             self.online_register();
             return;
         }
-        let page = {
+        if self.online.token.is_some()
+            && let Some(room) = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.net.as_mut())
+                .and_then(|n| n.room_riders_due(now))
+        {
+            self.online_send(
+                Purpose::Room,
+                "/multiplayer/room/riders",
+                json!({"room": room}),
+            );
+        }
+        let (page, ghosts) = {
             let mut f = front.borrow_mut();
             f.state.online.now_ms = now_ms();
-            f.state.page.clone()
+            (f.state.page.clone(), f.state.wants_friend_lists())
         };
         if atv_ui::front::controller::online_page::PAGES.contains(&page.as_str())
             && self.online.token.is_some()
             && due(self.online.lists_at, LISTS_S)
         {
             self.online_refresh(&page);
+        } else if ghosts && self.online.token.is_some() && due(self.online.lists_at, GHOST_LISTS_S)
+        {
+            // Lap Attack's Friend ghost needs the friends' ghost tags.
+            self.online.lists_at = Some(now);
+            self.online_send(Purpose::Lists, "/multiplayer/friends", json!({}));
         }
     }
 
@@ -322,10 +358,56 @@ impl App {
             }
             Purpose::Lists => {
                 if let Ok(lists) = serde_json::from_value::<Lists>(value) {
+                    let blocked: Vec<(String, String)> = lists
+                        .blocked
+                        .iter()
+                        .map(|r| (r.id.clone(), r.name.clone()))
+                        .collect();
                     state.online.lists = Some(lists);
+                    // The identity block list wins for verified riders.
+                    let mut settings = Settings::load();
+                    if crate::quick_chat::sync_blocked(&mut settings, &blocked)
+                        && let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut())
+                    {
+                        net.chat.blocked = crate::quick_chat::load_blocked(&settings);
+                    }
                 }
                 state.online_changed(&view);
             }
+            Purpose::Room => {
+                let riders: Vec<(u8, String, bool)> = value["riders"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| {
+                        Some((
+                            u8::try_from(r["slot"].as_u64()?).ok()?,
+                            r["id"].as_str()?.to_string(),
+                            r["blocked"].as_bool().unwrap_or(false),
+                        ))
+                    })
+                    .collect();
+                if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                    let mut settings = Settings::load();
+                    let names: Vec<(u8, String)> = riders
+                        .iter()
+                        .filter_map(|(slot, ..)| Some((*slot, net.rider_name(*slot)?)))
+                        .collect();
+                    let name = |slot: u8| {
+                        names
+                            .iter()
+                            .find(|(s, _)| *s == slot)
+                            .map(|(_, n)| n.clone())
+                    };
+                    let push = net.chat.set_riders(&mut settings, &riders, name);
+                    drop(f);
+                    for id in push {
+                        self.online_block(&id, true);
+                    }
+                    return;
+                }
+            }
+            Purpose::Sync => {}
             Purpose::Board => {
                 if let Ok(board) = serde_json::from_value::<Board>(value) {
                     state.online.board = Some(board);

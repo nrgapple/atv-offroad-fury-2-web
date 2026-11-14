@@ -83,6 +83,9 @@ pub struct Rider {
     /// Recent riders: seconds since met, and friend / sent / asked / add.
     pub ago: u64,
     pub state: String,
+    /// Friends: the tag their friend ghosts are stored under
+    /// (research/GHOST_CHALLENGES.md "Friend ghosts").
+    pub ghost: String,
 }
 
 /// `/multiplayer/friends`.

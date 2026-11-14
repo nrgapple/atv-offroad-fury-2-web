@@ -463,6 +463,7 @@ async fn socket(
             let _guard = guard;
             let _presence = pid.map(|pid| {
                 shared.players.connected(conn, &pid, code, now_ms());
+                shared.players.seat(conn, peer_id);
                 Present(shared.clone(), conn)
             });
             tracing::debug!(event = "socket_opened", peer = peer_id);

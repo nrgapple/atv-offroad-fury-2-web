@@ -4339,6 +4339,8 @@ impl App {
                     return;
                 };
                 let mut settings = atv_ui::settings::Settings::load();
+                // A verified rider's block is also the identity block.
+                let mut identity = None;
                 let notice = match event {
                     Event::Mute(_) => Some(if net.chat.toggle_mute(peer) {
                         "Muted."
@@ -4346,11 +4348,10 @@ impl App {
                         "Unmuted."
                     }),
                     Event::Block(_) => net.rider_name(peer).map(|name| {
-                        if net.chat.toggle_block(&mut settings, &name, None) {
-                            "Blocked."
-                        } else {
-                            "Unblocked."
-                        }
+                        let id = net.chat.id(peer).map(str::to_string);
+                        let on = net.chat.toggle_block(&mut settings, &name, id.as_deref());
+                        identity = id.map(|id| (id, on));
+                        if on { "Blocked." } else { "Unblocked." }
                     }),
                     Event::MuteAll => {
                         let on = !net.chat.mute_all;
@@ -4377,6 +4378,9 @@ impl App {
                     && let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut())
                 {
                     menu.notice = Some(notice.into());
+                }
+                if let Some((id, on)) = identity {
+                    self.online_block(&id, on);
                 }
             }
             // Play Race (room host): every room rider races this course

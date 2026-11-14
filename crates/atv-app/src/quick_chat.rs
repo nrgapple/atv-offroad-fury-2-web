@@ -154,8 +154,10 @@ impl Wheel {
     }
 }
 
-/// A blocked rider: by its verified player id when the server gives one,
-/// else by its shown name.
+/// A blocked rider: by its verified id when the server gives one (the
+/// identity slice's per-viewer reference, the same `id` the Friends lists
+/// and `/multiplayer/friends/block` use; research/ONLINE_IDENTITY.md), else
+/// by its shown name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blocked {
     pub name: String,
@@ -197,6 +199,46 @@ pub fn holds(blocked: &[Blocked], name: &str, pid: Option<&str>) -> bool {
     })
 }
 
+fn save_blocked(settings: &mut atv_ui::settings::Settings, blocked: &[Blocked]) {
+    let list: Vec<serde_json::Value> = blocked
+        .iter()
+        .map(|b| match &b.pid {
+            Some(pid) => serde_json::json!({"name": b.name, "pid": pid}),
+            None => serde_json::json!({"name": b.name}),
+        })
+        .collect();
+    settings.set(BLOCKED_KEY, &serde_json::Value::from(list).to_string());
+}
+
+/// Keeps the saved list in step with the identity block list (the Friends
+/// lists' `blocked`, as `(id, name)`): for riders with an id the server's
+/// list wins, so a block or unblock on the Friends page (or another device
+/// on the Pass Key) reaches quick chat; name-only blocks of unverified
+/// riders stay on this device. True when the saved list changed.
+pub fn sync_blocked(
+    settings: &mut atv_ui::settings::Settings,
+    server: &[(String, String)],
+) -> bool {
+    let before = load_blocked(settings);
+    let mut list: Vec<Blocked> = before.iter().filter(|b| b.pid.is_none()).cloned().collect();
+    for (id, name) in server {
+        // A name-only block of the same rider becomes the id's.
+        list.retain(|b| fold(&b.name) != fold(name));
+        list.push(Blocked {
+            name: name.trim().to_string(),
+            pid: Some(id.clone()),
+        });
+    }
+    if list.len() > MAX_BLOCKED {
+        list.drain(..list.len() - MAX_BLOCKED);
+    }
+    if list == before {
+        return false;
+    }
+    save_blocked(settings, &list);
+    true
+}
+
 /// Whether the player blocked this rider: their chat and emotes stay hidden
 /// and Free Ride hub challenges from them are declined (research/
 /// QUICK_CHAT.md "Block"). Reads the saved settings.
@@ -220,8 +262,12 @@ pub struct QuickChat {
     /// Latest event per rider (slot, kind, id, when), and the feed.
     latest: BTreeMap<u8, (u8, u8, f64)>,
     feed: VecDeque<FeedEvent>,
-    /// Riders muted this session, by slot.
+    /// Riders muted this session, by slot, and by verified id so a rider
+    /// who rejoins in another slot stays muted.
     pub muted: BTreeSet<u8>,
+    pub muted_ids: BTreeSet<String>,
+    /// The room's verified riders: slot to id (`/multiplayer/room/riders`).
+    pub ids: BTreeMap<u8, String>,
     pub blocked: Vec<Blocked>,
     pub mute_all: bool,
     /// Counts for tests: shown and hidden events, horns heard.
@@ -244,10 +290,71 @@ impl QuickChat {
         holds(&self.blocked, name, pid)
     }
 
+    /// A slot's verified id, when the server gave one.
+    pub fn id(&self, slot: u8) -> Option<&str> {
+        self.ids.get(&slot).map(String::as_str)
+    }
+
+    /// Whether the rider in `slot` is blocked (by id when verified).
+    pub fn blocked_slot(&self, slot: u8, name: &str) -> bool {
+        self.blocked(name, self.id(slot))
+    }
+
+    /// Whether the rider in `slot` is muted.
+    pub fn muted_slot(&self, slot: u8) -> bool {
+        self.muted.contains(&slot) || self.id(slot).is_some_and(|id| self.muted_ids.contains(id))
+    }
+
     fn hides(&self, slot: u8, name: &str, kind: u8) -> bool {
-        self.muted.contains(&slot)
-            || self.blocked(name, None)
+        self.muted_slot(slot)
+            || self.blocked_slot(slot, name)
             || (self.mute_all && kind != chat::HORN)
+    }
+
+    /// The room's verified riders as `(slot, id, blocked on the server)`
+    /// (research/QUICK_CHAT.md "Block"). A rider the server says this
+    /// player blocked is blocked here too; a name-only block that names a
+    /// verified rider takes on its id, so a rename keeps it. Returns the
+    /// ids to block on the server as well (the identity block list).
+    pub fn set_riders(
+        &mut self,
+        settings: &mut atv_ui::settings::Settings,
+        riders: &[(u8, String, bool)],
+        name: impl Fn(u8) -> Option<String>,
+    ) -> Vec<String> {
+        self.ids = riders.iter().map(|(s, id, _)| (*s, id.clone())).collect();
+        let mut push = Vec::new();
+        let mut changed = false;
+        for (slot, id, server) in riders {
+            let Some(name) = name(*slot) else {
+                continue;
+            };
+            let folded = fold(&name);
+            if let Some(entry) = self
+                .blocked
+                .iter_mut()
+                .find(|b| b.pid.is_none() && fold(&b.name) == folded)
+            {
+                entry.pid = Some(id.clone());
+                changed = true;
+                if !server {
+                    push.push(id.clone());
+                }
+            } else if *server && !holds(&self.blocked, &name, Some(id)) {
+                if self.blocked.len() >= MAX_BLOCKED {
+                    self.blocked.remove(0);
+                }
+                self.blocked.push(Blocked {
+                    name: name.trim().to_string(),
+                    pid: Some(id.clone()),
+                });
+                changed = true;
+            }
+        }
+        if changed {
+            save_blocked(settings, &self.blocked);
+        }
+        push
     }
 
     /// One event from the server; `me` is the player's slot. True when it
@@ -279,10 +386,16 @@ impl QuickChat {
 
     /// Mutes or unmutes a rider for this room; true when now muted.
     pub fn toggle_mute(&mut self, slot: u8) -> bool {
-        if !self.muted.remove(&slot) {
+        let id = self.id(slot).map(str::to_string);
+        if !self.muted_slot(slot) {
             self.muted.insert(slot);
+            self.muted_ids.extend(id);
             self.latest.remove(&slot);
             return true;
+        }
+        self.muted.remove(&slot);
+        if let Some(id) = id {
+            self.muted_ids.remove(&id);
         }
         false
     }
@@ -310,15 +423,7 @@ impl QuickChat {
                 pid: pid.map(str::to_string),
             });
         }
-        let list: Vec<serde_json::Value> = self
-            .blocked
-            .iter()
-            .map(|b| match &b.pid {
-                Some(pid) => serde_json::json!({"name": b.name, "pid": pid}),
-                None => serde_json::json!({"name": b.name}),
-            })
-            .collect();
-        settings.set(BLOCKED_KEY, &serde_json::Value::from(list).to_string());
+        save_blocked(settings, &self.blocked);
         !was
     }
 
@@ -426,6 +531,70 @@ mod tests {
         assert!(loaded.blocked("bo", None) && loaded.blocked("x", Some("p9")));
         assert!(!c.toggle_block(&mut settings, "BO", None));
         assert!(!QuickChat::load(&settings).blocked("Bo", None));
+    }
+
+    #[test]
+    fn verified_ids_key_mute_and_block_and_follow_the_identity_list() {
+        let mut settings = atv_ui::settings::Settings::memory();
+        let mut c = QuickChat::default();
+        // Blocked by name before the room gave ids.
+        assert!(c.toggle_block(&mut settings, "Bo", None));
+        let names = |slot: u8| match slot {
+            1 => Some("Bo".to_string()),
+            2 => Some("Cy".to_string()),
+            3 => Some("Di".to_string()),
+            _ => None,
+        };
+        let riders = [
+            (1, "r1".to_string(), false),
+            (2, "r2".to_string(), true),
+            (3, "r3".to_string(), false),
+        ];
+        // Bo's name block takes on Bo's id and goes to the server; Cy,
+        // blocked on the Friends page, is blocked here too.
+        assert_eq!(c.set_riders(&mut settings, &riders, names), ["r1"]);
+        assert!(c.blocked_slot(2, "Cy"));
+        let saved = load_blocked(&settings);
+        assert!(saved.contains(&Blocked {
+            name: "Bo".into(),
+            pid: Some("r1".into())
+        }));
+        // Renamed, Bo stays blocked; another rider named Bo is not.
+        c.receive(event(1, chat::LINE, 0), "Bo Renamed", Some(0), 0.);
+        assert_eq!(c.hidden, 1);
+        assert!(!c.blocked("Bo", Some("r9")));
+        // Mute follows the id into another slot.
+        assert!(c.toggle_mute(3));
+        c.ids.insert(5, "r3".into());
+        c.ids.remove(&3);
+        assert!(c.muted_slot(5));
+        assert!(!c.toggle_mute(5));
+        assert!(!c.muted_slot(5) && c.muted_ids.is_empty());
+        // The Friends lists' blocked riders win for ids: Bo was unblocked
+        // there; a name-only block stays; Di is newly blocked.
+        c.toggle_block(&mut settings, "Eve", None);
+        let server = [("r3".to_string(), "Di".to_string())];
+        assert!(sync_blocked(&mut settings, &server));
+        let saved = load_blocked(&settings);
+        assert_eq!(
+            saved,
+            [
+                Blocked {
+                    name: "Eve".into(),
+                    pid: None
+                },
+                Blocked {
+                    name: "Di".into(),
+                    pid: Some("r3".into())
+                },
+            ]
+        );
+        assert!(!sync_blocked(&mut settings, &server), "unchanged");
+        assert!(is_blocked_in(&saved, "Di Renamed", Some("r3")));
+    }
+
+    fn is_blocked_in(list: &[Blocked], name: &str, pid: Option<&str>) -> bool {
+        holds(list, name, pid)
     }
 
     #[test]

@@ -31,6 +31,16 @@ pub fn pid(secret: &str) -> String {
     hex(&hash.as_ref()[..16])
 }
 
+/// The tag a rider's friend ghosts are stored under on the world boards
+/// (research/GHOST_CHALLENGES.md "Friend ghosts"): 32 hex digits of
+/// SHA-256(`fury-ghost-tag:` + player id). Friends get it in their lists;
+/// the Worker derives it from the uploader's player id, so only the rider
+/// can store a ghost under it, and it does not reveal the id.
+pub fn ghost_tag(pid: &str) -> String {
+    let hash = digest::digest(&digest::SHA256, format!("fury-ghost-tag:{pid}").as_bytes());
+    hex(&hash.as_ref()[..16])
+}
+
 pub fn valid_pid(pid: &str) -> bool {
     pid.len() == 32
         && pid
@@ -198,6 +208,15 @@ mod tests {
         assert_eq!(parse_code("KQ7M-3XPA"), None);
         assert_eq!(parse_code("KQ7M3XP"), None);
         assert_eq!(format_code("KQ7M3XPZ"), "KQ7M-3XPZ");
+    }
+
+    #[test]
+    fn the_player_id_is_pinned_for_clients() {
+        // atv_ui::cloud::rider_pid derives the same id for friend ghosts.
+        assert_eq!(
+            pid("0123456789abcdef0123456789abcdef"),
+            "cb309075d22ee3c4596bd8b6e34cbdb5"
+        );
     }
 
     #[test]

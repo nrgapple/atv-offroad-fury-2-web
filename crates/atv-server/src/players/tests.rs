@@ -507,3 +507,54 @@ fn match_files_are_tailed_once_whole_lines_only() {
     assert_eq!(p.tail(&dir.join("missing.jsonl")), 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn room_riders_carry_references_that_block_and_survive_a_rename() {
+    let p = players();
+    let (a, _) = join(&p, 1, "Ann");
+    let (b, _) = join(&p, 2, "Bo");
+    let (c, _) = join(&p, 3, "Cy");
+    // Only a rider seated in the room may ask.
+    assert_eq!(p.room_riders(&a, ROOM, NOW), Err((404, "Not in that room")));
+    p.connected(1, &a, ROOM, NOW);
+    p.seat(1, 0);
+    p.connected(2, &b, ROOM, NOW);
+    p.seat(2, 3);
+    // Unseated and other rooms' sockets are left out.
+    p.connected(3, &c, *b"ZZZZ2345", NOW);
+    p.seat(3, 1);
+    let riders = p.room_riders(&a, ROOM, NOW).unwrap()["riders"].clone();
+    assert_eq!(riders.as_array().unwrap().len(), 1, "{riders}");
+    assert_eq!(riders[0]["slot"], 3);
+    assert_eq!(riders[0]["blocked"], false);
+    let id = riders[0]["id"].as_str().unwrap().to_string();
+    // The reference is the one the identity lists use, so blocking with it
+    // is the identity block, and it holds across a rename.
+    assert_eq!(id, reference(&p, &a, "recent", "Bo"));
+    assert_eq!(p.act(&a, "block", &id), Ok("blocked"));
+    join(&p, 2, "Bo Renamed");
+    let riders = p.room_riders(&a, ROOM, NOW).unwrap()["riders"].clone();
+    assert_eq!(riders[0]["id"], id.as_str());
+    assert_eq!(riders[0]["blocked"], true);
+    assert_eq!(reference(&p, &a, "blocked", "Bo Renamed"), id);
+}
+
+#[test]
+fn friends_carry_their_ghost_tag() {
+    let p = players();
+    let (a, code_a) = join(&p, 1, "Ann");
+    let (b, code_b) = join(&p, 2, "Bo");
+    p.add(&a, Some(&code_b), None).unwrap();
+    p.add(&b, Some(&code_a), None).unwrap();
+    let lists = p.friends(&a, NOW).unwrap();
+    let tag = lists["friends"][0]["ghost"].as_str().unwrap();
+    assert_eq!(tag, codes::ghost_tag(&b));
+    assert_eq!(tag.len(), 32);
+    assert_ne!(tag, b);
+    // The Worker's derivation (cloudflare/ghosts.test.mjs pins the same
+    // pair).
+    assert_eq!(
+        codes::ghost_tag("0123456789abcdef0123456789abcdef"),
+        "29f2df97c620405170dde2ef53393d77"
+    );
+}

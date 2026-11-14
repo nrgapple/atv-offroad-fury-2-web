@@ -8,7 +8,7 @@
 // version, a length that fits the lap time, the row's course and vehicle and
 // motion a vehicle could ride. Like a board row it is not proof.
 import { browserOriginAllowed } from './security.mjs';
-import { MAX_STEP_FEET, MIN_LAP_FEET, cleanName, parseBoard } from './boards.mjs';
+import { BOARD_MAX_AGE, MAX_STEP_FEET, MIN_LAP_FEET, VEHICLES, cleanName, isInt, lapFloorMs, parseBoard } from './boards.mjs';
 
 // Rows of a lap board that keep a ghost.
 export const GHOST_TOP = 10;
@@ -234,6 +234,82 @@ async function download(request, db, board, name, value) {
   return response;
 }
 
+// Friend ghosts (research/GHOST_CHALLENGES.md "Friend ghosts"): each online
+// rider's personal best lap on a board, under the rider's ghost tag. The
+// upload carries the rider's player id (the game server's, which only the
+// rider and the server know); the tag is derived from it here and the id is
+// never stored, so only the rider can store a ghost under their tag and a
+// friend who knows the tag cannot. Friends read tags from the game server's
+// friend list. At most FRIEND_GHOST_LIMIT a board, the most recent uploads.
+export const FRIEND_GHOST_LIMIT = 32;
+export const MAX_FRIEND_TAGS = 100;
+const HEX32 = /^[0-9a-f]{32}$/;
+
+export async function ghostTag(pid) {
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`fury-ghost-tag:${pid}`)));
+  return [...hash.subarray(0, 16)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function friendUpload(request, db, board, course) {
+  const text = await readBody(request).catch(() => undefined);
+  if (text === null) return error('too_large', 413);
+  let body;
+  try { body = JSON.parse(text); } catch { /* Invalid JSON. */ }
+  if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.rider !== 'string' || !HEX32.test(body.rider)) return error('bad_body', 400);
+  const name = cleanName(body.name);
+  if (!name) return error('implausible', 422, { reason: 'name' });
+  const bytes = decodeGhost(body.ghost);
+  const header = bytes && ghostHeader(bytes);
+  if (!header) return error('implausible', 422, { reason: 'ghost_format' });
+  if (!isInt(header.vehicle, VEHICLES[0], VEHICLES[1])) return error('implausible', 422, { reason: 'vehicle' });
+  if (header.lapMs < lapFloorMs(course)) return error('implausible', 422, { reason: 'lap_floor' });
+  const reason = checkGhost(bytes, { course, vehicle: header.vehicle, lapMs: header.lapMs });
+  if (reason) return error('implausible', 422, { reason });
+  const tag = await ghostTag(body.rider);
+  // A rider's quicker lap replaces theirs; the board keeps the most recent
+  // uploads.
+  const [, , kept] = await db.batch([
+    db.prepare(`INSERT INTO friend_ghosts (board, tag, name, value, vehicle, updated_at, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      ON CONFLICT (board, tag) DO UPDATE SET name = excluded.name, value = excluded.value, vehicle = excluded.vehicle,
+        updated_at = excluded.updated_at, data = excluded.data WHERE excluded.value < friend_ghosts.value`)
+      .bind(board, tag, name, header.lapMs, header.vehicle, Date.now(), body.ghost),
+    db.prepare(`DELETE FROM friend_ghosts WHERE board = ?1 AND tag NOT IN
+      (SELECT tag FROM friend_ghosts WHERE board = ?1 ORDER BY updated_at DESC, tag LIMIT ${FRIEND_GHOST_LIMIT})`).bind(board),
+    db.prepare('SELECT value FROM friend_ghosts WHERE board = ?1 AND tag = ?2').bind(board, tag),
+  ]);
+  const value = kept.results?.[0]?.value ?? null;
+  return json({ board, kept: value === header.lapMs, value });
+}
+
+async function cachedJson(request, read, maxAge) {
+  const cache = globalThis.caches?.default, key = new Request(new URL(request.url).toString());
+  const cached = await cache?.match(key);
+  if (cached) return cached;
+  const body = await read();
+  if (!body) return error('not_found', 404);
+  const response = json(body, 200, { 'Cache-Control': `public, max-age=${maxAge}` });
+  await cache?.put(key, response.clone());
+  return response;
+}
+
+// `?tags=<tag>,<tag>…`: the friends among them with a ghost on the board,
+// quickest first.
+async function friendList(request, db, board) {
+  const tags = [...new Set((new URL(request.url).searchParams.get('tags') ?? '').split(','))];
+  if (!tags.length || tags.length > MAX_FRIEND_TAGS || !tags.every(tag => HEX32.test(tag))) return error('bad_tags', 400);
+  return cachedJson(request, async () => {
+    const { results } = await db.prepare(
+      'SELECT tag, name, value, vehicle FROM friend_ghosts WHERE board = ?1 AND tag IN (SELECT value FROM json_each(?2)) ORDER BY value, tag',
+    ).bind(board, JSON.stringify(tags)).all();
+    return { board, ghosts: (results ?? []).map(row => ({ ...row })) };
+  }, BOARD_MAX_AGE);
+}
+
+const friendDownload = (request, db, board, tag, value) => cachedJson(request, async () => {
+  const row = await db.prepare('SELECT name, vehicle, data FROM friend_ghosts WHERE board = ?1 AND tag = ?2 AND value = ?3').bind(board, tag, value).first();
+  return row && { board, name: row.name, value, vehicle: row.vehicle, ghost: row.data };
+}, GHOST_MAX_AGE);
+
 export const isGhostPath = path => path === '/api/ghosts' || path.startsWith('/api/ghosts/');
 
 export async function ghostRequest(request, env, allowedOrigins) {
@@ -241,7 +317,9 @@ export async function ghostRequest(request, env, allowedOrigins) {
   let parts;
   try { parts = new URL(request.url).pathname.slice('/api/ghosts/'.length).split('/').map(decodeURIComponent); } catch { return error('not_found', 404); }
   const board = parts[0], parsed = parseBoard(board);
-  if (!parsed || parsed.kind !== 'lap' || (parts.length !== 1 && parts.length !== 3)) return error('not_found', 404);
+  if (!parsed || parsed.kind !== 'lap') return error('not_found', 404);
+  if (parts[1] === 'friends') return friendRequest(request, env, board, parsed.course, parts.slice(2));
+  if (parts.length !== 1 && parts.length !== 3) return error('not_found', 404);
   const submit = parts.length === 1;
   const name = submit ? null : cleanName(parts[1]);
   const value = submit ? null : /^[1-9]\d{0,7}$/.test(parts[2]) ? Number(parts[2]) : null;
@@ -259,6 +337,29 @@ export async function ghostRequest(request, env, allowedOrigins) {
     return submit ? await upload(request, db, board, parsed.course) : await download(request, db, board, name, value);
   } catch {
     // Storage or limiter failure. Never echo request data into logs.
+    return unavailable();
+  }
+}
+
+// `/api/ghosts/<board>/friends`: POST an upload, GET the list; and
+// `/api/ghosts/<board>/friends/<tag>/<ms>`: GET one ghost.
+async function friendRequest(request, env, board, course, rest) {
+  if (rest.length !== 0 && rest.length !== 2) return error('not_found', 404);
+  const tag = rest[0], value = rest.length ? (/^[1-9]\d{0,7}$/.test(rest[1]) ? Number(rest[1]) : null) : null;
+  if (rest.length && (!HEX32.test(tag) || value === null)) return error('not_found', 404);
+  const submit = !rest.length && request.method === 'POST';
+  const method = rest.length ? 'GET' : submit ? 'POST' : 'GET';
+  if (request.method !== method) return error('method_not_allowed', 405, {}, { Allow: rest.length ? 'GET' : 'GET, POST' });
+  const db = env.SAVES;
+  const ip = request.headers.get('CF-Connecting-IP');
+  if (!db || !ip) return unavailable();
+  try {
+    const stop = await limited(env, submit ? 'BOARD_SUBMIT_LIMIT' : 'BOARD_READ_LIMIT', ip);
+    if (stop === null) return unavailable();
+    if (stop) return rateLimited();
+    if (submit) return await friendUpload(request, db, board, course);
+    return rest.length ? await friendDownload(request, db, board, tag, value) : await friendList(request, db, board);
+  } catch {
     return unavailable();
   }
 }
