@@ -14,7 +14,6 @@
 pub mod links;
 pub mod remote;
 pub use atv_net::quickplay;
-pub use atv_net::{RiderState, Snapshot};
 pub use atv_net::{RiderState, Snapshot, chat, dice_name};
 pub use links::Command as LinkCommand;
 pub mod spawn;
