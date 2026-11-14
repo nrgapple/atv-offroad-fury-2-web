@@ -33,6 +33,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Bundle { .. } => 19,
         Packet::Batch { .. } => 20,
         Packet::Frame { .. } => 21,
+        Packet::RoomLoop(_) => 22,
+        Packet::Vote(_) => 23,
         Packet::Chat(_) => 24,
     };
     w.0.extend_from_slice(MAGIC);
@@ -247,6 +249,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.0.extend_from_slice(pose);
             }
         }
+        Packet::RoomLoop(state) => state.encode(&mut w.0)?,
+        Packet::Vote(vote) => vote.encode(&mut w.0)?,
         Packet::Chat(c) => {
             c.validate()?;
             w.byte(c.peer);
@@ -546,6 +550,13 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             Packet::Frame { poses }
         }
+        22 => {
+            let body = r.take(bytes.len() - HEADER)?;
+            Packet::RoomLoop(Box::new(crate::quickplay::RoomLoop::decode(body)?))
+        }
+        23 => Packet::Vote(crate::quickplay::Vote::decode(
+            r.take(bytes.len() - HEADER)?,
+        )?),
         24 => {
             let c = crate::chat::Chat {
                 peer: r.byte()?,

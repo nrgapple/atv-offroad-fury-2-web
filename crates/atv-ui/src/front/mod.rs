@@ -298,6 +298,7 @@ pub fn stage_page(page: &str) -> bool {
         "main"
             | "single"
             | "multiplayer"
+            | "quickplay"
             | "split"
             | "splitseats"
             | "championship"
@@ -888,6 +889,7 @@ fn page_title(page: &str) -> &'static str {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "quickplay" => "Quick Play",
         "split" => "Split Screen",
         "splitseats" => "Players",
         "create-lobby" => "Create Lobby",
@@ -1753,6 +1755,28 @@ fn left(m: &Metrics, s: &Screen) -> El {
     }
     let mut left = El::new(style);
     match s.page.as_str() {
+        "quickplay" => {
+            let mut tiles = El::new(Style {
+                display: Display::Flex,
+                flex_direction: if m.portrait {
+                    FlexDirection::Column
+                } else {
+                    FlexDirection::Row
+                },
+                gap: Size {
+                    width: length(14.),
+                    height: length(14.),
+                },
+                flex_shrink: 0.,
+                ..Default::default()
+            });
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if action != "back" {
+                    tiles = tiles.child(quickplay_tile(m, s, index, action, label));
+                }
+            }
+            left = left.child(tiles);
+        }
         "create-lobby" | "join-lobby" => {
             left = left.child(form(m, s));
             let mut rows = El::new(column(2.));
@@ -2080,6 +2104,55 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
         el = freeride_badges(m, el, selected, s.freeride_riders);
     }
     el
+}
+
+/// Quick Play's big playlist tiles (research/QUICK_PLAY.md): the label and
+/// what the playlist rotates, in two words.
+fn quickplay_tile(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) -> El {
+    let selected = s.selection == index;
+    let hint = if action == "qp-stunts" {
+        "Freestyle · Treasure"
+    } else {
+        "Races · Hills"
+    };
+    let width = if m.portrait {
+        (m.w - 48.).max(200.)
+    } else {
+        200.
+    };
+    let paint = if selected {
+        Paint::fill(crate::menu::gold_pill()).radius(12.)
+    } else {
+        Paint::fill(Color::hex("#000000a6")).radius(12.)
+    };
+    let ink = if selected { "#0d0b00" } else { "#f2f2f2" };
+    El::new(Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        justify_content: JustifyContent::CENTER,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: length(6.),
+            height: length(6.),
+        },
+        size: Size {
+            width: length(width),
+            height: length(if m.portrait { 112. } else { 150. }),
+        },
+        ..Default::default()
+    })
+    .id(ROW + index as u32)
+    .paint(paint)
+    .child(text(
+        label,
+        TextStyle::new(display(32., 800, true), Color::hex(ink)),
+        38.,
+    ))
+    .child(text(
+        hint,
+        TextStyle::new(display(16., 700, false), Color::hex(ink)),
+        20.,
+    ))
 }
 
 /// `.ms-new` and `.ms-live`: the NEW tag and the live rider count on the
