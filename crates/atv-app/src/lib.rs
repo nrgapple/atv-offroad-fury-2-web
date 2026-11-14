@@ -23,6 +23,7 @@ mod online;
 mod overlay;
 mod photo;
 pub mod quick_chat;
+mod quick_play;
 mod random;
 mod render_scale;
 pub mod replay;
@@ -1024,6 +1025,9 @@ struct App {
     tag: Option<tag::TagSession>,
     /// A race in a multiplayer room (research/MULTIPLAYER.md "Room races").
     room_race: Option<room_race::RoomRace>,
+    /// A server-run Quick Play room's loop on this client
+    /// (research/QUICK_PLAY.md).
+    quick_play: Option<quick_play::QuickPlay>,
     /// The last room race serial seen, so the host numbers the next one.
     room_race_serial: u32,
     /// The last room King of the Hills / Treasure Hunt serial seen
@@ -1893,6 +1897,12 @@ impl App {
             };
             let bindings = &riding.bindings;
             if !riding.menu_open
+                && let Some(qp) = &mut self.quick_play
+                && let Some(pad) = pad.as_ref()
+            {
+                qp.pad(&pad.buttons);
+            }
+            if !riding.menu_open
                 && self.photo.is_none()
                 && self.replay.is_none()
                 && let Some(action) = overlay
@@ -2194,6 +2204,8 @@ impl App {
         let mut host_game = None;
         let mut freestyle_reload = false;
         let mut ended = None;
+        let mut quick_start = None;
+        let mut quick_leave = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
             // paused presence pose; the online pause menu and blur keep
@@ -2349,6 +2361,54 @@ impl App {
             if let Some(overlay) = &mut self.overlay {
                 overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
             }
+            // Quick Play: the server's loop, this rider's votes, and the
+            // round this rider starts as the driver.
+            if net.quickplay()
+                && let Some(state) = net.room_loop().cloned()
+            {
+                let qp = self.quick_play.get_or_insert_with(|| {
+                    quick_play::QuickPlay::new(state.playlist, net.code().to_string())
+                });
+                let (me, roster) = net.roster();
+                let humans: Vec<(u8, String)> =
+                    roster.iter().copied().zip(net.names(&roster)).collect();
+                let race = self.room_race.as_ref();
+                let name = |peer: u8| {
+                    humans
+                        .iter()
+                        .find(|(p, _)| *p == peer)
+                        .map(|(_, n)| n.clone())
+                        .or_else(|| race.and_then(|r| r.name_of(peer)))
+                        .unwrap_or_else(|| quick_play::QuickPlay::cpu_name(peer))
+                };
+                let names = &self.course_names;
+                let narrow = self.overlay.as_ref().is_some_and(|o| o.narrow());
+                let (vote, start) = qp.frame(
+                    &state,
+                    me,
+                    net.session_now() as f64,
+                    net.server_ms(),
+                    net.rtt_ms(),
+                    &net.environment,
+                    net.ready(),
+                    &name,
+                    &|venue: &str| course_label(names, venue),
+                    narrow,
+                );
+                if let Some(vote) = vote {
+                    net.send_vote(vote);
+                }
+                quick_start = start;
+                quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
+                if let Some(overlay) = &mut self.overlay {
+                    // Between rounds the podium and the vote replace the
+                    // round's own results panel.
+                    if state.phase != atv_game::multiplayer::quickplay::loop_phase::PLAY {
+                        overlay.results = Default::default();
+                    }
+                    overlay.quickplay = Some(qp.view.clone());
+                }
+            }
             let remote = riding
                 .sound
                 .as_ref()
@@ -2422,6 +2482,14 @@ impl App {
         }
         if let Some((page, reason)) = ended {
             self.room_ended(page, reason);
+            return;
+        }
+        if let Some((list, code)) = quick_leave {
+            self.leave_quick_play(list, code);
+            return;
+        }
+        if let Some(start) = quick_start {
+            self.quick_play_start(start);
             return;
         }
         if let Some(environment) = course {
@@ -4904,6 +4972,13 @@ impl App {
             self.viewer_button(button);
             return;
         }
+        if let overlay::Action::QuickPlay(id) = action {
+            if let Some(qp) = &mut self.quick_play {
+                qp.press(id);
+            }
+            self.wake();
+            return;
+        }
         if action == overlay::Action::Replay {
             self.open_replay(true);
             return;
@@ -4944,7 +5019,16 @@ impl App {
                 }
             }
             // Handled above.
-            overlay::Action::Viewer(_) | overlay::Action::Replay => {}
+            overlay::Action::Viewer(_)
+            | overlay::Action::Replay
+            | overlay::Action::QuickPlay(_) => {}
+            // Quick Play's server picks the next round: a driver's Race
+            // Again only closes the round's own results.
+            overlay::Action::RaceRetry if self.quick_play.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }
@@ -5584,6 +5668,14 @@ impl App {
             if let Some(event) = event {
                 self.menu_event(event);
             }
+            return;
+        }
+        // Quick Play's panel: arrows move, Enter presses.
+        if self.overlay.as_ref().is_some_and(|o| o.menu.is_none())
+            && let Some(qp) = &mut self.quick_play
+            && qp.key(&format!("{code:?}"))
+        {
+            self.wake();
             return;
         }
         // Race over: Escape and Enter drive the results menu (race.js).
@@ -6281,6 +6373,13 @@ impl ApplicationHandler<Message> for App {
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
                     f.state.freeride_riders = riders;
+                    let quickplay = net::QUICKPLAY.load(std::sync::atomic::Ordering::Relaxed);
+                    if f.state.quickplay != quickplay {
+                        // The main menu gains (or loses) its Quick Play row.
+                        f.state.quickplay = quickplay;
+                        let view = f.view;
+                        f.state.refresh(&view);
+                    }
                 }
                 self.wake();
                 if let Some(window) = &self.window {
@@ -7786,6 +7885,7 @@ impl App {
             Event::Ride { .. }
                 | Event::Race { .. }
                 | Event::FreeRide { .. }
+                | Event::QuickPlay { .. }
                 | Event::Host { .. }
                 | Event::Join { .. }
                 | Event::RoomRide { .. }
@@ -8088,6 +8188,12 @@ impl App {
             Event::Cloud(command) => self.cloud_command(command),
             Event::Online(command) => self.online_command(command),
             Event::FreeRide { quad, rider, name } => self.free_ride(quad, rider, name, None),
+            Event::QuickPlay {
+                playlist,
+                quad,
+                rider,
+                name,
+            } => self.start_quick_play(playlist, None, quad, rider, name),
             Event::RoomRide {
                 quad,
                 rider,
@@ -8187,6 +8293,7 @@ impl App {
                     code,
                     host: true,
                     freeride: false,
+                    quickplay: None,
                     name,
                     drop_after: None,
                     train_place: None,
@@ -8224,6 +8331,7 @@ impl App {
                     code: Some(code),
                     host: false,
                     freeride: false,
+                    quickplay: None,
                     name,
                     drop_after: None,
                     train_place: None,
@@ -8299,6 +8407,7 @@ impl App {
             code: shard,
             host: false,
             freeride: true,
+            quickplay: None,
             name,
             drop_after: None,
             train_place: None,
@@ -9056,12 +9165,14 @@ impl App {
     }
 
     /// Multiplayer's Free Ride count, at most every 15 s while it shows
-    /// (watchFreerideRiders in frontend.js).
+    /// (watchFreerideRiders in frontend.js), and on the main menu, whose
+    /// Quick Play row shows when the server says it runs Quick Play.
     fn poll_riders(&mut self) {
         let Some(front) = &self.front else {
             return;
         };
-        if self.ready.is_some() || front.borrow().state.page != "multiplayer" {
+        let page = front.borrow().state.page.clone();
+        if self.ready.is_some() || !matches!(page.as_str(), "multiplayer" | "main") {
             return;
         }
         if self
@@ -9206,6 +9317,10 @@ impl App {
         // A room race ends with its room (its results never come).
         self.room_race = None;
         self.room_race_serial = 0;
+        self.quick_play = None;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.quickplay = None;
+        }
         // So does a room King of the Hills / Treasure Hunt.
         if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
             self.game = None;
@@ -9258,6 +9373,7 @@ impl App {
         // A room race ends with its room; the next room numbers from 1.
         self.room_race = None;
         self.room_race_serial = 0;
+        self.quick_play = None;
         self.room_freestyle = None;
         self.room_freestyle_serial = 0;
         let Some(ready) = self.ready.take() else {
@@ -10365,6 +10481,13 @@ impl App {
     /// in the room (research/MULTIPLAYER.md "Room Freestyle"). A race or
     /// game scene goes back to the room's Free Ride first.
     fn start_room_freestyle(&mut self) {
+        self.start_room_freestyle_for(room_freestyle::session_seconds(freestyle_minutes(
+            &self.front,
+        )));
+    }
+
+    /// [`Self::start_room_freestyle`] with a session of `seconds`.
+    fn start_room_freestyle_for(&mut self, seconds: f32) {
         let Some(ready) = &mut self.ready else { return };
         let Some(net) = ready.net.as_ref().filter(|n| n.is_host()) else {
             return;
@@ -10387,7 +10510,7 @@ impl App {
         self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
             true,
             serial,
-            room_freestyle::session_seconds(freestyle_minutes(&self.front)),
+            seconds,
             environment.clone(),
         ));
         if let Some(overlay) = &mut self.overlay {
@@ -10395,6 +10518,117 @@ impl App {
         }
         if reload {
             self.reload_room(environment, None);
+        }
+    }
+
+    /// Main Menu → Quick Play: a seat in a server-run room of `playlist`
+    /// (research/QUICK_PLAY.md), never `avoid` (the room just left).
+    fn start_quick_play(
+        &mut self,
+        playlist: u8,
+        avoid: Option<String>,
+        quad: u16,
+        rider: u16,
+        name: String,
+    ) {
+        // Registers the rider (research/ONLINE_IDENTITY.md): the room socket
+        // carries its token, and the server's match records its verified id.
+        self.online_wanted();
+        let Some((site, server)) = self
+            .defaults
+            .as_ref()
+            .map(|d| (d.site.clone(), d.server.clone()))
+        else {
+            return;
+        };
+        // Strangers tell default names apart by a number, as in Free Ride.
+        let name = if name == "Rider" {
+            let numbered = format!("Rider {}", 1000 + random::below(9000));
+            if let Some(front) = &self.front {
+                front.borrow_mut().state.player_name.clone_from(&numbered);
+            }
+            numbered
+        } else {
+            name
+        };
+        self.quick_play = None;
+        let room = RoomStart {
+            site,
+            server,
+            code: None,
+            host: false,
+            freeride: false,
+            quickplay: Some((playlist, avoid)),
+            name,
+            drop_after: None,
+            train_place: None,
+        };
+        self.start_ride(
+            atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
+            quad,
+            rider,
+            None,
+            Some(room),
+        );
+    }
+
+    /// Quick Play → Leave: out of this room and straight back into the
+    /// queue for another one.
+    fn leave_quick_play(&mut self, playlist: u8, code: String) {
+        let look = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| (n.look(), n.session.profile().map(|p| p.name.clone())));
+        if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+            net.leave();
+        }
+        self.quick_play = None;
+        let Some(((quad, rider), name)) = look else {
+            return;
+        };
+        if !self.quit_to(Some("quickplay")) {
+            return;
+        }
+        self.start_quick_play(playlist, Some(code), quad, rider, name.unwrap_or_default());
+    }
+
+    /// The server made this rider the round's driver: start the round as
+    /// a private room's host would, with the server's setup.
+    fn quick_play_start(&mut self, start: quick_play::Start) {
+        match start {
+            quick_play::Start::Race(setup) => {
+                let Some(net) = self.ready.as_ref().and_then(|r| r.net.as_ref()) else {
+                    return;
+                };
+                let (quad, rider) = net.look();
+                let fill = room_race::CpuFill {
+                    field: setup.cpu_field,
+                    quad: quad.clamp(1, 26) as u8,
+                    rider: rider.min(1) as u8,
+                    difficulty: setup.difficulty.clamp(1, 2),
+                };
+                // `raceLaps=N` shortens the server's laps for tests.
+                let laps = (1..=5u8)
+                    .find(|n| url_flag(&format!("raceLaps={n}")))
+                    .unwrap_or(setup.laps);
+                self.start_room_race_with(
+                    setup.round.variant,
+                    laps.clamp(1, 5),
+                    fill,
+                    u64::from(setup.seed),
+                    setup.number.saturating_sub(1),
+                );
+            }
+            quick_play::Start::Freestyle(setup) => {
+                self.room_freestyle_serial = setup.number.saturating_sub(1);
+                self.start_room_freestyle_for(room_freestyle::session_seconds(u32::from(
+                    setup.minutes.max(1),
+                )));
+            }
+            quick_play::Start::Game(kind, setup) => {
+                self.start_room_game(kind, true, setup.number, u32::from(setup.minutes.max(1)));
+            }
         }
     }
 
@@ -10409,26 +10643,20 @@ impl App {
                     .map(|f| f.borrow().state.race.laps.clamp(1, 5) as u8)
             })
             .unwrap_or(3);
-        let Some(ready) = &mut self.ready else { return };
-        let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
-            return;
-        };
-        let exists = atv_game::launch::RaceVariant::ALL
-            .get(variant as usize)
-            .is_some_and(|v| v.exists(&net.environment));
-        if !exists {
-            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
-                menu.notice = Some("Select a race track first.".into());
-            }
-            return;
-        }
         // Host Game → CPU Riders (`roomCpus=N` test hook): the field size
         // CPUs fill to, with the host's garage and Race difficulty.
         let field = (0..=5u8)
             .find(|n| url_flag(&format!("roomCpus={n}")))
             .or_else(|| self.front.as_ref().map(|f| f.borrow().state.host_cpu_field))
             .unwrap_or(0);
-        let (quad, rider) = net.look();
+        let Some((quad, rider)) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.look())
+        else {
+            return;
+        };
         let fill = room_race::CpuFill {
             field,
             quad: quad.clamp(1, 26) as u8,
@@ -10445,14 +10673,35 @@ impl App {
                     }
                 }),
         };
-        let Some((race, room_race::Action::Load(settings))) = room_race::RoomRace::host(
-            net,
-            self.room_race_serial,
-            variant,
-            laps,
-            fill,
-            fresh_seed(),
-        ) else {
+        self.start_room_race_with(variant, laps, fill, fresh_seed(), self.room_race_serial);
+    }
+
+    /// Starts a room race (host) with these laps, CPU fill and grid seed,
+    /// numbered after `previous`.
+    fn start_room_race_with(
+        &mut self,
+        variant: u8,
+        laps: u8,
+        fill: room_race::CpuFill,
+        seed: u64,
+        previous: u32,
+    ) {
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
+            return;
+        };
+        let exists = atv_game::launch::RaceVariant::ALL
+            .get(variant as usize)
+            .is_some_and(|v| v.exists(&net.environment));
+        if !exists {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some("Select a race track first.".into());
+            }
+            return;
+        }
+        let Some((race, room_race::Action::Load(settings))) =
+            room_race::RoomRace::host(net, previous, variant, laps, fill, seed)
+        else {
             return;
         };
         self.room_race_serial = race.field.serial;
@@ -10725,6 +10974,7 @@ pub fn run(options: Options) {
         hockey: None,
         tag: None,
         room_race: None,
+        quick_play: None,
         room_race_serial: 0,
         room_game_serial: 0,
         course_names: Default::default(),
@@ -10873,7 +11123,11 @@ pub fn start() {
     let invite = ["mode", "action", "lobby"]
         .iter()
         .any(|k| param(k).is_some());
+    // `?quickplay=race|stunts`: straight into the Quick Play queue (tests).
+    let quickplay =
+        param("quickplay").and_then(|v| atv_game::multiplayer::quickplay::playlist::parse(&v));
     let test_room = param("host").is_some_and(|v| v == "1")
+        || quickplay.is_some()
         || (param("room").is_some()
             && (param("dropAfter").is_some() || param("trainPlace").is_some()));
     let direct_room = !invite && test_room;
@@ -11007,6 +11261,7 @@ pub fn start() {
             drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
             train_place: param("trainPlace").and_then(|v| v.parse().ok()),
             freeride: false,
+            quickplay: quickplay.map(|p| (p, None)),
         }),
         // `script=storage` reads a long parity script from localStorage
         // `furyScript` (URLs are bounded).

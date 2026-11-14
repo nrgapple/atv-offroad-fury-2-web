@@ -325,6 +325,7 @@ fn main() {
         code: room_code,
         host,
         freeride: false,
+        quickplay: None,
         name,
         drop_after: None,
         train_place: None,

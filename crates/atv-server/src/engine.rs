@@ -21,6 +21,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::interest::{self, Pose, Sent};
 
+pub mod quickplay;
+
+/// A Quick Play room resends its loop at least this often (ms).
+const LOOP_HEARTBEAT_MS: u64 = 2_000;
 pub mod chat;
 
 /// A dropped rider keeps their slot (and color) this long for reconnection.
@@ -223,6 +227,9 @@ pub struct SavedRoom {
     /// Slots left out of the public counts.
     #[serde(default)]
     pub uncounted: Vec<u8>,
+    /// A Quick Play room's playlist; its loop starts again in the lobby.
+    #[serde(default)]
+    pub quickplay: Option<u8>,
 }
 
 pub struct Room {
@@ -243,6 +250,14 @@ pub struct Room {
     /// (`FURY_UNCOUNTED_IPS`): they play normally but stay out of the
     /// public rider counts.
     uncounted: Vec<u8>,
+    /// A Quick Play room's server-run loop (research/QUICK_PLAY.md).
+    qp: Option<quickplay::Loop>,
+    /// Each slot's verified player id (`?rider=` token,
+    /// research/ONLINE_IDENTITY.md), for Quick Play's match records.
+    pids: Vec<(u8, String)>,
+    loop_sent_ms: u64,
+    loop_dirty: bool,
+    records: Vec<quickplay::Record>,
     /// Recent quick chat, for reports.
     chat_ring: chat::Ring,
 }
@@ -270,8 +285,48 @@ impl Room {
             conns: Vec::new(),
             counters: Counters::default(),
             uncounted: Vec::new(),
+            qp: None,
+            pids: Vec::new(),
+            loop_sent_ms: 0,
+            loop_dirty: false,
+            records: Vec::new(),
             chat_ring: Default::default(),
         }
+    }
+
+    /// A Quick Play room of `playlist` with no host: the server runs its
+    /// loop. Its first slot is held for the first claimant under `key`.
+    pub fn quickplay(code: RoomCode, key: String, playlist: u8, now: u64, seed: u64) -> Self {
+        let mut room = Room::new(code, key, false, now);
+        let mut qp = quickplay::Loop::new(playlist, seed);
+        room.map = qp.first_map();
+        room.started = true;
+        room.qp = Some(qp);
+        room
+    }
+
+    /// The room's Quick Play loop, when it has one.
+    pub fn quickplay_loop(&self) -> Option<&quickplay::Loop> {
+        self.qp.as_ref()
+    }
+
+    /// Strangers share this room: names are filtered.
+    fn strangers(&self) -> bool {
+        self.public || self.qp.is_some()
+    }
+
+    /// Keeps the socket's verified player id for `peer`'s slot (None
+    /// clears it).
+    pub fn set_pid(&mut self, peer: u8, pid: Option<String>) {
+        self.pids.retain(|(p, _)| *p != peer);
+        if let Some(pid) = pid {
+            self.pids.push((peer, pid));
+        }
+    }
+
+    /// Finished Quick Play matches since the last call.
+    pub fn take_records(&mut self) -> Vec<quickplay::Record> {
+        std::mem::take(&mut self.records)
     }
 
     pub fn code(&self) -> RoomCode {
@@ -284,7 +339,9 @@ impl Room {
         self.closed
     }
     pub fn capacity(&self) -> usize {
-        if self.public {
+        if self.qp.is_some() {
+            atv_net::quickplay::QUICKPLAY_HUMANS
+        } else if self.public {
             PUBLIC_CAPACITY
         } else {
             PRIVATE_CAPACITY
@@ -398,6 +455,25 @@ impl Room {
         if !self.public || self.closed {
             return None;
         }
+        self.reserve(now, rng)
+    }
+
+    /// Reserves a seat in a Quick Play room; unless `any_phase`, only while
+    /// its loop is between rounds.
+    pub fn claim_quickplay(
+        &mut self,
+        now: u64,
+        rng: &mut dyn Entropy,
+        any_phase: bool,
+    ) -> Option<String> {
+        let qp = self.qp.as_ref()?;
+        if self.closed || !(any_phase || qp.joinable()) {
+            return None;
+        }
+        self.reserve(now, rng)
+    }
+
+    fn reserve(&mut self, now: u64, rng: &mut dyn Entropy) -> Option<String> {
         let taken = self
             .conns
             .iter()
@@ -630,7 +706,7 @@ impl Room {
                 }
                 let peer = self.conns[i].peer;
                 player.id = peer;
-                if self.public {
+                if self.strangers() {
                     // Strangers see this name: apply the shared-room filter.
                     player.name = atv_net::public_name(&player.name, player.id);
                 }
@@ -663,6 +739,7 @@ impl Room {
                 );
                 // Everyone else learns the full roster, including the arrival.
                 self.broadcast(&Packet::Lobby(lobby), Some(id), out);
+                self.loop_dirty = true;
             }
             Packet::Snapshot(snapshot) if joined => {
                 self.pose(i, *snapshot, Some(bytes), out);
@@ -724,7 +801,7 @@ impl Room {
                 }
                 let peer = self.conns[i].peer;
                 player.id = peer;
-                if self.public {
+                if self.strangers() {
                     player.name = atv_net::public_name(&player.name, player.id);
                 }
                 let conn = &mut self.conns[i];
@@ -749,7 +826,7 @@ impl Room {
                 epoch,
                 map,
                 started,
-            } if joined && !self.public && host == self.conns[i].peer => {
+            } if joined && !self.public && self.qp.is_none() && host == self.conns[i].peer => {
                 if !atv_net::valid_map(map) {
                     return self.close(i, 1008, "Unknown environment", now, out);
                 }
@@ -769,6 +846,9 @@ impl Room {
                 let race = state.game == atv_net::game_kind::RACE;
                 let game = state.game >= atv_net::game_kind::KING_OF_THE_HILLS;
                 let freestyle = state.game == atv_net::game_kind::FREESTYLE;
+                if let Some(qp) = &mut self.qp {
+                    qp.game(&state, now);
+                }
                 let packet = Packet::Game(state);
                 let Ok(bytes) = atv_net::encode(&packet) else {
                     return;
@@ -814,6 +894,9 @@ impl Room {
                 self.conns[i].races = true;
                 if progress.serial != 0 && !self.public && on_map {
                     progress.peer = self.conns[i].peer;
+                    if let Some(qp) = &mut self.qp {
+                        qp.progress(progress.peer, &progress, now);
+                    }
                     let Ok(bytes) = atv_net::encode(&Packet::Progress(progress)) else {
                         return;
                     };
@@ -834,6 +917,9 @@ impl Room {
                 self.conns[i].freestyle |= freestyle;
                 if claim.serial != 0 && !self.public && on_map && host != peer {
                     claim.peer = peer;
+                    if let Some(qp) = &mut self.qp {
+                        qp.claim(peer, &claim);
+                    }
                     for c in &self.conns {
                         if c.peer == host
                             && c.player.is_some()
@@ -844,6 +930,13 @@ impl Room {
                             self.send(c.id, &Packet::Claim(claim), out);
                         }
                     }
+                }
+            }
+            // A rider's loop choices; rooms without a loop ignore them.
+            Packet::Vote(vote) if joined => {
+                let peer = self.conns[i].peer;
+                if let Some(qp) = &mut self.qp {
+                    self.loop_dirty |= qp.vote(peer, vote);
                 }
             }
             Packet::Chat(message) if joined => self.chat(i, message, now, out),
@@ -942,6 +1035,7 @@ impl Room {
     /// The room tick: one frame (or a few, for a crowded room) to each rider
     /// on the map whose build takes frames, with the poses due for it.
     pub fn tick(&mut self, now: u64, out: &mut Vec<Out>) {
+        self.run_loop(now, out);
         if !self.started || self.closed {
             return;
         }
@@ -988,6 +1082,71 @@ impl Room {
                 out.push(Out::Pose(conn.id, frame));
             }
         }
+    }
+
+    /// Connected riders, for the Quick Play loop.
+    fn humans(&self) -> Vec<quickplay::Human> {
+        self.conns
+            .iter()
+            .filter_map(|c| {
+                let player = c.player.as_ref()?;
+                Some(quickplay::Human {
+                    peer: c.peer,
+                    name: player.name.clone(),
+                    pid: self
+                        .pids
+                        .iter()
+                        .find(|(p, _)| *p == c.peer)
+                        .map(|(_, pid)| pid.clone()),
+                    can_drive: true,
+                })
+            })
+            .collect()
+    }
+
+    /// Steps a Quick Play room's loop: the map and driver it picks, and the
+    /// loop state for riders that follow it, on change and as a heartbeat.
+    fn run_loop(&mut self, now: u64, out: &mut Vec<Out>) {
+        let Some(mut qp) = self.qp.take() else {
+            return;
+        };
+        if self.closed {
+            self.qp = Some(qp);
+            return;
+        }
+        let humans = self.humans();
+        let code = String::from_utf8_lossy(&self.code).into_owned();
+        let fx = qp.step(now, &humans, &code);
+        let mut moved = false;
+        if let Some(map) = fx.map.filter(|m| *m != self.map) {
+            self.map = map;
+            moved = true;
+        }
+        let driver = qp.driver();
+        if driver != atv_net::NO_PEER && driver != self.host {
+            self.host = driver;
+            moved = true;
+        }
+        if moved {
+            self.epoch = self.epoch.wrapping_add(1);
+            self.broadcast_lobby(out);
+        }
+        self.records.extend(qp.take_records());
+        if fx.changed || moved || self.loop_dirty || now >= self.loop_sent_ms + LOOP_HEARTBEAT_MS {
+            self.loop_dirty = false;
+            self.loop_sent_ms = now;
+            let packet = Packet::RoomLoop(Box::new(qp.state(&humans)));
+            if let Ok(bytes) = atv_net::encode(&packet) {
+                let bytes = Bytes::from(bytes);
+                for c in &self.conns {
+                    // Only new builds reach a Quick Play room: no flag.
+                    if c.player.is_some() {
+                        out.push(Out::Send(c.id, bytes.clone()));
+                    }
+                }
+            }
+        }
+        self.qp = Some(qp);
     }
 
     /// Once a second: idle sockets, expired holds, room expiry. Returns why
@@ -1081,6 +1240,7 @@ impl Room {
             started: self.started,
             reserved,
             uncounted: self.uncounted.clone(),
+            quickplay: self.qp.as_ref().map(|q| q.playlist()),
         }
     }
 
@@ -1088,7 +1248,9 @@ impl Room {
     /// can rejoin within the hold.
     pub fn restore(saved: SavedRoom, now: u64) -> Option<Self> {
         let code = atv_net::parse_room_code(&saved.code).ok()?;
-        let capacity = if saved.public {
+        let capacity = if saved.quickplay.is_some() {
+            atv_net::quickplay::QUICKPLAY_HUMANS
+        } else if saved.public {
             PUBLIC_CAPACITY
         } else {
             PRIVATE_CAPACITY
@@ -1116,6 +1278,14 @@ impl Room {
             conns: Vec::new(),
             counters: Counters::default(),
             uncounted: saved.uncounted,
+            qp: saved
+                .quickplay
+                .filter(|p| atv_net::quickplay::playlist::name(*p).is_some())
+                .map(|p| quickplay::Loop::new(p, saved.created_ms ^ now)),
+            pids: Vec::new(),
+            loop_sent_ms: 0,
+            loop_dirty: false,
+            records: Vec::new(),
             chat_ring: Default::default(),
         })
     }

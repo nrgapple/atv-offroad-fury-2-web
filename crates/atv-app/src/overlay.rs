@@ -41,6 +41,8 @@ pub enum Action {
     Viewer(atv_ui::hud::viewer::Button),
     /// The Waypoint Editor's GATE and UNDO.
     Gate(crate::waypoint_editor::Command),
+    /// A Quick Play panel button (`atv_ui::hud::quickplay` hit id).
+    QuickPlay(u32),
     /// A quick-chat pick (research/QUICK_CHAT.md): kind and id.
     Chat(u8, u8),
 }
@@ -242,6 +244,8 @@ pub struct Overlay {
     /// A room race whose host results have not arrived yet: hold the
     /// race's own results panel (research/MULTIPLAYER.md "Room races").
     pub room_race_pending: bool,
+    /// The Quick Play panel over a server-run room (research/QUICK_PLAY.md).
+    pub quickplay: Option<atv_ui::hud::quickplay::View>,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
@@ -368,6 +372,7 @@ impl Overlay {
             training: false,
             game: false,
             room_race_pending: false,
+            quickplay: None,
             race_entry: None,
             medal_shown: None,
             medals_saved: false,
@@ -755,6 +760,11 @@ impl Overlay {
                 }
                 if let Some(pick) = self.chat.hit(p.button) {
                     return Some(pick);
+                }
+                if (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LEAVE)
+                    .contains(&p.button)
+                {
+                    return Some(Some(Action::QuickPlay(p.button)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -1700,6 +1710,7 @@ impl Overlay {
         if self.results.shown && active {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
+        self.paint_quickplay();
         if let Some(chat) = chat {
             atv_ui::hud::chat::paint_feed(&mut self.fonts, &mut self.list, &view, &chat.feed);
             self.chat.post = self.results.shown && self.lobby.is_some();
@@ -1845,6 +1856,31 @@ impl Overlay {
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(hits);
         }
+    }
+
+    /// Quick Play's panel over the ride (and the round's results).
+    fn paint_quickplay(&mut self) {
+        let view = self.view;
+        if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
+            && let Some(element) = atv_ui::hud::quickplay::element(&view, state)
+        {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(
+                &element,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut hits,
+            );
+            self.list.items.extend_from_slice(&list.items);
+            self.hits.extend_from_slice(&hits);
+        }
+    }
+
+    /// A portrait phone: the Quick Play panel's narrow layout.
+    pub fn narrow(&self) -> bool {
+        self.view.width < 520.
     }
 
     /// Registers the original Jukebox art (PAGE14 backdrop and CD frames).
@@ -2372,6 +2408,20 @@ impl Overlay {
                 "emotes": self.chat.emotes, "post": self.chat.post, "focus": self.chat.focus,
             })),
             "touchOwned": self.touch.input.pointer.is_some(),
+            "quickPlay": self.quickplay.as_ref().map(|q| serde_json::json!({
+                "phase": format!("{:?}", q.phase),
+                "seconds": q.seconds,
+                "seats": q.seats.iter().map(|s| serde_json::json!({
+                    "name": s.name, "cpu": s.cpu, "me": s.me, "ping": s.ping,
+                })).collect::<Vec<_>>(),
+                "cards": q.cards.iter().map(|c| serde_json::json!({
+                    "mode": c.mode, "track": c.track, "votes": c.votes, "chosen": c.chosen,
+                })).collect::<Vec<_>>(),
+                "rows": q.rows.iter().map(|r| serde_json::json!({
+                    "name": r.name, "value": r.value, "cpu": r.cpu, "me": r.me,
+                })).collect::<Vec<_>>(),
+                "spectating": q.spectating,
+            })),
             "kidTouch": self.touch.kid(),
             "kidGo": self.touch.kid_go(),
             "flipBuzzes": self.flip_buzzes,

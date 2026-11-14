@@ -13,6 +13,7 @@ pub mod http;
 pub mod interest;
 pub mod outbox;
 pub mod players;
+pub mod queue;
 pub mod reports;
 pub mod rooms;
 pub mod stats;

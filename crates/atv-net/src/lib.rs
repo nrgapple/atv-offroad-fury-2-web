@@ -13,6 +13,7 @@ pub mod chat;
 mod codec;
 mod compact;
 mod names;
+pub mod quickplay;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
 pub use names::{dice_name, offensive_name, public_name};
 mod smoothing;
@@ -701,6 +702,12 @@ pub mod signal {
     /// bit); such a server sends motorcycle poses only to builds that said
     /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
+    /// Optional second hello flags byte (`data[1]`; the first byte's bits
+    /// are all allocated) bit, reserved for private rooms' room loop
+    /// (research/QUICK_PLAY.md "Private rooms (slice C)"): the build follows
+    /// [`super::Packet::RoomLoop`]. Quick Play rooms need no flag (only new
+    /// builds reach them); no build sends it yet.
+    pub const LOOP: u8 = 1;
     /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
     /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
     pub const CHAT: u8 = 64;
@@ -813,7 +820,7 @@ impl Signal {
         let valid = valid_peer(self.peer)
             && match self.kind {
                 signal::HELLO => {
-                    self.data.len() == 1
+                    (self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP))
                         && self.data[0]
                             & !(signal::DIRECT
                                 | signal::CARRIES
@@ -926,6 +933,11 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
+    /// Game server to every rider in a Quick Play room: the server-run room
+    /// loop (research/QUICK_PLAY.md).
+    RoomLoop(Box<quickplay::RoomLoop>),
+    /// Client to game server: a rider's vote, rematch and ready choices.
+    Vote(quickplay::Vote),
     /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
     /// to and from the server only for builds that said [`signal::CHAT`].
     Chat(chat::Chat),
