@@ -140,6 +140,11 @@ pub async fn load_remote_engine(
     key: super::remote::EngineKey,
     rate: u32,
 ) -> Result<(EngineAudioConfig, HashMap<String, Arc<Pcm>>)> {
+    if let super::remote::EngineKey::Quad(quad) = key
+        && quad >= 27
+    {
+        return load_remote_motorcycle_engine(content, quad, rate).await;
+    }
     let table = Archive::open(content, "/AUDIOTBL.RES").await?;
     let index = table
         .members
@@ -166,6 +171,52 @@ pub async fn load_remote_engine(
         let audio = decode_vag(&sounds.member(index).await?)?;
         crate::yield_frame().await;
         // Resampled in pieces across frames: a bank never holds up the ride.
+        samples.insert(key, Arc::new(Pcm::from_vag_spread(&audio, rate).await));
+    }
+    Ok((engine, samples))
+}
+
+/// A motorcycle's MX archive and its class's engine table
+/// (`vehicle_<size>a.aud`).
+async fn mx_engine(content: &Content, quad: u16) -> Result<(Archive, EngineAudioConfig)> {
+    let (size, _) = atv_core::motorcycle::class(quad)?;
+    let selection = atv_core::player_models::selection(quad, 0)?;
+    let table = Archive::open(content, &selection.quad).await?;
+    let name = format!("vehicle_{size}a.aud");
+    let index = table
+        .members
+        .iter()
+        .position(|m| {
+            m.name
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                .is_some_and(|last| last.eq_ignore_ascii_case(&name))
+        })
+        .ok_or("original vehicle audio table is missing")?;
+    let engine = EngineAudioConfig::parse_mx(&table.member(index).await?)?;
+    Ok((table, engine))
+}
+
+/// A remote motorcycle's engine: its MX archive's audio table and samples,
+/// as the player's own bike reads them ([`load_motorcycle`]).
+async fn load_remote_motorcycle_engine(
+    content: &Content,
+    quad: u16,
+    rate: u32,
+) -> Result<(EngineAudioConfig, HashMap<String, Arc<Pcm>>)> {
+    let (table, engine) = mx_engine(content, quad).await?;
+    let mut samples = HashMap::new();
+    for name in engine.samples.iter().flatten() {
+        let key = normal(name);
+        if samples.contains_key(&key) {
+            continue;
+        }
+        let Some(index) = find(&table, &key) else {
+            continue;
+        };
+        let audio = decode_vag(&table.member(index).await?)?;
+        crate::yield_frame().await;
         samples.insert(key, Arc::new(Pcm::from_vag_spread(&audio, rate).await));
     }
     Ok((engine, samples))
@@ -444,22 +495,7 @@ async fn load_motorcycle(
     rate: u32,
 ) -> Result<Bank> {
     let id = u16::try_from(quad).map_err(|_| "invalid motorcycle id")?;
-    let (size, _) = atv_core::motorcycle::class(id)?;
-    let selection = atv_core::player_models::selection(id, 0)?;
-    let table = Archive::open(content, &selection.quad).await?;
-    let name = format!("vehicle_{size}a.aud");
-    let index = table
-        .members
-        .iter()
-        .position(|m| {
-            m.name
-                .replace('\\', "/")
-                .rsplit('/')
-                .next()
-                .is_some_and(|last| last.eq_ignore_ascii_case(&name))
-        })
-        .ok_or("original vehicle audio table is missing")?;
-    let engine = EngineAudioConfig::parse_mx(&table.member(index).await?)?;
+    let (table, engine) = mx_engine(content, id).await?;
     let (_, mut ambient, mut soultree) = venue_sounds(content, course_archive, environment).await?;
     let names: Vec<String> = engine
         .samples

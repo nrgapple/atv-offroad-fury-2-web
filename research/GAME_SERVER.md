@@ -111,7 +111,9 @@ brief hitch, not a lost room.
 - Poses: a `Delta` is applied to the sender's baseline as on the relay; the
   newest accepted pose is kept as encoded bytes (re-encoded only when the
   client stamped another slot). Builds without `FRAMES` get each pose at once
-  from those bytes, as from the relay; builds with it get frames.
+  from those bytes, as from the relay; builds with it get frames. Motorcycle
+  poses go only to builds whose HELLO said `MOTORCYCLES`
+  (research/MULTIPLAYER.md "Motorcycles").
 - `interest`: each 20 Hz tick, per recipient on the room's map, the other
   riders' newest poses that are due, assembled into `Frame`s from bytes
   (split at `MAX_FRAME` poses or `MAX_PACKET_BYTES`):

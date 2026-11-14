@@ -120,6 +120,20 @@ pub fn valid_map(id: u16) -> bool {
     (1..=MAX_MAP_ID).contains(&id)
 }
 
+/// Garage selections 1-26 are the ATVs; 27-46 are the MX motorcycles
+/// (research/MOTORCYCLES.md). A rider model of 0 or 1 picks the ATV rider;
+/// a motorcycle always carries its MX rider and keeps the value only for
+/// the roster.
+pub const MAX_ATV_MODEL: u16 = 26;
+pub const MAX_VEHICLE_MODEL: u16 = 46;
+pub fn is_motorcycle(model: u16) -> bool {
+    (MAX_ATV_MODEL + 1..=MAX_VEHICLE_MODEL).contains(&model)
+}
+/// A participant's or pose's vehicle and rider identifiers.
+pub fn valid_actor(vehicle: u16, rider: u16) -> bool {
+    (1..=MAX_VEHICLE_MODEL).contains(&vehicle) && rider <= 1
+}
+
 pub fn valid_peer(id: PeerId) -> bool {
     (id as usize) < MAX_PLAYERS
 }
@@ -679,6 +693,12 @@ pub mod signal {
     /// instead of each rider's pose separately. Never forwarded in other
     /// riders' flags.
     pub const FRAMES: u8 = 16;
+    /// Hello flags bit: the build decodes motorcycle poses (vehicles 27-46,
+    /// whose compact pose carries the bike's linkage and the MX rider's
+    /// bones; research/MULTIPLAYER.md "Motorcycles"). A server sends
+    /// motorcycle poses only to builds that said it. Never forwarded in
+    /// other riders' flags.
+    pub const MOTORCYCLES: u8 = 32;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;

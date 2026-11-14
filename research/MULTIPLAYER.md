@@ -468,8 +468,8 @@ original-game online mode.
 - **Names.** The remembered rider name is used. The default `Rider` becomes
   `Rider ####` so strangers can tell riders apart. In shared rooms the relay
   replaces any name caught by a very simple word filter
-  (`atv_net::public_name`) with `Rider <slot>`. Motorcycles fall back to ATV01,
-  as in Multiplayer.
+  (`atv_net::public_name`) with `Rider <slot>`. Motorcycles fell back to
+  ATV01 until 2026-11-14 ("Motorcycles" below).
 - **Protocol v6.** Slots go up to 20. The lobby's started byte becomes a flags
   byte (bit 0 started, bit 1 shared room); the peer bitmask is 32-bit.
   Protocol v5 tabs are asked to reload.
@@ -1738,4 +1738,62 @@ rms (fury-server without thinning, #604 client) to 0 ms, 1.8-2.7 ft and
 at worst to 27 ms and 3.0 ft (0.4 ft rms) on the local relay. The test's lag
 fit now leaves out the frames around a reset, as its error figures already
 did: a teleport drawn a few frames off pulled the fit by up to 70 ms.
+
+## Motorcycles (2026-11-14)
+
+Owner decision on issue #521: online rooms take motorcycles. The JavaScript
+game and the Rust engine until now rode a motorcycle choice as ATV01, because
+the room pose carried only an ATV's linkage and the ATV rider's clip recipe.
+
+### Rules
+
+- Every room (private rooms, Arlington Free Ride, room races, King of the
+  Hills, Treasure Hunt, Tag, Hockey and room Freestyle) rides the garage
+  choice, motorcycles 27-46 included. Single Player already rides motorcycles
+  in every one of those modes with no mode-specific rule, so rooms follow it;
+  no mode keeps the ATV fallback. The online garage lists the motorcycles
+  unlocked, as it lists every ATV.
+- Room race CPUs still ride ATVs (`roster_quad` 1-26), as Single Player's
+  CPUs do when the player rides a motorcycle.
+- A motorcycle never rides a train car in a room (its platform is none), as
+  before for the bike's own train contact.
+
+### Protocol (version 6, compatible)
+
+- `atv_net::valid_actor` accepts vehicles 1-46 in `Join`, `Profile` and poses
+  (it used to be 1-26 on the server only); `is_motorcycle` is 27-46.
+- A motorcycle's compact pose keeps blocks 0 (vehicle), 1 (rider root) and 3
+  (engine, crash, train) as an ATV's. Block 2 is chosen by the vehicle id:
+  steering, front and rear wheel spin and suspension (the bike's
+  `Motorcycle::linkage`, what `Model::pose` draws from), the paused flag, a
+  bone count (1-64) and each of the MX rider's model-space bones as a
+  position (1/1024 ft, exact escape) and a rotation (i16 quaternion), 14
+  bytes a bone. The rider pose is sent rather than rebuilt from the sender's
+  solver: it carries the grip and peg fitting, stunt and wreck motions.
+  Scale and shear are dropped; MEASURED below.
+- A block of 255 bytes or more writes its length as 255 then a u16. Only a
+  motorcycle's block 2 is that long. Deltas keep working per block: a rider
+  whose bones did not change sends no block 2.
+- New HELLO flag bit `signal::MOTORCYCLES` (32): the build decodes motorcycle
+  poses. Builds before it reject a motorcycle pose, and with it the whole
+  frame carrying it, so fury-server never sends one to a connection without
+  the flag (single poses, frames and an arrival's catch-up). Such a build
+  still lists the rider and fails to load its model ("Remote rider model
+  unavailable"), drawing nobody there; ATV riders are unaffected.
+
+### Code
+
+- `crates/atv-net/src/compact.rs`: the motorcycle block, the long length.
+- `crates/atv-server/src/engine.rs`: `valid_actor` on join and profile, the
+  per-connection `motorcycles` flag and `Conn::takes`.
+- `crates/atv-game/src/multiplayer/mod.rs`: `Session::build` sends the
+  bike's linkage, its detached rider (wreck) and the rider bones; HELLO says
+  `MOTORCYCLES`; `Profile::new` keeps vehicles 1-46.
+- `crates/atv-game/src/multiplayer/remote.rs`: `Rig::Bike` loads the remote
+  bike and MX rider from the MX archive as the player's own load does and
+  poses them from the snapshot.
+- `crates/atv-game/src/audio/bank.rs`: a remote motorcycle's engine plays
+  its MX engine table and samples.
+- `crates/atv-ui` and `crates/atv-app`: the room refusals and ATV01
+  fallbacks are gone.
 

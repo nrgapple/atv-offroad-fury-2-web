@@ -48,7 +48,7 @@ pub fn room_code(text: &str) -> Result<atv_net::RoomCode> {
 #[derive(Clone, Debug)]
 pub struct Profile {
     pub name: String,
-    /// ATV 1-26 (rooms carry no motorcycles; see [`Profile::new`]).
+    /// The Garage choice: ATV 1-26 or motorcycle 27-46.
     pub quad: u16,
     /// 0 male, 1 female.
     pub rider: u16,
@@ -57,8 +57,9 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Motorcycles fall back to ATV01 in rooms, as in the JavaScript game
-    /// (remote riders are drawn on quads only).
+    /// An unknown vehicle falls back to ATV01. Motorcycles ride rooms too
+    /// (research/MULTIPLAYER.md "Motorcycles"); the JavaScript game fell
+    /// back to ATV01.
     pub fn new(
         name: &str,
         quad: u16,
@@ -77,7 +78,11 @@ impl Profile {
             } else {
                 name.chars().take(atv_net::MAX_NAME_BYTES).collect()
             },
-            quad: if (1..=26).contains(&quad) { quad } else { 1 },
+            quad: if atv_net::valid_actor(quad, 0) {
+                quad
+            } else {
+                1
+            },
             rider: rider.min(1),
             appearance: look,
         }
@@ -350,6 +355,8 @@ impl Session {
         if serves.frames {
             flags |= atv_net::signal::FRAMES;
         }
+        // Every build draws other riders' motorcycles.
+        flags |= atv_net::signal::MOTORCYCLES;
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
@@ -729,10 +736,14 @@ impl Session {
         let peer = self.peer.ok_or("join multiplayer first")?;
         let profile = self.profile.as_ref().ok_or("no multiplayer profile")?;
         let frame = ride.frame();
-        let recipe = ride
-            .rider_recipe()
-            .ok_or("multiplayer rides an ATV (motorcycles fall back to ATV01)")?;
-        let wreck = ride.rider_wreck();
+        let bike = ride.motorcycle();
+        // A motorcycle's rider is detached off Riding (its own wreck body).
+        let wreck = match bike {
+            Some(bike) => ride
+                .detached_rider_world()
+                .map(|world| (world, bike.rider_velocity())),
+            None => ride.rider_wreck(),
+        };
         if wreck.is_some() && !self.wreck {
             self.crash_serial = self.crash_serial.wrapping_add(1);
         }
@@ -761,6 +772,43 @@ impl Session {
                 .sum()
         });
         let zero = |v: [f32; 3]| if paused { [0.; 3] } else { v };
+        // An ATV sends its rider's clip recipe; a motorcycle its linkage and
+        // the MX rider's bones (research/MULTIPLAYER.md "Motorcycles").
+        let (animation, rider_nodes) = match bike {
+            Some(bike) => {
+                let (steering, wheels, compression) = bike.linkage();
+                let limit = atv_net::STEERING_LIMIT;
+                let bones = bike
+                    .rider_matrices()?
+                    .into_iter()
+                    .map(transform)
+                    .collect::<Result<Vec<_>>>()?;
+                let animation = atv_net::AnimationState {
+                    steering: steering.clamp(-limit, limit),
+                    wheels: [wheels[0], wheels[1], 0., 0.],
+                    compression: [compression[0], compression[1], 0., 0.],
+                    paused,
+                    ..Default::default()
+                };
+                (animation, bones)
+            }
+            None => {
+                let recipe = ride.rider_recipe().ok_or("no rider animation")?;
+                let animation = atv_net::AnimationState {
+                    steering: frame.visual_steering_angle,
+                    wheels: frame.wheel_angles,
+                    compression: frame.wheel_compression,
+                    clips: recipe.clips,
+                    count: recipe.count,
+                    phase: recipe.phase,
+                    first_weight: recipe.first_weight,
+                    pair_weight: recipe.pair_weight,
+                    look_phase: recipe.look_phase,
+                    paused,
+                };
+                (animation, Vec::new())
+            }
+        };
         Ok(Snapshot {
             peer,
             sequence: self.sequence.wrapping_add(1),
@@ -770,20 +818,9 @@ impl Session {
             atv,
             velocity: zero(frame.linear_velocity),
             angular_velocity: zero(angular_velocity),
-            animation: Some(Box::new(atv_net::AnimationState {
-                steering: frame.visual_steering_angle,
-                wheels: frame.wheel_angles,
-                compression: frame.wheel_compression,
-                clips: recipe.clips,
-                count: recipe.count,
-                phase: recipe.phase,
-                first_weight: recipe.first_weight,
-                pair_weight: recipe.pair_weight,
-                look_phase: recipe.look_phase,
-                paused,
-            })),
+            animation: Some(Box::new(animation)),
             atv_nodes: Vec::new(),
-            rider_nodes: Vec::new(),
+            rider_nodes,
             rider_state: state,
             rider,
             rider_velocity: zero(velocity),
@@ -1635,10 +1672,14 @@ mod tests {
     }
 
     #[test]
-    fn profile_keeps_rooms_on_quads() {
+    fn profile_keeps_garage_vehicles_and_motorcycles() {
         let p = Profile::new("  ", 30, 3, Default::default());
-        assert_eq!((p.name.as_str(), p.quad, p.rider), ("Rider", 1, 1));
+        assert_eq!((p.name.as_str(), p.quad, p.rider), ("Rider", 30, 1));
         assert_eq!(Profile::new("Ann", 14, 0, Default::default()).quad, 14);
+        assert_eq!(Profile::new("Ann", 46, 0, Default::default()).quad, 46);
+        for unknown in [0, 47] {
+            assert_eq!(Profile::new("Ann", unknown, 0, Default::default()).quad, 1);
+        }
     }
 
     #[test]
@@ -1761,11 +1802,13 @@ mod tests {
 
     #[test]
     fn the_courier_carries_linked_riders_poses_to_riders_without_links() {
-        use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, PRESENT};
+        use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, MOTORCYCLES, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
         let hello = atv_net::decode(&s.hello(LINKS, true).unwrap()).unwrap();
-        assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS]));
+        assert!(
+            matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS | MOTORCYCLES])
+        );
         s.ready().unwrap();
         // Rider 0 links with this one; rider 2 (a desktop build) cannot.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
@@ -2144,7 +2187,7 @@ mod tests {
     #[test]
     fn a_shared_room_rider_batches_its_relay_poses_by_distance() {
         use RiderState::{Airborne, Riding, Wreck};
-        use atv_net::signal::{BATCHES, CPU_SOUNDS, PACE, PRESENT};
+        use atv_net::signal::{BATCHES, CPU_SOUNDS, MOTORCYCLES, PACE, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         let room = Lobby {
             public: true,
@@ -2163,7 +2206,9 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        assert!(matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES]));
+        assert!(
+            matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES | MOTORCYCLES])
+        );
         s.ready().unwrap();
         // Rider 0, whose build takes batches, is 20-40 ft away.
         signal(&mut s, 0, PRESENT, &[BATCHES], 0);
@@ -2348,7 +2393,7 @@ mod tests {
 
     #[test]
     fn hello_flags_follow_the_room_claim() {
-        use atv_net::signal::{BATCHES, CPU_SOUNDS, DIRECT, FRAMES, PRESENT};
+        use atv_net::signal::{BATCHES, CPU_SOUNDS, DIRECT, FRAMES, MOTORCYCLES, PRESENT};
         let relay = serde_json::json!({"code": "ABCD1234", "links": true, "batches": true});
         let server = serde_json::json!({"code": "ABCD1234", "links": false, "batches": false, "frames": true});
         let relay = Serves::from_claim(&relay);
@@ -2367,12 +2412,18 @@ mod tests {
         };
         // The relay never hears FRAMES.
         let (bits, signalling, _) = flags(relay, false);
-        assert_eq!((bits, signalling), (CPU_SOUNDS | BATCHES, true));
+        assert_eq!(
+            (bits, signalling),
+            (CPU_SOUNDS | BATCHES | MOTORCYCLES, true)
+        );
         assert_eq!(flags(relay, true).0 & FRAMES, 0);
         // The game server: frames, no links even where the browser could
         // open them, and no signalling, so poses keep going to every rider.
         let (bits, signalling, mut s) = flags(server, true);
-        assert_eq!((bits, signalling), (CPU_SOUNDS | FRAMES, false));
+        assert_eq!(
+            (bits, signalling),
+            (CPU_SOUNDS | FRAMES | MOTORCYCLES, false)
+        );
         s.ready().unwrap();
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
         assert!(s.link_commands(10_000).is_empty());
