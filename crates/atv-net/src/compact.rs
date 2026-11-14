@@ -134,9 +134,11 @@ fn rigid(out: &mut Vec<u8>, t: Transform) -> Result<()> {
 fn wrap(v: f32) -> f32 {
     (v + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
-/// A motorcycle rider's model-space bone: position (1/1024 ft, exact escape)
-/// and rotation. Source MOT samples carry at most a sub-percent scale or
-/// shear, which is dropped.
+/// A motorcycle rider's model-space bone: position (1/1024 ft, exact
+/// escape), rotation, then 0, or 1 and the scale and shear (1/4096) when
+/// either is off identity. MX rider motions scale bones by up to about 5%
+/// and shear them by up to about 4% (research/MULTIPLAYER.md
+/// "Motorcycles"), so those are kept.
 fn bone(out: &mut Vec<u8>, t: &Transform) -> Result<()> {
     t.validate()?;
     for v in t.position {
@@ -144,6 +146,14 @@ fn bone(out: &mut Vec<u8>, t: &Transform) -> Result<()> {
     }
     for v in t.rotation {
         i16q(out, v, 32767.)?;
+    }
+    let affine =
+        t.scale.iter().any(|v| (v - 1.).abs() > 0.0001) || t.shear.iter().any(|v| v.abs() > 0.0001);
+    out.push(u8::from(affine));
+    if affine {
+        for v in t.scale.iter().chain(&t.shear) {
+            i16q(out, *v, 4096.)?;
+        }
     }
     Ok(())
 }
@@ -274,7 +284,14 @@ impl Read<'_> {
         for v in &mut t.position {
             *v = self.q(1024.)?;
         }
-        self.rotation(t)
+        let mut t = self.rotation(t)?;
+        if self.boolean()? {
+            for v in t.scale.iter_mut().chain(&mut t.shear) {
+                *v = self.q(4096.)?;
+            }
+            t.validate()?;
+        }
+        Ok(t)
     }
     fn rotation(&mut self, mut t: Transform) -> Result<Transform> {
         for v in &mut t.rotation {

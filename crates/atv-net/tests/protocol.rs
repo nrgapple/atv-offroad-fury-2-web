@@ -1191,7 +1191,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![32]),
+        signal(1, signal::HELLO, vec![64]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1201,7 +1201,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 32;
+    bytes[10] = 64;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
     // Every hello flag, frames included, is accepted.
     bytes[10] = 31;

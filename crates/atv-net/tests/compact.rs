@@ -153,8 +153,17 @@ fn bike(nodes: usize) -> Snapshot {
             Transform {
                 position: [i as f32 * 0.1 - 1., 2.5 + i as f32 * 0.05, -0.75],
                 rotation: [(angle * 0.5).cos(), 0., 0., (angle * 0.5).sin()],
-                // Source MOT samples carry sub-percent scale; it is dropped.
-                scale: [0.995, 1., 0.997],
+                // MX rider motions scale and shear some bones; both are kept.
+                scale: if i % 2 == 0 {
+                    [0.95, 1., 1.03]
+                } else {
+                    [1.; 3]
+                },
+                shear: if i % 2 == 0 {
+                    [0.04, 0., -0.02]
+                } else {
+                    [0.; 3]
+                },
                 ..Transform::default()
             }
         })
@@ -165,8 +174,9 @@ fn bike(nodes: usize) -> Snapshot {
 fn motorcycle_pose_carries_linkage_and_rider_bones_compactly() {
     let s = bike(26);
     let bytes = encode(&Packet::Snapshot((s.clone()).into())).unwrap();
-    // 26 bones at 14 bytes each, plus the ATV pose's other blocks.
-    assert!(bytes.len() < 480, "{}", bytes.len());
+    // 26 bones at 15 bytes each, half with 12 more for scale and shear,
+    // plus the ATV pose's other blocks.
+    assert!(bytes.len() < 700, "{}", bytes.len());
     let out = unpack(&s);
     assert_eq!(out.atv_model, 30);
     let (a, b) = (out.animation.unwrap(), s.animation.unwrap());
@@ -183,7 +193,15 @@ fn motorcycle_pose_carries_linkage_and_rider_bones_compactly() {
         for j in 0..4 {
             assert!((o.rotation[j] - i.rotation[j]).abs() < 0.0001);
         }
-        assert_eq!(o.scale, [1.; 3]);
+        for j in 0..3 {
+            assert!((o.scale[j] - i.scale[j]).abs() <= 0.00013);
+            assert!((o.shear[j] - i.shear[j]).abs() <= 0.00013);
+        }
+        let (a, b) = (o.to_column_major(), i.to_column_major());
+        assert!(
+            a.iter().zip(&b).all(|(a, b)| (a - b).abs() < 0.001),
+            "{a:?} {b:?}"
+        );
     }
     // The ATV pose is unchanged by the motorcycle block.
     let atv = encode(&Packet::Snapshot((state()).into())).unwrap();

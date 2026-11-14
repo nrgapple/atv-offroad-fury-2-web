@@ -178,7 +178,7 @@ pub async fn load_remote_engine(
 
 /// A motorcycle's MX archive and its class's engine table
 /// (`vehicle_<size>a.aud`).
-async fn mx_engine(content: &Content, quad: u16) -> Result<(Archive, EngineAudioConfig)> {
+async fn mx_engine(content: &Content, quad: u16) -> Result<(Archive<'_>, EngineAudioConfig)> {
     let (size, _) = atv_core::motorcycle::class(quad)?;
     let selection = atv_core::player_models::selection(quad, 0)?;
     let table = Archive::open(content, &selection.quad).await?;

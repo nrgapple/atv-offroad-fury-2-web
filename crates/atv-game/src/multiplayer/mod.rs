@@ -135,6 +135,9 @@ pub struct Serves {
     /// `frames`: sends builds that say [`atv_net::signal::FRAMES`] one
     /// [`Packet::Frame`] per tick.
     pub frames: bool,
+    /// `motorcycles`: takes [`atv_net::signal::MOTORCYCLES`] and sends
+    /// motorcycle poses only to builds that say it.
+    pub motorcycles: bool,
 }
 
 impl Serves {
@@ -144,6 +147,7 @@ impl Serves {
             links: claim["links"].as_bool() == Some(true),
             batches: claim["batches"].as_bool() == Some(true),
             frames: claim["frames"].as_bool() == Some(true),
+            motorcycles: claim["motorcycles"].as_bool() == Some(true),
         }
     }
 
@@ -355,8 +359,11 @@ impl Session {
         if serves.frames {
             flags |= atv_net::signal::FRAMES;
         }
-        // Every build draws other riders' motorcycles.
-        flags |= atv_net::signal::MOTORCYCLES;
+        // Every build draws other riders' motorcycles; a server before
+        // them refuses the bit.
+        if serves.motorcycles {
+            flags |= atv_net::signal::MOTORCYCLES;
+        }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
@@ -1592,6 +1599,7 @@ mod tests {
         links: true,
         batches: false,
         frames: false,
+        motorcycles: false,
     };
 
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
@@ -1802,13 +1810,11 @@ mod tests {
 
     #[test]
     fn the_courier_carries_linked_riders_poses_to_riders_without_links() {
-        use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, MOTORCYCLES, PRESENT};
+        use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
         let hello = atv_net::decode(&s.hello(LINKS, true).unwrap()).unwrap();
-        assert!(
-            matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS | MOTORCYCLES])
-        );
+        assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS]));
         s.ready().unwrap();
         // Rider 0 links with this one; rider 2 (a desktop build) cannot.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
@@ -2187,7 +2193,7 @@ mod tests {
     #[test]
     fn a_shared_room_rider_batches_its_relay_poses_by_distance() {
         use RiderState::{Airborne, Riding, Wreck};
-        use atv_net::signal::{BATCHES, CPU_SOUNDS, MOTORCYCLES, PACE, PRESENT};
+        use atv_net::signal::{BATCHES, CPU_SOUNDS, PACE, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         let room = Lobby {
             public: true,
@@ -2200,15 +2206,14 @@ mod tests {
                     links: true,
                     batches: true,
                     frames: false,
+                    motorcycles: false,
                 },
                 false,
             )
             .unwrap(),
         )
         .unwrap();
-        assert!(
-            matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES | MOTORCYCLES])
-        );
+        assert!(matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES]));
         s.ready().unwrap();
         // Rider 0, whose build takes batches, is 20-40 ft away.
         signal(&mut s, 0, PRESENT, &[BATCHES], 0);
@@ -2395,11 +2400,12 @@ mod tests {
     fn hello_flags_follow_the_room_claim() {
         use atv_net::signal::{BATCHES, CPU_SOUNDS, DIRECT, FRAMES, MOTORCYCLES, PRESENT};
         let relay = serde_json::json!({"code": "ABCD1234", "links": true, "batches": true});
-        let server = serde_json::json!({"code": "ABCD1234", "links": false, "batches": false, "frames": true});
+        let server = serde_json::json!({"code": "ABCD1234", "links": false, "batches": false, "frames": true, "motorcycles": true});
         let relay = Serves::from_claim(&relay);
         let server = Serves::from_claim(&server);
         assert!(relay.links && relay.batches && !relay.frames && relay.hello());
         assert!(!server.links && !server.batches && server.frames && server.hello());
+        assert!(server.motorcycles && !relay.motorcycles);
         assert!(!Serves::from_claim(&serde_json::json!({"code": "X"})).hello());
         let flags = |serves: Serves, direct: bool| {
             let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
@@ -2412,10 +2418,7 @@ mod tests {
         };
         // The relay never hears FRAMES.
         let (bits, signalling, _) = flags(relay, false);
-        assert_eq!(
-            (bits, signalling),
-            (CPU_SOUNDS | BATCHES | MOTORCYCLES, true)
-        );
+        assert_eq!((bits, signalling), (CPU_SOUNDS | BATCHES, true));
         assert_eq!(flags(relay, true).0 & FRAMES, 0);
         // The game server: frames, no links even where the browser could
         // open them, and no signalling, so poses keep going to every rider.

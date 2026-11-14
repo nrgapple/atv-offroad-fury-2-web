@@ -1397,6 +1397,7 @@ impl Net {
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
                 "frames": self.serves.frames,
+                "motorcycles": self.serves.motorcycles,
             },
             "server": self.server,
             "pace": self.session.pace,

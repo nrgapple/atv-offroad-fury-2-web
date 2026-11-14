@@ -695,9 +695,10 @@ pub mod signal {
     pub const FRAMES: u8 = 16;
     /// Hello flags bit: the build decodes motorcycle poses (vehicles 27-46,
     /// whose compact pose carries the bike's linkage and the MX rider's
-    /// bones; research/MULTIPLAYER.md "Motorcycles"). A server sends
-    /// motorcycle poses only to builds that said it. Never forwarded in
-    /// other riders' flags.
+    /// bones; research/MULTIPLAYER.md "Motorcycles"). Sent only to a server
+    /// whose room claim says `motorcycles` (earlier servers refuse the
+    /// bit); such a server sends motorcycle poses only to builds that said
+    /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
@@ -815,6 +816,7 @@ impl Signal {
                                 | signal::CPU_SOUNDS
                                 | signal::BATCHES
                                 | signal::FRAMES
+                                | signal::MOTORCYCLES
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0

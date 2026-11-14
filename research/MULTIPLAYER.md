@@ -1762,22 +1762,30 @@ the room pose carried only an ATV's linkage and the ATV rider's clip recipe.
 
 - `atv_net::valid_actor` accepts vehicles 1-46 in `Join`, `Profile` and poses
   (it used to be 1-26 on the server only); `is_motorcycle` is 27-46.
+- fury-server's room claim (create and Free Ride) says `"motorcycles": true`.
 - A motorcycle's compact pose keeps blocks 0 (vehicle), 1 (rider root) and 3
   (engine, crash, train) as an ATV's. Block 2 is chosen by the vehicle id:
   steering, front and rear wheel spin and suspension (the bike's
   `Motorcycle::linkage`, what `Model::pose` draws from), the paused flag, a
   bone count (1-64) and each of the MX rider's model-space bones as a
-  position (1/1024 ft, exact escape) and a rotation (i16 quaternion), 14
-  bytes a bone. The rider pose is sent rather than rebuilt from the sender's
-  solver: it carries the grip and peg fitting, stunt and wreck motions.
-  Scale and shear are dropped; MEASURED below.
+  position (1/1024 ft, exact escape), a rotation (i16 quaternion) and a flag
+  byte, then, when the bone is off identity, its scale and shear (1/4096):
+  15 or 27 bytes a bone. The rider pose is sent rather than rebuilt from the
+  sender's solver: it carries the grip and peg fitting, stunt and wreck
+  motions. Measured over every motion of bikes 27, 29, 31, 33, 35 and 46
+  (eight samples each, private content, a throwaway ignored test): the MX
+  rider has 22 bones, at most 10.1 ft from the model origin, with scale up
+  to 5.3% off 1 and shear up to 0.040, so both are carried rather than
+  dropped.
 - A block of 255 bytes or more writes its length as 255 then a u16. Only a
   motorcycle's block 2 is that long. Deltas keep working per block: a rider
   whose bones did not change sends no block 2.
 - New HELLO flag bit `signal::MOTORCYCLES` (32): the build decodes motorcycle
-  poses. Builds before it reject a motorcycle pose, and with it the whole
-  frame carrying it, so fury-server never sends one to a connection without
-  the flag (single poses, frames and an arrival's catch-up). Such a build
+  poses. A build sends it only when the claim says `motorcycles` (servers
+  before it refuse the HELLO, and with it the socket). Builds before it
+  reject a motorcycle pose, and with it the whole frame carrying it, so
+  fury-server never sends one to a connection without the flag (single
+  poses, frames and an arrival's catch-up). Such a build
   still lists the rider and fails to load its model ("Remote rider model
   unavailable"), drawing nobody there; ATV riders are unaffected.
 
