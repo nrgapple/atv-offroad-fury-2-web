@@ -572,13 +572,27 @@ impl Frontend {
     }
 
     /// The Hall of Fame's event types: the race groups, then Amateur and
-    /// Pro Freestyle (their championship courses).
+    /// Pro Freestyle (including the Classic-only courses).
     pub(super) fn fame_groups(&self) -> Vec<(&'static str, Vec<String>)> {
         let mut groups = record_groups(&self.race_courses);
         for series in &atv_core::freestyle::SERIES {
             groups.push((
                 series.name,
-                series.courses.iter().map(|c| c.to_string()).collect(),
+                series
+                    .courses
+                    .iter()
+                    .copied()
+                    .chain(
+                        atv_core::freestyle::CLASSIC_COURSES
+                            .iter()
+                            .copied()
+                            .filter(|c| {
+                                c.starts_with(if series.pro { "free" } else { "env" })
+                                    && !series.courses.contains(c)
+                            }),
+                    )
+                    .map(str::to_string)
+                    .collect(),
             ));
         }
         groups

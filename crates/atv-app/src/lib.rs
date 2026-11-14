@@ -312,6 +312,8 @@ struct ObjectiveSession {
     expert: bool,
     course: String,
     objective: usize,
+    classic_seconds: Option<f32>,
+    classic_test: bool,
     run: Option<atv_core::freestyle::Run>,
     /// The ride's step count last counted (the run's clock).
     steps: u64,
@@ -369,19 +371,28 @@ impl ObjectiveSession {
         if self.run.is_none() {
             // The course's own `.obj` when its OB archive loaded (with the
             // objective's start), else the built-in table.
-            let objective = venue
-                .and_then(|v| v.objectives.get(self.objective).cloned())
+            let objective = self
+                .classic_seconds
+                .map(atv_core::freestyle::classic)
                 .or_else(|| {
-                    course_objectives(&self.course)?
-                        .into_iter()
-                        .nth(self.objective)
+                    venue
+                        .and_then(|v| v.objectives.get(self.objective).cloned())
+                        .or_else(|| {
+                            course_objectives(&self.course)?
+                                .into_iter()
+                                .nth(self.objective)
+                        })
                 })?;
             if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
                 && venue.is_none_or(|v| v.targets.is_empty())
             {
                 return None;
             }
-            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
+            self.targets = if self.classic_seconds.is_some() {
+                Vec::new()
+            } else {
+                venue.map(|v| v.targets.clone()).unwrap_or_default()
+            };
             self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
             let saved = atv_ui::settings::Settings::load();
             let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, &self.course);
@@ -433,17 +444,31 @@ impl ObjectiveSession {
             if std::mem::replace(&mut self.resets, frame.reset_count) != frame.reset_count {
                 self.trace.reset();
             }
-            self.trace.step(self.elapsed, frame.origin, 0);
+            if self.classic_seconds.is_none() {
+                self.trace.step(self.elapsed, frame.origin, 0);
+            }
             self.elapsed += dt;
         }
-        run.tick(dt, ride.committed_points());
+        // Deterministic session-boundary fixture, like the room Freestyle
+        // fixture: one landed chain; it does not exercise stunt physics.
+        let fixture = self.classic_test && self.elapsed >= 1.;
+        if fixture
+            && run.score == 0.
+            && let Some(fame) = self.fame.as_mut()
+        {
+            fame.chain(true, 2, 600.);
+        }
+        run.tick(
+            dt,
+            ride.committed_points() + if fixture { 1200. } else { 0. },
+        );
         if !run.finished() || self.recorded {
             return None;
         }
         self.recorded = true;
         let mut fame = self.fame.take()?;
         // `002fce00`: score / 1000 plus the combo points.
-        let points = fame.finish(run.score);
+        let points = fame.finish_timed(run.score, self.classic_seconds.unwrap_or(120.));
         run.messages.extend(fame.take_messages());
         let world = world::ScoreRun::of_objective(
             series.key,
@@ -466,6 +491,8 @@ impl ObjectiveSession {
         let champ = &mut profile.championships;
         let (mask, trophy) = if self.championship {
             champ.award_objective(series, self.expert, &self.course, run.earned_bits())
+        } else if self.classic_seconds.is_some() {
+            (0, None)
         } else {
             let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
             (mask, None)
@@ -502,7 +529,23 @@ impl ObjectiveSession {
             Some(trophy) => format!("{summary} · {}", trophy.line()),
             None => summary,
         };
-        Some((summary, fame, world))
+        let summary = if self.classic_seconds.is_some() {
+            format!(
+                "Classic Freestyle · Final Score {}{award}",
+                atv_ui::hud::objective::grouped(run.score as i64)
+            )
+        } else {
+            summary
+        };
+        Some((
+            summary,
+            fame,
+            if self.classic_seconds.is_some() {
+                None
+            } else {
+                world
+            },
+        ))
     }
 
     /// Split screen: advances the shared objective with every player's
@@ -679,7 +722,7 @@ impl ObjectiveSession {
             let top = levels.last().copied().unwrap_or(0.);
             run.restart(ride.committed_points() - top);
         }
-        if url_flag("objectiveTest=timeout") {
+        if url_flag("objectiveTest=timeout") || self.classic_test {
             run.time_left = 5.;
         }
         ride.take_chains();
@@ -2502,6 +2545,7 @@ impl App {
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
+                    overlay.results.classic = session.classic_seconds.is_some();
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
                     overlay.offer_world_score(world);
                 }
@@ -5040,8 +5084,17 @@ impl App {
             overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
             overlay::Action::RaceQuit if self.objective.is_some() => {
                 // Continue: back to Select Objective.
+                let page = if self
+                    .objective
+                    .as_ref()
+                    .is_some_and(|s| s.classic_seconds.is_some())
+                {
+                    "classic-courses"
+                } else {
+                    "objectives"
+                };
                 self.objective = None;
-                self.quit_to(Some("objectives"));
+                self.quit_to(Some(page));
             }
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceNextRound => self.next_round(),
@@ -7920,6 +7973,13 @@ impl App {
                     expert,
                     course: environment.clone(),
                     objective,
+                    classic_seconds: (objective == atv_core::freestyle::CLASSIC).then(|| {
+                        self.front
+                            .as_ref()
+                            .map_or(120., |f| f.borrow().state.classic_minutes as f32 * 60.)
+                    }),
+                    classic_test: objective == atv_core::freestyle::CLASSIC
+                        && url_flag("classicTest=score"),
                     run: None,
                     steps: 0,
                     recorded: false,
@@ -8607,6 +8667,9 @@ impl App {
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
             objective: self.objective.as_ref().and_then(|o| {
+                if o.classic_seconds.is_some() {
+                    return None;
+                }
                 let path = atv_core::freestyle::objective_archive(&o.course)?;
                 self.content
                     .as_ref()
