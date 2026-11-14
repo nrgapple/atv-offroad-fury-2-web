@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::interest::{self, Pose, Sent};
 
+pub mod chat;
+
 /// A dropped rider keeps their slot (and color) this long for reconnection.
 pub const GRACE_MS: u64 = 30_000;
 /// A connection that sends nothing for this long is closed (recoverably),
@@ -161,6 +163,9 @@ struct Conn {
     /// Decodes motorcycle poses ([`signal::MOTORCYCLES`]); builds without
     /// it are never sent one (they would reject the whole frame).
     motorcycles: bool,
+    /// Takes quick chat, and its quick-chat budget.
+    chat_on: bool,
+    chat: atv_net::chat::Limits,
     last_seen_ms: u64,
     window_ms: u64,
     messages: u16,
@@ -238,6 +243,8 @@ pub struct Room {
     /// (`FURY_UNCOUNTED_IPS`): they play normally but stay out of the
     /// public rider counts.
     uncounted: Vec<u8>,
+    /// Recent quick chat, for reports.
+    chat_ring: chat::Ring,
 }
 
 impl Room {
@@ -263,6 +270,7 @@ impl Room {
             conns: Vec::new(),
             counters: Counters::default(),
             uncounted: Vec::new(),
+            chat_ring: Default::default(),
         }
     }
 
@@ -473,6 +481,8 @@ impl Room {
             cpu_sounds: false,
             frames: false,
             motorcycles: false,
+            chat_on: false,
+            chat: Default::default(),
             last_seen_ms: now,
             window_ms: now,
             messages: 0,
@@ -702,6 +712,7 @@ impl Room {
                     conn.cpu_sounds = flags & signal::CPU_SOUNDS != 0;
                     conn.frames = flags & signal::FRAMES != 0;
                     conn.motorcycles = flags & signal::MOTORCYCLES != 0;
+                    conn.chat_on = chat::said_chat(flags);
                 }
                 // Session descriptions and link reports: no links here.
             }
@@ -835,6 +846,7 @@ impl Room {
                     }
                 }
             }
+            Packet::Chat(message) if joined => self.chat(i, message, now, out),
             Packet::Leave { .. } => self.close(i, 1000, "Left room", now, out),
             // A former host's map command can race a handoff; resynchronize it.
             Packet::SetLobby { .. } if joined => self.send(id, &Packet::Lobby(self.lobby()), out),
@@ -1104,6 +1116,7 @@ impl Room {
             conns: Vec::new(),
             counters: Counters::default(),
             uncounted: saved.uncounted,
+            chat_ring: Default::default(),
         })
     }
 }

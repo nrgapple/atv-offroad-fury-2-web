@@ -12,6 +12,7 @@ use atv_net::RoomCode;
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::engine::chat::ReportContext;
 use crate::engine::{ConnId, Counters, Entropy, Out, Refused, Room, SavedRoom};
 use crate::interest::TICK_MS;
 use crate::outbox::{Outbox, Pushed};
@@ -57,6 +58,13 @@ pub enum RoomMsg {
     Shutdown {
         reply: oneshot::Sender<SavedRoom>,
     },
+    /// A rider's report (crate::reports): its context, if the key holds a
+    /// slot here.
+    Report {
+        key: String,
+        target: u8,
+        reply: oneshot::Sender<Option<ReportContext>>,
+    },
 }
 
 #[derive(Clone)]
@@ -98,6 +106,11 @@ impl RoomHandle {
     }
     pub async fn shut_down(&self) -> Option<SavedRoom> {
         self.ask(|reply| RoomMsg::Shutdown { reply }).await
+    }
+    pub async fn report(&self, key: String, target: u8) -> Option<ReportContext> {
+        self.ask(|reply| RoomMsg::Report { key, target, reply })
+            .await
+            .flatten()
     }
 }
 
@@ -291,6 +304,9 @@ async fn run(
                     }
                     RoomMsg::Riders { reply } => {
                         let _ = reply.send(room.riders());
+                    }
+                    RoomMsg::Report { key, target, reply } => {
+                        let _ = reply.send(room.report_context(&key, target, now));
                     }
                     RoomMsg::Shutdown { reply } => {
                         let saved = room.shut_down(now, &mut out);

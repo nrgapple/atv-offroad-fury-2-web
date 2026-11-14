@@ -25,7 +25,7 @@ fn on() -> bool {
 fn full_volume() -> usize {
     100
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlRow {
     pub id: String,
@@ -102,6 +102,16 @@ pub struct Request {
     /// Shared Arlington Free Ride room: no invites and no track changes.
     #[serde(default)]
     pub lobby_public: bool,
+    /// The room relays quick chat (research/QUICK_CHAT.md): the Players
+    /// page offers each rider's safety page and Mute all chat.
+    #[serde(default)]
+    pub lobby_chat: bool,
+    #[serde(default)]
+    pub chat_mute_all: bool,
+    /// The rider page's rider: id = slot, label = name, value = flags
+    /// (`m` muted, `b` blocked, `r` ready to spawn beside).
+    #[serde(default)]
+    pub rider: Option<ControlRow>,
     pub width: f32,
     pub height: f32,
     pub selection: usize,
@@ -529,6 +539,12 @@ pub fn layout(request: Request) -> Result<Frame> {
                 || p.label.len() > 64
                 || !["self", "ready", "waiting"].contains(&p.value.as_str())
         })
+        || request.rider.as_ref().is_some_and(|r| {
+            r.id.parse::<u8>().map_or(true, |id| id >= 20)
+                || r.label.len() > 64
+                || !r.value.chars().all(|c| "mbr".contains(c))
+                || r.value.len() > 3
+        })
         || !(1..=crate::motorcycle::SELECTION_COUNT).contains(&request.quad_id)
         || request.rider_id > 1
         || request.loading_status.len() > 128
@@ -591,6 +607,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "accessibility"
             | "pause"
             | "players"
+            | "rider"
             | "hud-settings"
             | "minimap-config"
             | "race-overlays"
@@ -674,6 +691,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "alpha" => "Alpha",
         "accessibility" => "Accessibility",
         "players" => "Lobby Players",
+        "rider" => "Rider",
         "hud-settings" => "Display",
         "minimap-config" => "Minimap Configuration",
         "race-overlays" => "Race Overlays",
@@ -1418,14 +1436,26 @@ pub fn layout(request: Request) -> Result<Frame> {
             // A full shared room lists 20 riders: switch to columns of
             // compact rows once they no longer fit above Back.
             let count = request.lobby_players.len().max(1);
-            let max_rows = (((h - 170.) / 44.).floor() as usize).max(1);
+            // Quick chat adds Mute all chat above Back.
+            let space = h - if request.lobby_chat { 222. } else { 170. };
+            let max_rows = ((space / 44.).floor() as usize).max(1);
             let columns = count.div_ceil(max_rows);
             let rows = count.div_ceil(columns).max(5);
-            let row = ((h - 170.) / rows as f32).clamp(36., 64.);
+            let row = (space / rows as f32).clamp(36., 64.);
             let column_w = (w - 48. - (columns - 1) as f32 * 8.) / columns as f32;
             for (i, player) in request.lobby_players.iter().enumerate() {
                 let x = 24. + (i / rows) as f32 * (column_w + 8.);
                 let y = 96. + (i % rows) as f32 * row;
+                // Each other rider's safety page: a square button at the
+                // row's end (research/QUICK_CHAT.md).
+                let options = request.lobby_chat && player.value != "self";
+                let size = row.max(44.).min(column_w / 2.);
+                let full_w = column_w;
+                let column_w = if options {
+                    column_w - size - 4.
+                } else {
+                    column_w
+                };
                 if player.value == "self" || player.value == "waiting" {
                     let label = if player.value == "waiting" {
                         format!("{} / waiting", player.label)
@@ -1452,11 +1482,104 @@ pub fn layout(request: Request) -> Result<Frame> {
                     );
                     f.hits.last_mut().unwrap().label = label;
                 }
+                if options {
+                    let action = format!("rider:{}", player.id);
+                    f.choices.push(action.clone());
+                    f.button(
+                        "...",
+                        &action,
+                        [x + full_w - size, y, size, row],
+                        request.selection == f.choices.len() - 1,
+                    );
+                    f.hits.last_mut().unwrap().label = format!("{}: Mute/Report", player.label);
+                }
+            }
+            if request.lobby_chat {
+                f.choices.push("muteall".into());
+                f.button(
+                    if request.chat_mute_all {
+                        "Chat: Muted"
+                    } else {
+                        "Chat: On"
+                    },
+                    "muteall",
+                    [24., h - 122., w - 48., 48.],
+                    request.selection == f.choices.len() - 1,
+                );
+                f.hits.last_mut().unwrap().label = "Mute all chat".into();
             }
             f.choices.push("pause".into());
             f.button(
                 "Back",
                 "pause",
+                [24., h - 70., w - 48., 48.],
+                request.selection == f.choices.len() - 1,
+            );
+        }
+        "rider" => {
+            // One rider's quick-chat safety: spawn beside, mute, block and
+            // a one-tap report with a fixed reason.
+            let rider = request.rider.clone().ok_or("no rider")?;
+            let flag = |c: char| rider.value.contains(c);
+            f.text(
+                rider.label.clone(),
+                [24., 72.],
+                1.,
+                FONT,
+                "235,235,235",
+                w - 48.,
+            );
+            let id = &rider.id;
+            let name = &rider.label;
+            let mut rows: Vec<(String, String)> = Vec::new();
+            if flag('r') {
+                rows.push((format!("Spawn beside {name}"), format!("spawn:{id}")));
+            }
+            rows.push((
+                format!("{} {name}", if flag('m') { "Unmute" } else { "Mute" }),
+                format!("mute:{id}"),
+            ));
+            rows.push((
+                format!("{} {name}", if flag('b') { "Unblock" } else { "Block" }),
+                format!("block:{id}"),
+            ));
+            let full = (w - 48.).min(380.);
+            let mut y = 100.;
+            for (label, action) in rows {
+                f.choices.push(action.clone());
+                f.button(
+                    &label,
+                    &action,
+                    [24., y, full, 48.],
+                    request.selection == f.choices.len() - 1,
+                );
+                y += 56.;
+            }
+            f.text("Report", [24., y + 22.], 0.9, FONT, "210,210,210", full);
+            y += 34.;
+            let third = (full - 16.) / 3.;
+            for (i, (label, reason)) in [
+                ("Name", "name"),
+                ("Griefing", "griefing"),
+                ("Cheating", "cheating"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let action = format!("report:{id}:{reason}");
+                f.choices.push(action.clone());
+                f.button(
+                    label,
+                    &action,
+                    [24. + i as f32 * (third + 8.), y, third, 48.],
+                    request.selection == f.choices.len() - 1,
+                );
+                f.hits.last_mut().unwrap().label = format!("Report {label}");
+            }
+            f.choices.push("players".into());
+            f.button(
+                "Back",
+                "players",
                 [24., h - 70., w - 48., 48.],
                 request.selection == f.choices.len() - 1,
             );
@@ -2507,6 +2630,9 @@ mod tests {
             lobby_host: false,
             lobby_started: false,
             lobby_public: false,
+            lobby_chat: false,
+            chat_mute_all: false,
+            rider: None,
             width: w,
             height: h,
             selection: 0,
@@ -2658,6 +2784,79 @@ mod tests {
         let mut input = request("lobby", 390., 844.);
         input.lobby_public = true;
         assert_eq!(layout(input).unwrap().choices, ["leave"]);
+    }
+    #[test]
+    fn chat_rooms_offer_each_rider_a_safety_page() {
+        let mut input = request("players", 390., 844.);
+        input.lobby_chat = true;
+        input.lobby_players = vec![
+            ControlRow {
+                id: "0".into(),
+                label: "Me (You)".into(),
+                value: "self".into(),
+            },
+            ControlRow {
+                id: "1".into(),
+                label: "Bo".into(),
+                value: "ready".into(),
+            },
+            ControlRow {
+                id: "2".into(),
+                label: "Cy".into(),
+                value: "waiting".into(),
+            },
+        ];
+        let players = layout(input).unwrap();
+        assert_eq!(
+            players.choices,
+            ["spawn:1", "rider:1", "rider:2", "muteall", "pause"]
+        );
+        let label = |frame: &Frame, action: &str| {
+            frame
+                .hits
+                .iter()
+                .find(|h| h.action == action)
+                .unwrap()
+                .label
+                .clone()
+        };
+        assert_eq!(label(&players, "rider:1"), "Bo: Mute/Report");
+        assert_eq!(label(&players, "muteall"), "Mute all chat");
+        let mut input = request("rider", 390., 844.);
+        input.rider = Some(ControlRow {
+            id: "1".into(),
+            label: "Bo".into(),
+            value: "mr".into(),
+        });
+        let rider = layout(input).unwrap();
+        assert_eq!(
+            rider.choices,
+            [
+                "spawn:1",
+                "mute:1",
+                "block:1",
+                "report:1:name",
+                "report:1:griefing",
+                "report:1:cheating",
+                "players"
+            ]
+        );
+        assert_eq!(label(&rider, "mute:1"), "Unmute Bo");
+        assert_eq!(label(&rider, "block:1"), "Block Bo");
+        for hit in rider.hits.iter().filter(|h| h.action != "players") {
+            assert!(
+                hit.rect[3] >= 48. && hit.rect[0] + hit.rect[2] <= rider.width + 0.5,
+                "{:?}",
+                hit.rect
+            );
+        }
+        let mut bad = request("rider", 390., 844.);
+        bad.rider = Some(ControlRow {
+            id: "1".into(),
+            label: "Bo".into(),
+            value: "x".into(),
+        });
+        assert!(layout(bad).is_err());
     }
     #[test]
     fn full_shared_room_players_fit_above_back_on_phones_and_desktop() {

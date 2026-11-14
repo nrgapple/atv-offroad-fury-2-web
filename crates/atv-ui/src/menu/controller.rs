@@ -32,6 +32,13 @@ pub enum Event {
     Jukebox(super::jukebox::JukeboxAction),
     /// Players → Spawn beside this rider's slot.
     Spawn(u8),
+    /// A rider's page: mute or unmute, block or unblock, report with a
+    /// fixed reason (research/QUICK_CHAT.md).
+    Mute(u8),
+    Block(u8),
+    Report(u8, &'static str),
+    /// Players → Mute all chat.
+    MuteAll,
     /// The Waypoint Editor's Save Course.
     SaveCourse,
     /// Leave Game: leave the multiplayer room.
@@ -77,6 +84,13 @@ pub struct Lobby {
     pub games: Vec<(u8, &'static str)>,
     /// The host may start room Freestyle on the room's course.
     pub freestyle: bool,
+    /// The room relays quick chat: each rider gets a safety page.
+    pub chat: bool,
+    /// Mute all chat is on.
+    pub mute_all: bool,
+    /// Riders muted or blocked, by slot.
+    pub muted: Vec<u8>,
+    pub blocked: Vec<u8>,
 }
 
 /// The settings a pause action may change.
@@ -136,6 +150,8 @@ pub struct PauseMenu {
     music_page: usize,
     binding_row: usize,
     capture: Option<Capture>,
+    /// The rider page's slot.
+    rider: Option<u8>,
     /// Opened from the frontend's main menu: Settings is the root page.
     pub from_menu: bool,
     /// The ride can return to the engine's own frontend (Quit to Main Menu).
@@ -197,6 +213,7 @@ fn parent(page: &str) -> &'static str {
         "controller-settings" | "bindings" => "controls",
         "ecosystem-warning" => "game-settings",
         "pause" | "players" | "jukebox" => "pause",
+        "rider" => "players",
         _ => "settings",
     }
 }
@@ -218,6 +235,7 @@ impl PauseMenu {
             music_page: 0,
             binding_row: 0,
             capture: None,
+            rider: None,
             from_menu: false,
             frontend: false,
             notice: None,
@@ -598,6 +616,24 @@ impl PauseMenu {
                 .iter()
                 .map(|(id, label, value)| json!({"id": id.to_string(), "label": label, "value": value}))
                 .collect();
+            request["lobby_chat"] = lobby.chat.into();
+            request["chat_mute_all"] = lobby.mute_all.into();
+            if let Some((id, label, value)) = self
+                .rider
+                .and_then(|r| lobby.players.iter().find(|(id, ..)| *id == r))
+            {
+                let mut flags = String::new();
+                if lobby.muted.contains(id) {
+                    flags.push('m');
+                }
+                if lobby.blocked.contains(id) {
+                    flags.push('b');
+                }
+                if *value == "ready" {
+                    flags.push('r');
+                }
+                request["rider"] = json!({"id": id.to_string(), "label": label, "value": flags});
+            }
         }
         request
     }
@@ -756,6 +792,25 @@ impl PauseMenu {
             _ if action.starts_with("spawn:") => {
                 return action[6..].parse().ok().map(Event::Spawn);
             }
+            _ if action.starts_with("rider:") => {
+                self.rider = action[6..].parse().ok();
+                self.show("rider");
+                return None;
+            }
+            _ if action.starts_with("mute:") => {
+                return action[5..].parse().ok().map(Event::Mute);
+            }
+            _ if action.starts_with("block:") => {
+                return action[6..].parse().ok().map(Event::Block);
+            }
+            _ if action.starts_with("report:") => {
+                let (id, reason) = action[7..].split_once(':')?;
+                let reason = ["name", "griefing", "cheating"]
+                    .into_iter()
+                    .find(|r| *r == reason)?;
+                return id.parse().ok().map(|id| Event::Report(id, reason));
+            }
+            "muteall" => return Some(Event::MuteAll),
             "jukebox" => {
                 self.show("jukebox");
                 return None;
