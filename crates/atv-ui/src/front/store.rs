@@ -301,10 +301,7 @@ impl Frontend {
                     _ => {}
                 }
                 self.save_store(settings);
-                if matches!(
-                    code,
-                    "WIDESCRN" | "FLYPAPER" | "GETONUP" | "STOPCAM" | "SYNC30HZ"
-                ) {
+                if matches!(code, "WIDESCRN" | "FLYPAPER" | "GETONUP" | "SYNC30HZ") {
                     format!("{message} (not available in this port)")
                 } else {
                     message.to_string()

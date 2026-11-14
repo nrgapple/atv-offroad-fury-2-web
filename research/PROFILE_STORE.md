@@ -138,8 +138,9 @@ whether G-Ride is listed in the store.
   created on this device Unlock Everything; it is a device setting like the
   rest of Game Settings, while the unlocks themselves live in the profiles
   and travel with the Pass Key ([CLOUD_SAVE.md](CLOUD_SAVE.md)).
-- **Limits.** The session cheats WIDESCRN, FLYPAPER, GETONUP, STOPCAM and SYNC30HZ
-  report "(not available in this port)"; EATDIRT and BRINGIT arm the next
+- **Limits.** The session cheats WIDESCRN, FLYPAPER, GETONUP and SYNC30HZ
+  report "(not available in this port)"; STOPCAM toggles the after-finish
+  stop action camera (`RACING.md`, "STOPCAM"); EATDIRT and BRINGIT arm the next
   Single Race's AI cheats; no G-Ride memory-card reward.
 
 Checks: `atv-core` store tests (catalogs, new-profile ownership, purchase
