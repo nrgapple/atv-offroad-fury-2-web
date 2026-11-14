@@ -65,7 +65,8 @@ try {
   };
   // 1. Main Menu leads with Quick Play once the server says it runs it.
   const one = await open({ width: 1280, height: 720 });
-  await one.goto(`${base}/play.html?${flags}&name=QPOne`);
+  // No `name=`: with a name the link is a ride link and skips the menus.
+  await one.goto(`${base}/play.html?${flags}`);
   await until(one, ui, s => s.front?.page === 'title', 120000, 'title');
   await one.mouse.click(8, 8);
   await key(one, 'Enter');

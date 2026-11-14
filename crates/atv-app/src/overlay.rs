@@ -1703,6 +1703,7 @@ impl Overlay {
         if self.results.shown && active {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
+        self.paint_quickplay();
         if let Some(chat) = chat {
             atv_ui::hud::chat::paint_feed(&mut self.fonts, &mut self.list, &view, &chat.feed);
             self.chat.post = self.results.shown && self.lobby.is_some();
@@ -1840,7 +1841,11 @@ impl Overlay {
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(hits);
         }
-        // Quick Play's panel sits over the ride (and the round's results).
+    }
+
+    /// Quick Play's panel over the ride (and the round's results).
+    fn paint_quickplay(&mut self) {
+        let view = self.view;
         if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
             && let Some(element) = atv_ui::hud::quickplay::element(&view, state)
         {
