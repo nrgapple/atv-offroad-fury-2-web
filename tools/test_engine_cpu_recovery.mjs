@@ -12,7 +12,7 @@ try {
   await page.goto(url('/play.html?venue=sx15&race=1&laps=1&cpu=4&difficulty=2&seed=7&weather=off&script=storage'));
   await page.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 240000 });
   const trace = JSON.parse(await page.locator('#trace').textContent());
-  const race = trace.at(-1).race;
+  const race = trace.race;
   const cpus = race.standings.filter(r => !r.player);
   assert.equal(cpus.length, 4);
   assert.ok(cpus.every(r => r.time != null), JSON.stringify(cpus));

@@ -18,8 +18,6 @@
 //!    [`STALL_SECONDS`] while riding: the caller resets the CPU to a validated point further along
 //!    the route (instead of the accepted point, or in Enduro the rider's
 //!    own last valid position, which put a pinned CPU back where it stood).
-//!    The assist stays active until CLEAR beyond that placement: dropping it
-//!    at the skip could restore the same speed cap/lane failure on the ramp.
 //!
 //! Pure and deterministic (f32 arithmetic on the fixed race step, no clock),
 //! applied to CPU riders and to the race path driver while it rides the
@@ -41,7 +39,10 @@ pub const SKIP_REPEATS: u32 = 3;
 /// Race distance past a repeated reset that clears the escalation.
 pub const CLEAR: f32 = 400.;
 /// Route distances tried, in order, for a skip-ahead reset point.
-pub const SKIP_DISTANCES: [f32; 8] = [80., 120., 160., 200., 260., 320., 400., 500.];
+// An 80-foot placement can still be on the same ramp approach (sx15) or
+// inside the same corner/jump complex (sx03/sx05). Once recovery escalates,
+// place beyond that approach; Race still clamps before finish/Enduro gates.
+pub const SKIP_DISTANCES: [f32; 6] = [320., 360., 400., 440., 480., 500.];
 
 /// What the race should do for this CPU now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +72,6 @@ pub struct Recovery {
     repeats: u32,
     /// Race distance at which the escalation clears.
     clear_at: f32,
-    /// Keep assistance through a skip until the rider clears the hazard.
-    assisted: bool,
     /// Skip-ahead resets requested (for traces and tests).
     pub skips: u32,
     /// Times the assist switched on (for traces and tests).
@@ -93,9 +92,8 @@ impl Recovery {
                 self.since_progress = 0.;
             }
         }
-        if (self.repeats > 0 || self.assisted) && distance >= self.clear_at {
+        if self.repeats > 0 && distance >= self.clear_at {
             self.repeats = 0;
-            self.assisted = false;
         }
         if riding && (self.since_progress > STALL_SECONDS || self.repeats >= SKIP_REPEATS) {
             return Action::SkipAhead;
@@ -111,9 +109,8 @@ impl Recovery {
             .is_some_and(|previous| (distance - previous).abs() < SAME_PLACE);
         if repeat {
             self.repeats += 1;
-            if self.repeats == ASSIST_REPEATS && !self.assisted {
+            if self.repeats == ASSIST_REPEATS {
                 self.assists += 1;
-                self.assisted = true;
             }
         } else {
             self.repeats = 0;
@@ -125,10 +122,6 @@ impl Recovery {
     /// A skip-ahead reset was made; the CPU is now at race `distance`.
     pub fn skipped(&mut self, distance: f32) {
         self.skips += 1;
-        if !self.assisted {
-            self.assists += 1;
-            self.assisted = true;
-        }
         self.repeats = 0;
         self.last_reset = Some(distance);
         self.clear_at = distance + CLEAR;
@@ -137,7 +130,7 @@ impl Recovery {
     }
 
     pub fn assist(&self) -> Assist {
-        let on = self.assisted;
+        let on = self.repeats >= ASSIST_REPEATS;
         Assist {
             no_leader_limit: on,
             centre_lane: on,
@@ -178,20 +171,9 @@ mod tests {
         // Not while wrecked: the skip waits for the rider.
         assert_eq!(r.observe(995., false, DT), Action::None);
         r.skipped(1200.);
-        assert!(r.assist().no_leader_limit && r.assist().centre_lane);
+        assert_eq!(r.assist(), Assist::default());
         assert_eq!(r.observe(1200., true, DT), Action::None);
         assert_eq!((r.assists, r.skips), (1, 1));
-    }
-
-    #[test]
-    fn a_skip_keeps_assistance_until_clear_even_without_another_reset() {
-        let mut r = Recovery::default();
-        r.skipped(1200.);
-        assert!(r.assist().no_leader_limit && r.assist().centre_lane);
-        r.observe(1599., true, DT);
-        assert!(r.assist().no_leader_limit);
-        r.observe(1600., true, DT);
-        assert_eq!(r.assist(), Assist::default());
     }
 
     #[test]
