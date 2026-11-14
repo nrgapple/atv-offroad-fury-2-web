@@ -1,0 +1,14 @@
+{
+  "id": "full-race-replay-from-the-results-screen-646-part-of-5-545b4ca0050f4b71b73e886a0436d6c3",
+  "timestamp": "2026-11-14T20:03:58.388188+00:00",
+  "recorded_at": "2026-11-14T20:08:36.827499+00:00",
+  "kind": "build",
+  "title": "Full-race replay from the Results screen (#646, part of #542)",
+  "summary": "After a race, Results then Replay now plays the whole race from the grid before GO to 3 s after the finish: player, CPUs, split-screen riders and ghost, with the existing Chase, Trackside and Orbit cameras, play/pause, 2 s skip, slow motion and photo mode. The hint reads RACE REPLAY m:ss / m:ss.",
+  "details": [
+    "The #572 recorder was extended to 15 Hz with a fixed 24 MiB budget that halves the sample rate when full, and node matrices are quantised to 16 bits. On sx01 (1 lap, 3 CPUs, 1:16) the buffer is 9.6 MiB versus 78.6 MiB for the old layout. Also fixed: a mouse or touch press on the Results Replay button did nothing. Evidence: no full-race replay exists in the original executable (only the STOPCAM cheat's strings), so this is an approved enhancement, not original behavior. Verification: 11 recorder unit tests, new test_engine_race_replay.mjs, test_engine_replay.mjs and make precheck; host only."
+  ],
+  "limitation": "No replay sound or particles; online races are not recorded; long races play back at a coarser rate after thinning; not measured on a phone.",
+  "image": "/devlog-images/full-race-replay-from-the-results-screen-646-part-of-5-545b4ca0050f4b71b73e886a0436d6c3.png",
+  "caption": "Replay at the grid before GO"
+}
