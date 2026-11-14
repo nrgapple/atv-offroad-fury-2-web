@@ -126,6 +126,8 @@ pub struct Results {
     /// Menu]`): the summary lines replace the standings; Restart Objective
     /// and Continue (back to Select Objective) replace the race choices.
     pub objective: Option<String>,
+    /// Classic uses timed-event wording on the shared Freestyle results.
+    pub classic: bool,
     /// A mini-game's over page (`HockeyOver Menu`): its title; the summary
     /// is `objective`'s, with Restart Game and Quit to Main Menu.
     pub game: Option<String>,
@@ -772,6 +774,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 HIDE => "Hide Menu",
                 REPLAY => "Replay",
                 RETRY if state.game.is_some() => "Restart Game",
+                RETRY if state.classic => "Restart Event",
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
@@ -845,6 +848,8 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 "Congratulations"
             } else if let Some(title) = &state.game {
                 title.as_str()
+            } else if state.classic {
+                "Classic Freestyle"
             } else if state.objective.is_some() {
                 "Objectives"
             } else {

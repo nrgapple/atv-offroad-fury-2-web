@@ -26,6 +26,7 @@ export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'brok
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
+  'test_engine_classic_freestyle.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
