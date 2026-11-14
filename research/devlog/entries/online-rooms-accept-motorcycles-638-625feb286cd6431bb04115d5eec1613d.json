@@ -1,0 +1,15 @@
+{
+  "id": "online-rooms-accept-motorcycles-638-625feb286cd6431bb04115d5eec1613d",
+  "timestamp": "2026-11-14T19:04:44+00:00",
+  "recorded_at": "2026-11-14T21:12:24.196342+00:00",
+  "kind": "build",
+  "title": "Online rooms accept motorcycles (#638)",
+  "summary": "Online rooms no longer refuse motorcycles. A guest now sees the host's bike, posed and engine-sounding, in the same room as ATVs.",
+  "details": [
+    "Wire format (atv-net protocol 6, compatible): vehicles 1-46 are valid actors. A motorcycle pose keeps the ATV blocks for body, rider root and engine; a second block carries the bike linkage (steering, wheel spin, suspension) and the MX rider's 22 model-space bones, with scale/shear only when off identity. A bike pose is about 560-700 bytes and deltas skip unchanged blocks. A new HELLO bit, MOTORCYCLES, is sent only when the room claim says motorcycles are allowed; fury-server sends bike poses only to builds that said it, so older builds list the rider but draw nobody for it. Remote bikes load from the MX archive, are posed from the snapshot and play their MX engine. The online garage lists the motorcycles and the room refusals and ATV01 fallbacks are gone. Every room mode follows Single Player, which has no mode-specific motorcycle rule; room race CPUs still ride ATVs.",
+    "Verification (host, local fury-server): atv-net codec tests (round trip, deltas, bounds, frames, interpolation), a fury-server routing test, atv-ui and atv-game unit tests, and the new test_engine_multiplayer_motorcycle.mjs passed: the guest posed the host's bike 30 with 22 bones and watched it ride 62.8 ft while the host drew the guest's ATV. multiplayer_context, multiplayer_race and multiplayer_end also passed."
+  ],
+  "limitation": "Host browser tests against a local server only; no physical-phone or public-server multiplayer session was measured. Room race CPUs do not ride motorcycles.",
+  "image": "/devlog-images/online-rooms-accept-motorcycles-638-625feb286cd6431bb04115d5eec1613d.png",
+  "caption": "Guest's view in a local online room: the host's motorcycle (tagged BikeHost) rides beside the guest's ATV 99. Host Chromium capture."
+}

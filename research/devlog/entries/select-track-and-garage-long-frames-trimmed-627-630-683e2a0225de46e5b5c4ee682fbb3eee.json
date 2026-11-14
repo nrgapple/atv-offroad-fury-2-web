@@ -1,0 +1,12 @@
+{
+  "id": "select-track-and-garage-long-frames-trimmed-627-630-683e2a0225de46e5b5c4ee682fbb3eee",
+  "timestamp": "2026-11-14T17:09:04+00:00",
+  "recorded_at": "2026-11-14T21:12:25.096562+00:00",
+  "kind": "build",
+  "title": "Select Track and Garage long frames trimmed (#627, #630)",
+  "summary": "Two host-measured performance fixes cut long frames when stepping through courses and vehicles on a throttled phone-sized viewport.",
+  "details": [
+    "Select Track (#627) rebuilt the whole Taffy layout tree for every course selection; it now retains the background and content trees and rebuilds only on structural change (paint and raster unchanged). Host Chromium, 4x CPU throttle, 390x844 DPR3 touch, three fresh contexts: changed-course layout medians 26.8-29.2 ms to 10.5-12.9 ms. Garage (#630) rebuilt identical shader and pipeline state for each new vehicle and rider; that immutable GPU setup is now shared. Slowest post-load motorcycle tasks 256/248/206 ms to 82/87/70 ms; new programs per ATV/motorcycle step 1/2 to 0/0. ATV tasks went 84/99/83 ms to 122/80/75 ms, so no ATV improvement is claimed."
+  ],
+  "limitation": "Host Chromium only, no physical-phone measurements. Select Track upload samples still reach 114 ms and fresh-context tasks near half a second remain. Garage ATV builds still reach 122 ms, motorcycles 87 ms post-load, and the first fresh-process tap 613 ms (519 ms of it in AudioContext construction). No screenshots were captured."
+}

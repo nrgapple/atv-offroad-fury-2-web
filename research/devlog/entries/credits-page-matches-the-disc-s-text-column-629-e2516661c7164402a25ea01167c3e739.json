@@ -1,0 +1,14 @@
+{
+  "id": "credits-page-matches-the-disc-s-text-column-629-e2516661c7164402a25ea01167c3e739",
+  "timestamp": "2026-11-14T16:52:56+00:00",
+  "recorded_at": "2026-11-14T21:12:25.372051+00:00",
+  "kind": "build",
+  "title": "Credits page matches the disc's text column (#629)",
+  "summary": "The Credits page now follows the original disc script's text rectangle, left justification and name indent, with a full-width portrait adaptation.",
+  "details": [
+    "PAGE18.RES credits.txt specifies x=359-640 on a 640x448 page, left justification and a 10-pixel name indent. Landscape now uses the right-hand column with that alignment; portrait stays readable at full width. All credit text, scroll speed and colors still load from the disc script at runtime, and no names or game resources are added to Git. Passed on the host: Credits parser tests, both UI geometry/scroll tests, make web, make precheck and tools/test_engine_credits.mjs on /play.html (original script rectangle and indent, scrolling, Back navigation, portrait resize)."
+  ],
+  "limitation": "Host Chromium only. Differences from the original remain: logos, original font, animated backdrop, and the port's header and Back area (research/MENU_FLOW.md).",
+  "image": "/devlog-images/credits-page-matches-the-disc-s-text-column-629-e2516661c7164402a25ea01167c3e739.png",
+  "caption": "Credits in landscape: headings and names sit in the right-hand column, names indented under left-aligned headings. Host Chromium capture; text comes from the disc script at runtime."
+}
