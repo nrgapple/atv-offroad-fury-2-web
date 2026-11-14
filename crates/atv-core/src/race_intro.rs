@@ -12,33 +12,33 @@ use crate::Result;
 use crate::math::Det;
 
 type V = [f32; 3];
-fn add(a: V, b: V) -> V {
+pub(crate) fn add(a: V, b: V) -> V {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
-fn sub(a: V, b: V) -> V {
+pub(crate) fn sub(a: V, b: V) -> V {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
-fn scale(a: V, s: f32) -> V {
+pub(crate) fn scale(a: V, s: f32) -> V {
     [a[0] * s, a[1] * s, a[2] * s]
 }
-fn dot(a: V, b: V) -> f32 {
+pub(crate) fn dot(a: V, b: V) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
-fn cross(a: V, b: V) -> V {
+pub(crate) fn cross(a: V, b: V) -> V {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
 }
-fn length(a: V) -> f32 {
+pub(crate) fn length(a: V) -> f32 {
     dot(a, a).sqrt()
 }
-fn normalize(a: V) -> V {
+pub(crate) fn normalize(a: V) -> V {
     let l = length(a);
     if l > 0. { scale(a, 1. / l) } else { a }
 }
-fn lerp(a: V, b: V, t: f32) -> V {
+pub(crate) fn lerp(a: V, b: V, t: f32) -> V {
     add(a, scale(sub(b, a), t))
 }
 /// The cutscene camera's low-pass filters: v += min(dt, τ)/τ · (target − v).
@@ -303,7 +303,7 @@ impl Intro {
     }
 }
 /// Rodrigues rotation about an axis used as given (not normalized).
-fn rotate(k: V, angle: f32, v: V) -> V {
+pub(crate) fn rotate(k: V, angle: f32, v: V) -> V {
     let (s, c) = angle.sin_cos_d();
     add(
         add(scale(v, c), scale(cross(k, v), s)),

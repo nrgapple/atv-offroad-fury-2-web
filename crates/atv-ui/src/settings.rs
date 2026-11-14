@@ -249,6 +249,61 @@ pub fn save_hall_of_fame(
     serde_json::to_string(hall).is_ok_and(|text| settings.set(HALL_OF_FAME_KEY, &text))
 }
 
+/// The rider's medals, weekly results and personal best ghost index
+/// (`atv_core::medals::MedalBook`; research/GHOST_CHALLENGES.md).
+pub const MEDALS_KEY: &str = "fury-medals";
+/// A course's personal best ghost: `fury-pb-ghost:<course>`, the ghost's
+/// bytes (`atv_core::world_ghost`) as base64.
+pub const PB_GHOST_PREFIX: &str = "fury-pb-ghost:";
+
+pub fn load_medals(settings: &Settings) -> atv_core::medals::MedalBook {
+    settings
+        .get(MEDALS_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_medals(settings: &mut Settings, book: &atv_core::medals::MedalBook) -> bool {
+    serde_json::to_string(book).is_ok_and(|text| settings.set(MEDALS_KEY, &text))
+}
+
+/// A lap that keeps records (or Lap Attack's best lap): its medal goes into
+/// the book and its ghost, when quicker than the course's kept one, becomes
+/// the personal best ghost. Returns the medal and whether it is new.
+pub fn record_medal_lap(
+    settings: &mut Settings,
+    course: &str,
+    lap_ms: u32,
+    ghost: Option<&atv_core::world_ghost::Lap>,
+) -> Option<(atv_core::medals::Medal, bool)> {
+    let mut book = load_medals(settings);
+    let medal = book.record_lap(course, lap_ms);
+    if let Some(lap) = ghost.filter(|g| g.course == course && g.lap_ms == lap_ms)
+        && book.ghosts.get(course).is_none_or(|kept| lap_ms < *kept)
+        && let Some(bytes) = atv_core::world_ghost::encode(lap)
+        && settings.set(
+            &format!("{PB_GHOST_PREFIX}{course}"),
+            &atv_core::world_ghost::to_base64(&bytes),
+        )
+    {
+        book.ghosts.insert(course.to_string(), lap_ms);
+    }
+    save_medals(settings, &book);
+    medal
+}
+
+/// The course's personal best ghost, as a rival named "PB".
+pub fn load_pb_ghost(settings: &Settings, course: &str) -> Option<atv_core::world_ghost::Rival> {
+    let text = settings.get(&format!("{PB_GHOST_PREFIX}{course}"))?;
+    let bytes = atv_core::world_ghost::from_base64(&text)?;
+    let lap = atv_core::world_ghost::decode(&bytes).ok()?;
+    (lap.course == course).then(|| atv_core::world_ghost::Rival {
+        name: "PB".into(),
+        time: lap.lap_ms as f32 / 1000.,
+        lap,
+    })
+}
+
 /// bindings.js `storageError`: the notice when a binding cannot be saved.
 pub const STORAGE_ERROR: &str = "Settings work for this session; browser storage is unavailable.";
 

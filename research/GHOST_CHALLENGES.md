@@ -8,10 +8,6 @@ id or trace stored). [J] marks judgment, [M] a measurement, [S] a source in
 `private/reports/multiplayer-product-research-2026-11-14.md` (§6 async
 competition, §8 light anti-cheat).
 
-Status: the Worker parts (ghost retention, the weekly board, its cuts) ship
-first; the game's medals, ghost picker and weekly page follow in the next
-change of #637.
-
 ## Medals
 
 - **Author time.** Each measured race course's author time is its fastest
@@ -27,6 +23,13 @@ change of #637.
   about a mid-board house rider and Author asks a rider to match the game's
   best]. A course without a measurement has no medals. Normal and Expert
   share them: the difficulty changes the CPUs, not the course.
+- **Shown.** The race results reveal the best lap's medal coin with a quick
+  pop (0.45 s, once the Hall of Fame name is entered) and NEW when it beats
+  the course's medal before; Lap Attack says "Gold Medal!" on a lap that
+  earns a better medal; Single Race's course list shows each course's coin;
+  Profile Overview shows a strip of coins and weekly badges with counts.
+  The rider's best lap per course is kept on this device (`fury-medals`,
+  `atv_core::medals::MedalBook`); it is not part of the Pass Key cloud save.
 - **Where a medal is earned.** Any single-player lap the world boards could
   take or that Lap Attack judges for its best lap. Assisted runs, Kid Mode,
   Practice, split screen and online races earn none (the world boards'
@@ -51,8 +54,11 @@ band gets one; uploads and placed laps settle the board in the same request
 Lap Attack's setup offers a **Ghost** row: PB, a medal ghost, Rival and #1
 (only the choices that exist are offered).
 
+- **Off** (the default): the original Lap Attack, whose ghost is the
+  session's own best lap.
 - **PB**: the rider's own best Lap Attack or race lap on the course, kept on
-  this device.
+  this device (`fury-pb-ghost:<course>`, the world ghost format as base64;
+  replaced only by a quicker lap).
 - **Medal**: the next medal the rider has not earned. Its ghost is the
   stored ghost nearest at or under that medal's time; when none is within
   1 % under it, the nearest ghost either side stands in and the choice reads
@@ -145,3 +151,31 @@ Cloudflare's published D1 free limits (assumed current): 5 M rows read and
   submissions a day that is at most 2 M rows; past that the percentile
   should come from the cuts instead of a count. [J: the server's peak so far
   was 150 riders online, mostly in Free Ride.]
+
+## Evidence
+
+- `atv_core::medals` unit tests: the author table equals `MEASURED_LAP`
+  (read from `board_seeds.mjs`), medal times and the earned/next rules, the
+  book, ISO weeks and the weekly pick pinned to the Worker's, badges, and the
+  medal/rival/#1 ghost picks. `atv_core::world_board`: the weekly answer's
+  line and board fields. `atv_ui` `world_page`: the Ghost row's choices and
+  the events they start, the Weekly Challenge row, page, band and start, the
+  profile strip's counts; `medal`: the reveal curve.
+- `cloudflare/weekly.test.mjs` and `ghosts.test.mjs`: weeks, the pick, the
+  weekly checks, every finisher kept, the percentile, the cron's cuts,
+  freezing and deletion; the ghost bands.
+- `tools/test_engine_ghost_challenges.mjs` (the Worker in the test process
+  over SQLite D1, as `test_engine_world_ghosts.mjs`): a two-lap race by the
+  race path driver reveals its medal and keeps the PB ghost, Lap Attack's
+  Ghost row offers Off, PB, the medal ghost, Rival and #1 from the board, Rival
+  starts Lap Attack against that ghost, and the Weekly Challenge page shows
+  the rider's band from the cron's cuts.
+
+## Limits
+
+- No human lap was measured, so how hard the medals are for a person is
+  untested; the author times are the game's own driver's.
+- Medals, weekly results and the PB ghost live on one device.
+- A weekly race's "no CPUs" is the client's: the server cannot tell.
+- The browser test runs on host Chromium only (no phone, no desktop app) and
+  never against production D1.
