@@ -232,7 +232,7 @@ async fn claim(
         .admission
         .lock()
         .expect("admission lock")
-        .room(ip, now_ms())
+        .claim(ip, now_ms())
     {
         shared
             .metrics

@@ -7,9 +7,13 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-/// Room creations and Free Ride claims: a burst of 30, then one every 2 s.
+/// Private room creations: a burst of 30, then one every 2 s.
 const ROOMS_BURST: f64 = 30.;
 const ROOMS_PER_MS: f64 = 1. / 2000.;
+/// Free Ride claims (a slot in a shared room, not a new room): a whole
+/// class arriving together, then two a second, like the sockets they open.
+const CLAIMS_BURST: f64 = 120.;
+const CLAIMS_PER_MS: f64 = 2. / 1000.;
 /// Room sockets opened: a burst of 120, then two a second.
 const SOCKETS_BURST: f64 = 120.;
 const SOCKETS_PER_MS: f64 = 2. / 1000.;
@@ -21,6 +25,7 @@ const REMEMBERED: usize = 10_000;
 #[derive(Clone, Copy, Debug)]
 struct Address {
     rooms: f64,
+    claims: f64,
     sockets: f64,
     open: u32,
     at_ms: u64,
@@ -30,11 +35,15 @@ impl Address {
     fn refill(&mut self, now: u64) {
         let ms = now.saturating_sub(self.at_ms) as f64;
         self.rooms = (self.rooms + ms * ROOMS_PER_MS).min(ROOMS_BURST);
+        self.claims = (self.claims + ms * CLAIMS_PER_MS).min(CLAIMS_BURST);
         self.sockets = (self.sockets + ms * SOCKETS_PER_MS).min(SOCKETS_BURST);
         self.at_ms = now;
     }
     fn idle(&self) -> bool {
-        self.open == 0 && self.rooms >= ROOMS_BURST && self.sockets >= SOCKETS_BURST
+        self.open == 0
+            && self.rooms >= ROOMS_BURST
+            && self.claims >= CLAIMS_BURST
+            && self.sockets >= SOCKETS_BURST
     }
 }
 
@@ -53,6 +62,7 @@ impl Admission {
         }
         let a = self.addresses.entry(ip).or_insert(Address {
             rooms: ROOMS_BURST,
+            claims: CLAIMS_BURST,
             sockets: SOCKETS_BURST,
             open: 0,
             at_ms: now,
@@ -61,7 +71,7 @@ impl Admission {
         a
     }
 
-    /// May `ip` open or claim a room now?
+    /// May `ip` open a private room now?
     pub fn room(&mut self, ip: IpAddr, now: u64) -> bool {
         if ip.is_loopback() {
             return true;
@@ -71,6 +81,19 @@ impl Admission {
             return false;
         }
         a.rooms -= 1.;
+        true
+    }
+
+    /// May `ip` claim a Free Ride slot now?
+    pub fn claim(&mut self, ip: IpAddr, now: u64) -> bool {
+        if ip.is_loopback() {
+            return true;
+        }
+        let a = self.address(ip, now);
+        if a.claims < 1. {
+            return false;
+        }
+        a.claims -= 1.;
         true
     }
 
@@ -116,6 +139,17 @@ mod tests {
             assert!(admission.room("127.0.0.1".parse().unwrap(), 0));
             assert!(admission.socket("::1".parse().unwrap(), 0));
         }
+        // A class joining Free Ride together is not held to the room rate.
+        let school: IpAddr = "192.0.2.10".parse().unwrap();
+        for _ in 0..120 {
+            assert!(admission.claim(school, 0));
+        }
+        assert!(!admission.claim(school, 0));
+        assert!(admission.claim(school, 500));
+        assert!(
+            admission.room(school, 500),
+            "claims leave private rooms alone"
+        );
         // Sockets: a burst, a rate, and a cap on open ones.
         for _ in 0..120 {
             assert!(admission.socket(ip, 0));
