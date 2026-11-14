@@ -53,6 +53,13 @@ try {
     const last = trace.at(-1).origin;
     const travelled = Math.hypot(last[0] - first[0], last[2] - first[2]);
     assert.ok(maxSpeed >= 1 && travelled >= 1, `${course.id}: movement from spawn`);
+    // The trace is published before the first drawn frame. Its initial
+    // diagnostics may still contain zeroed render counters; wait for the
+    // actual completed scenery frame, then keep the venue/geometry assertions.
+    await page.waitForFunction(() => {
+      const state = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+      return state.ride?.environment && state.scenery?.triangles > 0;
+    }, null, { timeout: 120000 });
     const state = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
     assert.equal(state.ride?.environment, course.id, `${course.id}: actual loaded venue`);
     assert.ok(state.scenery?.triangles > 0, `${course.id}: scenery renders`);
