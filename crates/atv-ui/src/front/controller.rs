@@ -4272,7 +4272,13 @@ mod tests {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         let mut front = Frontend::new(tracks(), &settings, true);
-        front.show("classic-courses", &view);
+        front.show("single", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic-courses")
+            .unwrap();
+        front.key("Enter", &view, &mut settings);
         assert_eq!(front.choices()[0].1, "Time Limit: 2:00");
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.classic_minutes, 4);
