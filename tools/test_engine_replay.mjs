@@ -67,13 +67,15 @@ try {
   s = await read(page);
   const fraction = (s.replay.time - first) / (last - first);
   assert.ok(fraction > 0.8 && fraction < 0.98, `scrubbed to ${fraction}`);
-  // The cameras: chase is the recorded ride camera; trackside and orbit
-  // look at the replayed rider from elsewhere.
+  // The cameras: chase is the recorded ride camera; trackside, orbit and
+  // the broadcast (built-in cuts: a free ride has no TV cameras) look at the
+  // replayed rider from elsewhere.
   const chaseEye = s.view.eye;
-  for (const shot of ['Trackside', 'Orbit']) {
+  for (const shot of ['Trackside', 'Orbit', 'Broadcast']) {
     await key(page, 'KeyC');
     s = await read(page);
     assert.equal(s.replay.shot, shot);
+    if (shot === 'Broadcast') assert.ok(!s.replay.authored && s.replay.setup === 'Crane', `built-in broadcast opens wide (${s.replay.setup})`);
     assert.ok(distance(s.view.eye, chaseEye) > 3, `${shot} moves the eye`);
     const toRider = [s.replay.origin[0] - s.view.eye[0], s.replay.origin[2] - s.view.eye[2]];
     const yaw = Math.atan2(toRider[0], toRider[1]);
@@ -120,7 +122,7 @@ try {
   await phone.touchscreen.tap(at.x, at.y);
   await onPage(phone, 'pause');
   assertNoErrors(errors);
-  console.log('PASS: instant replay playback, slow motion, skips, scrub, three cameras, photo from replay, phone controls');
+  console.log('PASS: instant replay playback, slow motion, skips, scrub, four cameras, photo from replay, phone controls');
 } finally {
   await browser.close();
 }
