@@ -176,6 +176,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_motorcycle.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (a Rust host on a motorcycle and an ATV guest); run with --url'
+  },
   'test_engine_multiplayer_presence.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
