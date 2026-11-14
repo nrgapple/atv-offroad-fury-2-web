@@ -61,6 +61,7 @@ pub(super) fn place(
     }
     bike.set_obstacles(sim.obstacles.clone());
     bike.set_materials(Some(sim.materials));
+    bike.set_surface_source(sim.surface_source);
     if let Some(config) = sim.boundary {
         bike.set_boundary(config, sim.extended_boundary)?;
     }

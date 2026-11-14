@@ -175,6 +175,9 @@ pub fn ride_prefetch(
         paths.push(course.archive);
         paths.extend(course.overlay);
         paths.extend(course.placements);
+        if mx_courses::get(environment).is_some() {
+            paths.push("/MX/ADAPTER.RES".into());
+        }
     }
     if let Ok(model) = atv_core::player_models::selection(quad, rider) {
         paths.push(model.quad);
@@ -214,8 +217,11 @@ pub fn race_resource(environment: &str, variant: RaceVariant) -> crate::Result<C
 }
 
 pub fn course_resource(environment: &str, racing: bool) -> crate::Result<CourseResource> {
-    if mx_courses::get(environment).is_some() {
-        return Err("MX venue requires validated runtime support (free ride only)".into());
+    if let Some(course) = mx_course_resource(environment) {
+        if racing || !mx_courses::RUNTIME_SUPPORTED {
+            return Err("MX venue requires validated runtime support (free ride only)".into());
+        }
+        return Ok(course);
     }
 
     if !environments().iter().any(|id| id == environment)

@@ -363,14 +363,36 @@ fn texture_record(data: &[u8], offset: usize, limit: usize) -> Result<TerrainTex
 /// Parse the original embedded IPUM streams without interpreting them as pixels.
 /// Texture upload follows 0x00168490/0x0015a770. This does not decode MPEG/IPU.
 pub fn texture_layout(data: &[u8]) -> Result<TerrainTextures> {
-    if data.len() > 128 * 1024 * 1024 || slice(data, 0, 4)? != b"TR2\0" || u32le(data, 4)? != 6 {
+    texture_layout_profile(data, false)
+}
+
+pub fn pln_texture_layout(data: &[u8]) -> Result<TerrainTextures> {
+    texture_layout_profile(data, true)
+}
+
+fn texture_layout_profile(data: &[u8], mx: bool) -> Result<TerrainTextures> {
+    if mx {
+        if !data.starts_with(b"PLN\x007ps2\x00UnCompressedPSXPal8\x00")
+            || data.len() > 128 * 1024 * 1024
+            || u32le(data, 41)? != 1
+        {
+            return Err("unsupported PLN texture source".into());
+        }
+    } else if data.len() > 128 * 1024 * 1024
+        || slice(data, 0, 4)? != b"TR2\0"
+        || u32le(data, 4)? != 6
+    {
         return Err("unsupported TR2 texture source".into());
     }
-    let palette = u32le(data, 8)?;
+    let palette = if mx { 1 } else { u32le(data, 8)? };
     if palette > 1 {
         return Err("unsupported TR2 palette marker".into());
     }
-    let header = 12 + palette as usize * 1024;
+    let header = if mx {
+        1065
+    } else {
+        12 + palette as usize * 1024
+    };
     let tile_count = u32le(data, header + 16)? as usize;
     if tile_count > 65536 {
         return Err("TR2 tile table exceeds limit".into());
@@ -396,7 +418,30 @@ pub fn texture_layout(data: &[u8]) -> Result<TerrainTextures> {
         if at >= end || end > data.len() {
             return Err("invalid TR2 texture record extent".into());
         }
-        records.push(texture_record(data, at, end)?);
+        records.push(if mx {
+            if end - at != 65560
+                || u32le(data, at)? != 39
+                || u32le(data, at + 4)? != 1
+                || u32le(data, at + 8)? != 256
+                || u32le(data, at + 12)? != 256
+                || u32le(data, at + 16)? != 65536
+            {
+                return Err("unsupported PLN texture record".into());
+            }
+            TerrainTextureRecord {
+                width: 256,
+                height: 256,
+                format: 39,
+                mips: vec![TerrainTextureMip {
+                    width: 256,
+                    height: 256,
+                    offset: at + 24,
+                    bytes: 65536,
+                }],
+            }
+        } else {
+            texture_record(data, at, end)?
+        });
     }
     fn walk(
         data: &[u8],
@@ -718,6 +763,131 @@ impl Heightfield {
     }
 }
 
+/// PLN v7 geometry and preserved per-vertex streams. Surface IDs are
+/// stored as zero-based MX source IDs, not ATV2 material meanings.
+pub struct PlnTerrain {
+    pub terrain: Terrain,
+    pub vertex_streams: Vec<[[u8; 289]; 2]>,
+}
+
+/// MX USA PLN/PS2 raw tiles (00475100), with the shared node hierarchy.
+/// Geometry uses the source spacing and positive X/Z frame, without rescaling.
+pub fn decode_pln(data: &[u8]) -> Result<PlnTerrain> {
+    if data.len() > 128 * 1024 * 1024 || !data.starts_with(b"PLN\x007ps2\x00") {
+        return Err("unsupported PLN signature/version/platform or extent".into());
+    }
+    if slice(data, 9, 32)?.split(|&b| b == 0).next() != Some(b"UnCompressedPSXPal8".as_slice())
+        || u32le(data, 41)? != 1
+    {
+        return Err("unsupported PLN texture encoding/palette".into());
+    }
+    let spacing = float(data, 1069)?;
+    let depth = u32le(data, 1073)?;
+    let root = u32le(data, 1077)? as usize;
+    let count = u32le(data, 1081)? as usize;
+    if spacing <= 0.
+        || spacing > 10000.
+        || depth > 3
+        || count == 0
+        || count > 65536
+        || u32le(data, 1085)? as usize != count
+    {
+        return Err("unsupported PLN scale, depth or tile counts".into());
+    }
+    slice(data, 1089, count * 4)?;
+    let mut tiles = Vec::with_capacity(count);
+    let mut vertex_streams = Vec::with_capacity(count);
+    for i in 0..count {
+        let at = u32le(data, 1089 + i * 4)? as usize;
+        let tile = slice(data, at, 2129)?;
+        let mut heights = [0; 289];
+        let mut attributes = [0; 289];
+        let mut streams = [[0; 289]; 2];
+        for j in 0..289 {
+            heights[j] = u16le(tile, 4 + (j + j / 17 * 3) * 2)?;
+            attributes[j] = u32::from_le_bytes([
+                tile[684 + j * 3],
+                tile[685 + j * 3],
+                tile[686 + j * 3],
+                (tile[1840 + j] & 0x7f) << 1,
+            ]);
+            streams[0][j] = tile[1551 + j];
+            streams[1][j] = tile[1840 + j];
+        }
+        tiles.push(TerrainTile {
+            tag: u32le(tile, 0)?,
+            heights,
+            attributes,
+        });
+        vertex_streams.push(streams);
+    }
+    let mut hierarchy = Hierarchy {
+        data,
+        tile_count: count,
+        seen: BTreeSet::new(),
+        leaves: Vec::new(),
+    };
+    hierarchy.walk(root, depth, 0, 0)?;
+    let width_cells = hierarchy
+        .leaves
+        .iter()
+        .map(|l| l.x + 16)
+        .max()
+        .ok_or("empty PLN hierarchy")?;
+    let depth_cells = hierarchy
+        .leaves
+        .iter()
+        .map(|l| l.z + 16)
+        .max()
+        .ok_or("empty PLN hierarchy")?;
+    Ok(PlnTerrain {
+        terrain: Terrain {
+            spacing,
+            tiles,
+            leaves: hierarchy.leaves,
+            hierarchy_nodes: hierarchy.seen.len(),
+            width_cells,
+            depth_cells,
+            leaf_index: LeafCache::default(),
+        },
+        vertex_streams,
+    })
+}
+
+/// Decode one PLN indexed layer at a time; retains no expanded layer cache.
+/// Palette entries remain in GS RGBA units, as in the existing PST decoder.
+pub fn decode_pln_texture(
+    data: &[u8],
+    record: &TerrainTextureRecord,
+) -> Result<crate::texture::Texture> {
+    if !data.starts_with(b"PLN\x007ps2\x00UnCompressedPSXPal8\x00")
+        || record.format != 39
+        || record.width != 256
+        || record.height != 256
+        || record.mips.len() != 1
+    {
+        return Err("unsupported PLN indexed texture".into());
+    }
+    let palette = slice(data, 45, 1024)?;
+    let mip = &record.mips[0];
+    if mip.bytes != 65536 {
+        return Err("invalid PLN indexed payload".into());
+    }
+    let indices = slice(data, mip.offset, mip.bytes)?;
+    let mut rgba = Vec::with_capacity(65536 * 4);
+    for &index in indices {
+        let index = ((index & !24) | ((index & 8) << 1) | ((index & 16) >> 1)) as usize;
+        rgba.extend_from_slice(&palette[index * 4..index * 4 + 4]);
+    }
+    Ok(crate::texture::Texture {
+        info: crate::texture::TextureInfo {
+            width: 256,
+            height: 256,
+        },
+        rgba,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -951,8 +1121,110 @@ mod tests {
 mod mx_format_tests {
     #[test]
     fn pln_is_not_interpreted_as_tr2() {
-        let error = super::decode_tr2(b"PLN\x0037ps2\x00UnCompressedPSXPal8\x00").unwrap_err();
+        let error = super::decode_tr2(b"PLN\x007ps2\x00UnCompressedPSXPal8\x00").unwrap_err();
         assert!(error.contains("PLN"));
         assert!(super::decode_tr2(b"PLN").is_err());
+    }
+}
+
+#[cfg(test)]
+mod mx_pln_tests {
+    #[test]
+    fn indexed_layer_palette_order_and_bounds() {
+        let mut data = vec![0; 1069 + 65536];
+        data[..29].copy_from_slice(b"PLN\x007ps2\x00UnCompressedPSXPal8\x00");
+        for i in 0..256 {
+            data[45 + i * 4..49 + i * 4].copy_from_slice(&[i as u8, 0, 0, 128]);
+        }
+        data[1069] = 8;
+        let record = super::TerrainTextureRecord {
+            width: 256,
+            height: 256,
+            format: 39,
+            mips: vec![super::TerrainTextureMip {
+                width: 256,
+                height: 256,
+                offset: 1069,
+                bytes: 65536,
+            }],
+        };
+        let decoded = super::decode_pln_texture(&data, &record).unwrap();
+        assert_eq!(&decoded.rgba[..4], &[16, 0, 0, 128]);
+        assert!(super::decode_pln_texture(&data[..data.len() - 1], &record).is_err());
+    }
+    #[test]
+    fn padded_rows_and_split_normals() {
+        let tile = 1093usize;
+        let root = tile + 2129;
+        let mut data = vec![0; root + 97];
+        data[..9].copy_from_slice(b"PLN\x007ps2\x00");
+        data[9..29].copy_from_slice(b"UnCompressedPSXPal8\x00");
+        for (at, value) in [
+            (41, 1u32),
+            (1069, 2f32.to_bits()),
+            (1077, root as u32),
+            (1081, 1),
+            (1085, 1),
+            (1089, tile as u32),
+            (root, 1f32.to_bits()),
+            (root + 4, 0.5f32.to_bits()),
+            (root + 12, 100f32.to_bits()),
+        ] {
+            data[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for j in 0..289 {
+            let at = tile + 4 + (j + j / 17 * 3) * 2;
+            data[at..at + 2].copy_from_slice(&(j as u16).to_le_bytes());
+            data[tile + 684 + j * 3 + 1] = 127;
+            data[tile + 1551 + j] = 19;
+            data[tile + 1840 + j] = 41;
+        }
+        let decoded = super::decode_pln(&data).unwrap();
+        assert_eq!(decoded.terrain.tiles[0].heights[17], 17);
+        assert_eq!(decoded.terrain.tiles[0].heights[288], 288);
+        assert_eq!(decoded.terrain.tiles[0].attributes[288], 0x52007f00);
+        assert_eq!(decoded.vertex_streams[0][0][288], 19);
+        assert_eq!(decoded.vertex_streams[0][1][288], 41);
+        data.truncate(root + 96);
+        assert!(super::decode_pln(&data).is_err());
+    }
+    #[test]
+    #[ignore = "requires private source audit directory"]
+    fn real_pln_maps() {
+        let dir = std::env::var("ATV_MX_SCENES").unwrap();
+        let mut count = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|s| s != "trn") {
+                continue;
+            }
+            let data = std::fs::read(&path).unwrap();
+            let decoded =
+                super::decode_pln(&data).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(decoded.vertex_streams.len(), decoded.terrain.tiles.len());
+            let textures = super::pln_texture_layout(&data).unwrap();
+            assert!(!textures.records.is_empty());
+            for record in &textures.records {
+                assert_eq!(
+                    super::decode_pln_texture(&data, record).unwrap().rgba.len(),
+                    256 * 256 * 4
+                );
+            }
+            let scene = crate::scene::parse_mx(&std::fs::read(path.with_extension("scn")).unwrap())
+                .unwrap();
+            let terrain = &decoded.terrain;
+            assert!(terrain.width_cells >= 256 && terrain.depth_cells >= 256);
+            assert!(terrain.heightfield().unwrap().iter().all(|h| h.is_finite()));
+            let contact = terrain
+                .contact(scene.start_position[0], scene.start_position[2])
+                .unwrap();
+            assert!(
+                contact.is_some(),
+                "{} spawn outside terrain",
+                path.display()
+            );
+            count += 1;
+        }
+        assert_eq!(count, 56);
     }
 }

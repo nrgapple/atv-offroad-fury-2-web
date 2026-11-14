@@ -183,7 +183,11 @@ fn packet(
                 if command == 0x6c && count == 1 && address == 0x8000 {
                     continue;
                 }
-                if matches!(command, 0x6c | 0x6d) && address == 0x8001 {
+                // MX ecosystem meshes also pack signed XYZ/node into V4-8.
+                // Its signed destination distinguishes it from unsigned colors.
+                if (matches!(command, 0x6c | 0x6d) || (sign_bit_restart && command == 0x6e))
+                    && address == 0x8001
+                {
                     let base = group.vertices.len();
                     if base + count > expected_vertices {
                         return Err("PSG packet exceeds declared vertex count".into());
@@ -191,7 +195,9 @@ fn packet(
                     for i in 0..count {
                         let mut components = [0i32; 4];
                         for (j, value) in components.iter_mut().enumerate() {
-                            *value = if command == 0x6d {
+                            *value = if command == 0x6e {
+                                raw[i * stride + j] as i8 as i32
+                            } else if command == 0x6d {
                                 u16le(raw, i * stride + j * 2)? as i16 as i32
                             } else {
                                 u32le(raw, i * stride + j * 4)? as i32
@@ -201,7 +207,9 @@ fn packet(
                         // Unleashed v5 marks strip restarts with the top bit,
                         // retaining a positive rigid-node magnitude underneath.
                         // ATV2 v3/v4 instead stores the negative magnitude.
-                        let magnitude = if sign_bit_restart {
+                        // V4-8 retains signed negative magnitudes even in v5
+                        // (NAT12 ecosystem); v5 half/full words use a sign bit.
+                        let magnitude = if sign_bit_restart && stride != 4 {
                             weight as u32 & if stride == 8 { 0x7fff } else { 0x7fff_ffff }
                         } else {
                             weight.unsigned_abs()
@@ -746,6 +754,38 @@ mod tests {
         );
         bytes.truncate(uv_at + 5);
         assert!(packet(&bytes, &[identity()], &scales, 0, 0, 3, true).is_err());
+    }
+
+    #[test]
+    fn mx_byte_positions_are_not_colors_and_batches_keep_attribute_bounds() {
+        // Generated VIF framing matching NAT12's ecosystem: header, V4-8
+        // signed positions, V3-8 normals, V2-8 UVs, MSCNT, next batch.
+        let mut batch = 0x6c018000u32.to_le_bytes().to_vec();
+        batch.extend([0; 16]);
+        batch.extend(0x6e038001u32.to_le_bytes());
+        batch.extend([255, 0, 0, 240, 1, 0, 0, 240, 0, 2, 0, 16]);
+        let normals = batch.len();
+        batch.extend(0x6a038004u32.to_le_bytes());
+        batch.extend([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+        batch.extend(0x66038007u32.to_le_bytes());
+        batch.extend([0, 0, 1, 0, 0, 1, 0, 0]);
+        batch.extend(0x17000000u32.to_le_bytes());
+        let mut data = batch.clone();
+        data.extend(&batch);
+        let decode = |data: &[u8], mx| packet(data, &[identity()], &[1.; 4], 0, 0, 6, mx);
+        let mesh = decode(&data, true).unwrap();
+        assert_eq!(mesh.vertices.len(), 6);
+        assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(mesh.vertices[0].position, [-1., 0., 0.]);
+        assert_eq!(mesh.vertices[2].normal, [0., 0., 1.]);
+        assert_eq!(mesh.vertices[5].uv, [0., 1.]);
+        assert!(mesh.vertices.iter().all(|v| v.color.is_none()));
+        assert!(decode(&data, false).is_err()); // ATV2 policy unchanged.
+        data[normals..normals + 4].copy_from_slice(&0x6a038005u32.to_le_bytes());
+        assert!(decode(&data, true).unwrap_err().contains("destination"));
+        data[normals..normals + 4].copy_from_slice(&0x6a028003u32.to_le_bytes());
+        assert!(decode(&data, true).unwrap_err().contains("count"));
+        assert!(decode(&batch, true).is_err()); // Declared total still enforced.
     }
 
     #[test]
