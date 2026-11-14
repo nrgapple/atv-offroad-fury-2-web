@@ -433,10 +433,9 @@ impl Hub {
         if self.toast.as_ref().is_some_and(|(_, until)| now > *until) {
             self.toast = None;
         }
-        let in_event = self
-            .event
-            .as_ref()
-            .is_some_and(|(e, _)| e.phase == event_phase::RUN && self.joined(e));
+        // A rider in an event (joined its circle, or riding it) takes no
+        // challenges.
+        let in_event = self.event.as_ref().is_some_and(|(e, _)| self.joined(e));
         self.nearby = None;
         if let Some(origin) = origin
             && matches!(self.duel(), Duel::Idle)
@@ -458,6 +457,7 @@ impl Hub {
         // Stunt-off: report the points since GO, twice a second at most.
         if let Some((event, _)) = &self.event
             && in_event
+            && event.phase == event_phase::RUN
             && event.kind == event_kind::STUNTS
         {
             let base = *self.stunt_base.get_or_insert(stunts);

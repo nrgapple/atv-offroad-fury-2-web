@@ -23,7 +23,7 @@ judges every result; clients show it and send the rider's choices.
 - Time limit: 15 s plus 1 s per 35 ft to the waypoint, within 30-60 s.
 - One minute cooldown per pair after every ask, answered or not.
 - The server refuses an ask when the two are more than 160 ft apart (poses
-  lag), when either is in a challenge or a running event, while a rotation
+  lag), when either is in a challenge or has joined an event, while a rotation
   vote is open, within the pair's cooldown, and when the other build has no
   hub ("TOO FAR", "BUSY", "WAIT A BIT").
 - Muted or blocked riders: the client declines their offers at once

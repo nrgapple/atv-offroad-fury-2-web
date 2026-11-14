@@ -1676,10 +1676,20 @@ impl Overlay {
         if let Some((hub, _)) = shown.and_then(|h| h.hub.as_ref())
             && !self.results.shown
         {
+            let mut top = inset_of(frames[0]) + 8.;
+            // Narrow views: below a top GPS map the panels would cover.
+            let half = 340f32.min(view.width - 24.) / 2.;
+            if map_visible
+                && map.y < top + 120.
+                && map.x < view.width / 2. + half
+                && map.right() > view.width / 2. - half
+            {
+                top = top.max(map.bottom() + 8.);
+            }
             let mut list = DisplayList::default();
             let mut hits = Vec::new();
             layout::render(
-                &atv_ui::hud::hub::element(&view, hub, inset_of(frames[0]) + 8.),
+                &atv_ui::hud::hub::element(&view, hub, top),
                 &mut self.fonts,
                 view.width,
                 view.height,

@@ -311,7 +311,7 @@ impl Hub {
             || self
                 .event
                 .as_ref()
-                .is_some_and(|e| e.phase == event_phase::RUN && e.joined & bit(peer) != 0)
+                .is_some_and(|e| e.phase <= event_phase::RUN && e.joined & bit(peer) != 0)
     }
 
     fn cooling(&self, a: u8, b: u8, now: u64) -> bool {

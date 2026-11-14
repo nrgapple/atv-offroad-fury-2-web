@@ -17,18 +17,17 @@ const report = {};
 const hub = page => page.evaluate(() => JSON.parse(window.furyMultiplayer ?? 'null')?.hub ?? null);
 const engine = page => page.evaluate(() => JSON.parse(window.furyMultiplayer ?? 'null'));
 const wait = (page, predicate, arg, timeout = 60000) => page.waitForFunction(predicate, arg, { timeout });
-// Waits until `test(hub, arg)` holds for the page's hub report. The test is
-// sent as source (the page's CSP forbids eval; DevTools evaluation is exempt),
-// so it may use only its arguments.
-const hubIs = (page, test, arg = null, timeout = 60000) =>
-  page.waitForFunction(
-    `(() => {
-      const hub = JSON.parse(window.furyMultiplayer ?? 'null')?.hub;
-      return Boolean(hub && (${test.toString()})(hub, ${JSON.stringify(arg)}));
-    })()`,
-    null,
-    { timeout }
-  );
+// Waits until `test(hub, arg)` holds for the page's hub report, polled from
+// Node (the page's CSP forbids the eval a string predicate would need).
+async function hubIs(page, test, arg = null, timeout = 60000) {
+  const until = Date.now() + timeout;
+  for (;;) {
+    const state = await hub(page);
+    if (state && test(state, arg)) return state;
+    if (Date.now() > until) throw new Error(`hub wait timed out: ${test}\n${JSON.stringify(state)}`);
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
 async function key(page, code) {
   await page.keyboard.down(code);
   await nextFrames(page, 2);
