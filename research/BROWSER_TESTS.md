@@ -168,3 +168,16 @@ Limits. Against production the soundtrack test's last block (the race hold)
 still fails with a cold cache: the sounds arrive after the 3.5 s countdown,
 so there is no hold left to observe. It passes on a local server. The
 circle in the user course test was checked on env05 only.
+
+## Use the PR build without compiling locally
+
+After a successful draft PR `Check and build` run, run
+`python3 tools/fetch_pr_build.py --run <run-id>`. It verifies that the downloaded
+merge-tree artifact matches clean local source, including the PR head parent.
+Use the returned static directory with
+`make browser-tests BROWSER_ARGS='--root <path> --only <affected-test.mjs>'`.
+The harness starts its usual host-only server and reads private resources locally.
+This leaves `web/dist` untouched and needs no local Rust compiler slot. Re-fetch
+after source changes. Existing `--url` takes precedence over `--root`; multiplayer
+still needs its documented game-server setup. These are host checks, not remotely
+reachable previews or physical-device measurements.

@@ -1,0 +1,13 @@
+{
+  "id": "cloud-built-pr-artifacts-for-targeted-browser-checks-521bf4c0ed2448a2bc6a3dfc062ecfc6",
+  "timestamp": "2026-11-14T20:11:37.256367+00:00",
+  "recorded_at": "2026-11-14T20:11:37.256367+00:00",
+  "kind": "discovery",
+  "title": "Cloud-built PR artifacts for targeted browser checks",
+  "summary": "Added a cloud-first path for targeted content browser tests: fetch successful same-repository CI build artifacts for a pull request, validate their checksums and source identity, then test those exact bytes. Agent guidance routes runtime changes through precheck, draft PR, CI, targeted content tests, and ready/auto-merge.",
+  "details": [
+    "tools/fetch_pr_build.py downloads artifacts from successful same-repository ci.yml PR runs and validates checksums, commit identity, and the exact local source tree. The browser runner accepts --root for content tests against the fetched output; CI smoke also exercises --root work/release/static so it checks the same packaged bytes. The local compiler cap is unchanged, and game content stays local.",
+    "Local validation passed: make precheck; 4 PR-build tests; 10 release packaging tests; 10 release workflow tests; 8 Node browser manifest/process tests; and Node syntax checks."
+  ],
+  "limitation": "CI verification and a real PR artifact download are pending. No speedup benchmark or public release is claimed."
+}
