@@ -10,5 +10,5 @@
   ],
   "limitation": "Tested on a Mac only, not a phone. A permanently refused read (offline) now reports its error about 1.9 s later. One preloaded end-of-race file is not reread during the load.",
   "image": "/devlog-images/content-reads-retry-flaky-connections-34546052bca442d191a8c7234fd6434e.png",
-  "caption": "Race loaded after every content file failed once"
+  "caption": "ENV01 race loaded after 12 content files each failed once (503, aborted, cut-off body); the ride starts with a CPU sled ahead."
 }
