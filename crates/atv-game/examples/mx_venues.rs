@@ -95,7 +95,7 @@ fn main() -> Result<()> {
             let digest = content
                 .manifest
                 .record(course.archive)
-                .and_then(|r| r.sha256.as_deref())
+                .and_then(whole_file_digest)
                 .ok_or("MX package lacks whole-file digest")?;
             accepted.push(serde_json::json!({
                 "id": course.id, "sha256": digest, "atv": true, "motorcycle": true,
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
             let adapter = content
                 .manifest
                 .record("/MX/ADAPTER.RES")
-                .and_then(|r| r.sha256.as_deref())
+                .and_then(whole_file_digest)
                 .ok_or("MX adapter lacks whole-file digest")?;
             let report =
                 serde_json::json!({"version": 1, "adapter_sha256": adapter, "maps": accepted});
@@ -147,4 +147,10 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
             return value;
         }
     }
+}
+
+fn whole_file_digest(record: &atv_content::FileRecord) -> Option<String> {
+    let chunks = record.chunks();
+    (chunks.len() == 1 && chunks[0].offset == 0 && chunks[0].bytes == record.bytes)
+        .then(|| chunks[0].sha256.clone())
 }
