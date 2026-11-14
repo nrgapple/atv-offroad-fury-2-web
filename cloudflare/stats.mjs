@@ -11,6 +11,7 @@ export const STATS_PATH = '/api/stats';
 // The smallest venue or country bucket the page lists, and the smallest total a split is shown for.
 export const MIN_BUCKET = 10;
 const MAX_AGE = 60;
+const CACHE_CONTROL = `public, max-age=${MAX_AGE}`;
 const REFRESH_MS = 15 * 60_000;
 // Analytics Engine keeps three months; a first run backfills them from the first
 // day with events, a chunk per cron run.
@@ -261,7 +262,12 @@ export async function statsRequest(request, env, { fetcher = fetch, now = Date.n
   const cache = globalThis.caches?.default;
   const key = new Request(new URL(STATS_PATH, request.url));
   const cached = cache && await cache.match(key);
-  if (cached) return request.method === 'HEAD' ? new Response(null, cached) : cached;
+  if (cached) {
+    // A cache hit carries the zone's browser cache TTL (hours); keep browsers at a minute.
+    const fresh = new Response(request.method === 'HEAD' ? null : cached.body, cached);
+    fresh.headers.set('Cache-Control', CACHE_CONTROL);
+    return fresh;
+  }
   const at = now();
   let rows = [], latest = null;
   if (env.SAVES) {
@@ -275,7 +281,7 @@ export async function statsRequest(request, env, { fetcher = fetch, now = Date.n
   }
   const body = summarize(rows, { live: await liveCounts(env, latest, fetcher, at), at });
   const response = new Response(JSON.stringify(body), {
-    headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${MAX_AGE}`, 'X-Content-Type-Options': 'nosniff' },
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': CACHE_CONTROL, 'X-Content-Type-Options': 'nosniff' },
   });
   if (cache) await cache.put(key, response.clone());
   return request.method === 'HEAD' ? new Response(null, response) : response;
