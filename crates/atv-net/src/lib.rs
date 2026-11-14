@@ -821,19 +821,10 @@ impl Signal {
     pub fn validate(&self) -> Result<()> {
         let valid = valid_peer(self.peer)
             && match self.kind {
-                signal::HELLO => {
-                    self.data.len() == 1
-                        && self.data[0]
-                            & !(signal::DIRECT
-                                | signal::CARRIES
-                                | signal::CPU_SOUNDS
-                                | signal::BATCHES
-                                | signal::FRAMES
-                                | signal::MOTORCYCLES
-                                | signal::CHAT
-                                | signal::HUB)
-                            == 0
-                }
+                // Every bit of the flags byte is allocated (DIRECT, CARRIES,
+                // CPU_SOUNDS, BATCHES, FRAMES, MOTORCYCLES, CHAT, HUB), so any
+                // value is valid; a further flag needs a second byte.
+                signal::HELLO => self.data.len() == 1,
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
                 }
