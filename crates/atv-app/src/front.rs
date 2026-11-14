@@ -1431,8 +1431,15 @@ impl Front {
             screen.hero = photos.get(id).and_then(|(_, hero)| *hero);
         }
         screen.shot_fade = art.shot_fade;
-        if self.menu.is_some() {
-            screen.page = "backdrop".into();
+        if let Some(menu) = &self.menu {
+            // Options sits where the main menu's rows were, beside its
+            // stage; the Jukebox and Credits cover the screen.
+            screen.page = if matches!(menu.page.as_str(), "jukebox" | "credits") {
+                "backdrop"
+            } else {
+                "stage"
+            }
+            .into();
             // Options and the Jukebox fill the screen over the frontend; the
             // bar's chips would be out of reach under them.
             screen.status = None;
