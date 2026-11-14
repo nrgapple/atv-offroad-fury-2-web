@@ -22,13 +22,15 @@ pub const KEEPALIVE_MS: u64 = 2000;
 
 /// Time between poses of a moving rider `distance` feet from the recipient:
 /// under 60 ft every tick, then under a Free Ride rider's own send interval
-/// (`links::freeride_interval`: 150 ms to 300 ft, 300 ms to 1,000 ft; about
-/// 240 ms measured) by a tick, so a Free Ride pose waits at most for the
-/// next tick, and 500 ms beyond. Receivers play poses back with a delay sized for those
-/// intervals and drop a moving rider after 1 s without one; measured in a
-/// browser, the relay-era 200/500/2,000 ms tiers left the watcher up to
-/// 39 ft off (research/GAME_SERVER.md). The savings are on faster senders
-/// (private rooms, riders near someone else) seen from farther away.
+/// (`links::freeride_interval`: 150 ms to 300 ft, 300 ms to 1,000 ft, 350 ms
+/// beyond; about 240 ms measured at 300-1,000 ft) by a tick, so a Free Ride
+/// pose waits at most for the next tick. Receivers play poses back with a
+/// delay sized for those intervals and drop a moving rider after 1 s without
+/// one; measured in a browser, the relay-era 200/500/2,000 ms tiers left the
+/// watcher up to 39 ft off, and a 500 ms far tier passed every other 350 ms
+/// pose, freezing far riders for 220-520 ms (research/GAME_SERVER.md). The
+/// savings are on faster senders (private rooms, riders near someone else)
+/// seen from farther away.
 pub fn tier_ms(distance: f32) -> u64 {
     if distance < 60. {
         0
@@ -37,7 +39,7 @@ pub fn tier_ms(distance: f32) -> u64 {
     } else if distance < 1000. {
         200
     } else {
-        500
+        300
     }
 }
 
@@ -237,8 +239,13 @@ mod tests {
         assert!(due(Some(&sent), &next, 100., 1100));
         assert!(!due(Some(&sent), &next, 500., 1150));
         assert!(due(Some(&sent), &next, 500., 1200));
-        assert!(!due(Some(&sent), &next, 2000., 1450));
-        assert!(due(Some(&sent), &next, 2000., 1500));
+        assert!(!due(Some(&sent), &next, 2000., 1250));
+        assert!(due(Some(&sent), &next, 2000., 1300));
+        // A far Free Ride rider's every pose (350 ms apart, picked up on a
+        // tick 350 or 400 ms after the last) gets through.
+        for gap in [350, 400] {
+            assert!(due(Some(&sent), &next, 5000., 1000 + gap));
+        }
         // A wreck goes out at once, however far.
         next.state = RiderState::Wreck;
         assert!(due(Some(&sent), &next, 5000., 1001));
