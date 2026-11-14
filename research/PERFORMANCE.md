@@ -1132,6 +1132,67 @@ What remains is the failure pass rasterizing the large, mostly transparent
 cards and shading the few streak texels; tighter card geometry would cut it
 further but changes the meshes, so it was not done here.
 
+
+## Remaining ride sound preload (#515, 2026-11-14)
+
+Implementation strategy: share the motorcycle bank input reader with its real
+load; decode/resample using the existing VAG_PCM worker jobs and cache keys.
+Collect venue TOY actor/train loop names and both crowd-table prefixes on a
+worker from the expanded selected course. Include the small rain loop regardless
+of the weather toggle, so changing weather cannot invalidate the preload.
+Preparing both crowd prefixes and all TOYs is a conservative superset; the ride
+still chooses its original active sources. No gameplay or mixer rules change.
+The existing debounce, cancellation generation, cache budget, session limits and
+worker requirement remain. Work happens only when the menu target changes.
+
+Evidence: this is authored loading policy, not a newly recovered PS2 behavior.
+It reuses the existing actor loop reader (00205640) and crowd table reader
+(002cbc20); see AUDIO.md and AMBIENT_ACTORS.md for their exact-build evidence.
+Motorcycle sample selection preserves the MX archive-first, AUDIO.RES fallback
+order. A marker revision invalidates old partial bank preload markers.
+
+Objective and mini-game overlays remain outside this slice: next_course currently
+identifies only regular courses and races, not their objective/game modes.
+Phone timing and the cached direct-load gap remain unmeasured here.
+
+Host validation (headless Chromium, 1280x720, local content, fresh contexts;
+no physical phone): the old and new engine both rested on the menu until the
+preload finished. Each value below is one run, not a statistical estimate.
+
+| Warm menu ride | First frame to sounds ready, old → new | Misses after Start, old → new |
+| --- | --- | --- |
+| Motorcycle 29, ENV01 | 485.5 → 134.9 ms | 0 → 0 (old motorcycle PCM decoded inline without the cache) |
+| ENV08 train | 763.0 → 534.7 ms | 3 → 0 |
+| SX01 race crowd / blimp | 1650.5 → 811.3 ms | 9 → 0 |
+| ENV03 plane actor | 729.7 → 594.3 ms | 1 → 0 |
+
+ENV04 separately verifies an active rain voice: the changed build took 978.3 ms
+cold versus 424.7 ms after preload, with zero misses after the warm Start.
+The cold motorcycle control was 551.4 ms before versus 598.8 ms after; this
+single-run comparison does not establish a cold-start improvement. The warm
+menu preload is the measured benefit.
+Motorcycle preload now stores 27 PCM inputs (26 bank samples plus rain).
+The conservative SX01 bank preparation writes 60.7 MB versus 44.7 MB before;
+it takes 3.81 s versus 3.02 s in these runs. Existing budget checks still gate
+all missing PCM before decoding. Both crowd prefixes are prepared to avoid
+adding difficulty to the per-frame target comparison.
+
+The ride test now waits for the diagnostic frame after the Sounds ready console
+message: that message precedes publication of soundMs, so reading it immediately
+occasionally recorded a stale zero. Cache counters still come from the live
+window.atvDecodedCache diagnostic. The full ride suite passes, including the
+existing ATV race/CPU cases and zero misses on all five added venue cases.
+The worker unit test and make web also pass. These are loading/cache results;
+no new PS2 fidelity or phone performance claim is made.
+
+The menu/cancellation suite passes too: supersession, Start cancellation,
+prepared-course reuse, data saver and a 2 GB device's refusal. Its longest
+preparation task was 52 ms (one task over 50 ms).
+A non-race preload releases its retained expanded archive before the sound-name
+job reads the cached archive, avoiding two course buffers on the page at once.
+Screenshots were captured and inspected locally; gallery/dev-log publication is
+a parent/blogging-agent follow-up after the checked PR deploys.
+
 ## Retained menu layout (#511, host, 2026-11-14)
 
 Re-measured the redesigned menus on `58da9aee` using the validated deployed
