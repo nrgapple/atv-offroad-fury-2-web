@@ -126,6 +126,17 @@ brief hitch, not a lost room.
   for 290 ms) at 300-1,000 ft. Thinning further needs receivers that size
   their delay from each rider's arrival interval.
 
+  Even with no thinning at all, the #604 client fails that test's 300-1,000 ft
+  checks (195 ms frozen against 150, 16.5 ft at worst against 12; 1.9 ft rms):
+  in Free Ride it sends about every 300 ms there and plays poses back about
+  240 ms late, so it extrapolates across every gap. That is a client fix
+  (playback delay at least the rider's send interval plus a tick); 60-300 ft
+  and contact range pass (0.4-0.6 ft rms). Clients since that fix size the
+  delay from each rider's measured interval (up to 800 ms gaps, so the
+  500 ms tier's 700 ms arrivals too) and pass the 300-1,000 ft checks at
+  about 0.4 ft rms with no freeze (research/MULTIPLAYER.md "Slow senders
+  and the game server").
+
   The far tier was 500 ms until 2026-11-14. It passed only every other
   pose of a rider sending every 350 ms, so poses came 700 ms apart and
   watchers beyond 1,000 ft drew the rider frozen: in the same test's mixed
@@ -139,20 +150,11 @@ brief hitch, not a lost room.
   last) with a tick to spare for network jitter. Measured after the change
   (two runs): the mixed watcher beyond 1,000 ft froze 38 and 155 ms, and
   the shared phase's beyond-1,000 ft watcher 197 and 172 ms (430 ms, 12.2 ft
-  rms and 72 ft at worst before; 3.9 and 3.6 ft rms after). What is left
-  there is the client fix above: it plays far poses back about 240 ms late
-  against a 350 ms send interval.
-
-  Even with no thinning at all, the #604 client fails that test's 300-1,000 ft
-  checks (195 ms frozen against 150, 16.5 ft at worst against 12; 1.9 ft rms):
-  in Free Ride it sends about every 300 ms there and plays poses back about
-  240 ms late, so it extrapolates across every gap. That is a client fix
-  (playback delay at least the rider's send interval plus a tick); 60-300 ft
-  and contact range pass (0.4-0.6 ft rms). Clients since that fix size the
-  delay from each rider's measured interval (up to 800 ms gaps, so the
-  500 ms tier's 700 ms arrivals too) and pass the 300-1,000 ft checks at
-  about 0.4 ft rms with no freeze (research/MULTIPLAYER.md "Slow senders
-  and the game server").
+  rms and 72 ft at worst before; 3.9 and 3.6 ft rms after), with clients
+  from before that playback-delay fix, which still played far poses
+  back about 240 ms late against a 350 ms send interval. Clients with that
+  fix ride out the 700 ms gaps too, but only by drawing far riders about
+  twice as late; the 300 ms tier keeps far poses as fresh as they are sent.
 - `rooms`: one task per room, fed by a bounded channel; the registry is a
   mutex touched only to open, find, claim or end rooms. `outbox`: each
   connection's send queue holds 256 KiB / 512 packets; when full the oldest
