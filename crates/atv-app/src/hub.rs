@@ -39,11 +39,12 @@ pub const TEST_DECLINE: u8 = 4;
 pub const TEST_GOAL: u8 = 8;
 pub const TEST_JOIN: u8 = 16;
 
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 /// Test hook (`?hub=0`): never say the HUB bit, as a build from before the
 /// hub, so a browser test can ride as one beside hub riders.
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
 
+/// `?hubTest=` (read only by the web build's URL hooks).
+#[cfg(target_arch = "wasm32")]
 pub fn parse_test(value: &str) -> u8 {
     value.split(',').fold(0, |flags, word| {
         flags
