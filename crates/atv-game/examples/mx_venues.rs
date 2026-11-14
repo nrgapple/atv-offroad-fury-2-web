@@ -2,6 +2,7 @@
 //! every MX map, retaining no source assets in Git. Host CPU measurements
 //! are not browser or physical-phone frame timings.
 use atv_content::{Content, Store};
+use atv_core::math::Det;
 use atv_game::{Result, launch::mx_courses, ride, venue};
 
 fn main() -> Result<()> {
@@ -67,7 +68,7 @@ fn main() -> Result<()> {
                     ));
                 }
                 let last = ride.frame().origin;
-                let travelled = (last[0] - first[0]).hypot(last[2] - first[2]);
+                let travelled = (last[0] - first[0]).hypot_d(last[2] - first[2]);
                 if max_speed < 1. || travelled < 1. {
                     return Err(format!(
                         "{}: vehicle {quad} failed to drive from spawn",
@@ -131,16 +132,8 @@ fn main() -> Result<()> {
 }
 
 fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
-    use std::{
-        sync::Arc,
-        task::{Context, Poll, Wake, Waker},
-    };
-    struct Local;
-    impl Wake for Local {
-        fn wake(self: Arc<Self>) {}
-    }
-    let waker = Waker::from(Arc::new(Local));
-    let mut context = Context::from_waker(&waker);
+    use std::task::{Context, Poll, Waker};
+    let mut context = Context::from_waker(Waker::noop());
     let mut future = std::pin::pin!(future);
     loop {
         if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
