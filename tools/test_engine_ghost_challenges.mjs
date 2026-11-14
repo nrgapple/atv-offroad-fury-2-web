@@ -210,9 +210,19 @@ try {
   // Pause → Quit to Main Menu, then Single Player → Weekly Challenge.
   await key(page, 'Escape');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === 'pause', null, { timeout: 30000 });
+  // Step to Quit to Main Menu by its focus, wherever the menu starts.
+  for (let i = 0; i < 12; i++) {
+    const menu = (await read(page)).toolbar.menu;
+    if (menu.choices[menu.selection] === 'main') break;
+    await key(page, 'ArrowDown');
+  }
   const menu = (await read(page)).toolbar.menu;
-  for (let i = 0; i < menu.choices.indexOf('main'); i++) await key(page, 'ArrowDown');
-  await key(page, 'Enter');
+  assert.equal(menu.choices[menu.selection], 'main', `Quit to Main Menu focused in ${menu.choices}`);
+  // Leaving the ride may replace the page's context: press without waiting
+  // on frames, then wait for the menus.
+  await page.keyboard.down('Enter');
+  await page.waitForTimeout(100);
+  await page.keyboard.up('Enter').catch(() => {});
   await onPage(page, 'main', 60000);
   await choose(page, 'single'); await onPage(page, 'single');
   f = await front(page);
