@@ -142,6 +142,12 @@ fn point(matrix: &[f32; 16], value: [f32; 3], translation: bool) -> [f32; 3] {
             + if translation { matrix[12 + row] } else { 0. }
     })
 }
+#[derive(Clone, Copy)]
+struct PacketLayout {
+    uv_layers: usize,
+    sign_bit_restart: bool,
+}
+
 fn packet(
     data: &[u8],
     nodes: &[Node],
@@ -149,9 +155,12 @@ fn packet(
     material: u32,
     flags: u32,
     expected_vertices: usize,
-    uv_layers: usize,
-    sign_bit_restart: bool,
+    layout: PacketLayout,
 ) -> Result<Group> {
+    let PacketLayout {
+        uv_layers,
+        sign_bit_restart,
+    } = layout;
     let mut group = Group {
         material,
         flags,
@@ -477,8 +486,10 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
                 material,
                 flags,
                 vertices,
-                layers,
-                version == 5,
+                PacketLayout {
+                    uv_layers: layers,
+                    sign_bit_restart: version == 5,
+                },
             )?);
             at += size;
         }
@@ -726,22 +737,56 @@ mod tests {
             data.extend(color);
         }
         data.extend(0x17000000u32.to_le_bytes());
-        let mesh = packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false).unwrap();
+        let mesh = packet(
+            &data,
+            &[identity()],
+            &[0.5, 1., 1., 1.],
+            0,
+            0,
+            4,
+            PacketLayout {
+                uv_layers: 1,
+                sign_bit_restart: false,
+            },
+        )
+        .unwrap();
         assert_eq!(mesh.vertices[2].position, [0., 1., 0.]);
         assert_eq!(mesh.indices, [0, 1, 2, 2, 1, 3]);
         assert_eq!(mesh.vertices[0].color, Some([255, 128, 100, 0]));
         data[color_at..color_at + 4].copy_from_slice(&0x6e04800du32.to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false)
-                .unwrap_err()
-                .contains("destination")
+            packet(
+                &data,
+                &[identity()],
+                &[0.5, 1., 1., 1.],
+                0,
+                0,
+                4,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: false
+                }
+            )
+            .unwrap_err()
+            .contains("destination")
         );
         data[color_at..color_at + 4].copy_from_slice(&0x6e04c00du32.to_le_bytes());
         data[10..12].copy_from_slice(&(-32i16).to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false)
-                .unwrap_err()
-                .contains("missing node")
+            packet(
+                &data,
+                &[identity()],
+                &[0.5, 1., 1., 1.],
+                0,
+                0,
+                4,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: false
+                }
+            )
+            .unwrap_err()
+            .contains("missing node")
         );
     }
     #[test]
@@ -762,19 +807,68 @@ mod tests {
             words.extend(uv.to_le_bytes());
         }
         let scales = [1., 1., 1. / 127., 1. / 64.];
-        let a = packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true).unwrap();
-        let b = packet(&words, &[identity()], &scales, 0, 0, 3, 1, true).unwrap();
+        let a = packet(
+            &bytes,
+            &[identity()],
+            &scales,
+            0,
+            0,
+            3,
+            PacketLayout {
+                uv_layers: 1,
+                sign_bit_restart: true,
+            },
+        )
+        .unwrap();
+        let b = packet(
+            &words,
+            &[identity()],
+            &scales,
+            0,
+            0,
+            3,
+            PacketLayout {
+                uv_layers: 1,
+                sign_bit_restart: true,
+            },
+        )
+        .unwrap();
         for (a, b) in a.vertices.iter().zip(&b.vertices) {
             assert_eq!(a.uv, b.uv);
         }
         bytes[uv_at..uv_at + 4].copy_from_slice(&0x6603c007u32.to_le_bytes());
         assert!(
-            packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true)
-                .unwrap_err()
-                .contains("destination")
+            packet(
+                &bytes,
+                &[identity()],
+                &scales,
+                0,
+                0,
+                3,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: true
+                }
+            )
+            .unwrap_err()
+            .contains("destination")
         );
         bytes.truncate(uv_at + 5);
-        assert!(packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true).is_err());
+        assert!(
+            packet(
+                &bytes,
+                &[identity()],
+                &scales,
+                0,
+                0,
+                3,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: true
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -793,7 +887,20 @@ mod tests {
         batch.extend(0x17000000u32.to_le_bytes());
         let mut data = batch.clone();
         data.extend(&batch);
-        let decode = |data: &[u8], mx| packet(data, &[identity()], &[1.; 4], 0, 0, 6, 1, mx);
+        let decode = |data: &[u8], mx| {
+            packet(
+                data,
+                &[identity()],
+                &[1.; 4],
+                0,
+                0,
+                6,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: mx,
+                },
+            )
+        };
         let mesh = decode(&data, true).unwrap();
         assert_eq!(mesh.vertices.len(), 6);
         assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
@@ -824,13 +931,40 @@ mod tests {
         for uv in [1i16, 2, 3, 4, 5, 6] {
             data.extend(uv.to_le_bytes());
         }
-        let decode =
-            |data: &[u8], layers, mx| packet(data, &[identity()], &[1.; 4], 0, 0, 3, layers, mx);
+        let decode = |data: &[u8], layers, mx| {
+            packet(
+                data,
+                &[identity()],
+                &[1.; 4],
+                0,
+                0,
+                3,
+                PacketLayout {
+                    uv_layers: layers,
+                    sign_bit_restart: mx,
+                },
+            )
+        };
         let mesh = decode(&data, 2, true).unwrap();
         assert_eq!(mesh.vertices[2].uv, [0.; 2]);
         assert_eq!(mesh.vertices[2].uv2, Some([5., 6.]));
-        assert!(decode(&data, 1, true).unwrap_err().contains("destination"));
-        assert!(decode(&data, 2, false).unwrap_err().contains("destination"));
+        assert!(
+            decode(
+                &data,
+                PacketLayout {
+                    uv_layers: 1,
+                    sign_bit_restart: true
+                }
+            )
+            .unwrap_err()
+            .contains("destination")
+        );
+        let mut atv2 = data.clone();
+        for i in 0..2 {
+            let weight = 4 + i * 8 + 6;
+            atv2[weight..weight + 2].copy_from_slice(&(-16i16).to_le_bytes());
+        }
+        assert!(decode(&atv2, 2, false).unwrap_err().contains("destination"));
         assert!(
             decode(&data[..second], 2, true)
                 .unwrap_err()

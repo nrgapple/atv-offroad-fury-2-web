@@ -769,25 +769,31 @@ async fn load_selected(
     crate::yield_frame().await;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
-    let ambient = crate::ambient::load(
-        &archive,
-        environment,
-        &scene_text,
-        toy.as_deref(),
-        toy_index,
-        crate::ambient::Sources {
-            mode: mode.as_deref(),
-            mode_index,
-            game: options.game_scene.is_some() && !racing,
-            targets: target_toy.as_deref(),
-        },
-    )
-    .unwrap_or_else(|error| {
-        // The browser skips effects it cannot configure.
-        eprintln!("ambient effects: {error}");
+    // MX emitter layouts are not the recovered ATV2 particle program. Keep
+    // them inactive until a source adapter exists rather than misreading TOYs.
+    let ambient = if mx.is_some() {
         None
-    })
-    .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
+    } else {
+        crate::ambient::load(
+            &archive,
+            environment,
+            &scene_text,
+            toy.as_deref(),
+            toy_index,
+            crate::ambient::Sources {
+                mode: mode.as_deref(),
+                mode_index,
+                game: options.game_scene.is_some() && !racing,
+                targets: target_toy.as_deref(),
+            },
+        )
+        .unwrap_or_else(|error| {
+            // The browser skips effects it cannot configure.
+            eprintln!("ambient effects: {error}");
+            None
+        })
+        .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)))
+    };
     // Keyframed actors of the common and mode TOYs. Treasure Hunt's bombs
     // and the locomotive wheels are drawn by their own systems.
     let treasure_refs: Vec<String> = treasures

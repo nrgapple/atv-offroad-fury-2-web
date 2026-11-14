@@ -550,7 +550,13 @@ pub async fn load_with(
         mud_obstacles,
         scene_partition: scene.collision_partition,
         ecosystem,
-        boundary: scene.boundary_launch,
+        // ATV2's 110-cell edge-launch inset can eject an MX arena spawn.
+        // Matching dimension keys do not establish shared source behavior.
+        boundary: if mx.is_some() {
+            None
+        } else {
+            scene.boundary_launch
+        },
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
         water,
         camera: follow,

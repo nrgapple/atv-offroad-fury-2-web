@@ -156,3 +156,23 @@ at 0x8001+4N after the primary UV and unsigned color arrays. That bounded
 second stream is retained separately as `Vertex::uv2`, with layer declaration,
 matching count/destination, duplicate and completeness checks. It does not
 overwrite primary UVs. Its shader-specific rendering consumer remains a gap.
+
+The actual Rust package sweep now accepts all 56 exact manifest venue archives:
+2,905 PST textures, 129 animated textures (all frames), 7,968 static collision
+members and 2,782 PSG meshes. All 112 sky files separately passed earlier.
+Native drive acceptance next exposed the plural `[TerrainZones]` summary,
+which is now distinguished from the sixteen numbered zone declarations.
+MX ambient emitters remain explicitly inactive: the ATV2 ambient program is
+not an adapter for MX source emission layouts. This removes a misleading
+ATV2 parser-limit warning without claiming source particle equivalence.
+
+FS05's bike settling can enter a wreck before its first camera tick. The ride
+camera now seeds its normal initial follow pose when that specific startup
+case needs a wreck-camera seed. The crash and settling simulation are retained.
+
+The full drive sweep caught ATV2 boundary launches on small MX arenas,
+including MC08 losing all ground contact. ATV2's 110-cell inset is not a
+recovered MX edge rule; shared dimension key names do not establish behavior
+parity. MX therefore leaves the ATV2 launcher inactive. Source MX edge/reset
+behavior remains unresolved, alongside water reset metadata. Acceptance still
+requires actual contact and movement; ejection is not counted as driving.

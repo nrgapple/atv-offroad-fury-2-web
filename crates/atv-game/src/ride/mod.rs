@@ -1417,6 +1417,22 @@ impl Ride {
                 .contact(point[0], point[2])?
                 .map_or(point[1], |contact| contact.height))
         };
+        let input = FollowInput {
+            origin: vehicle.origin,
+            forward: self.flip_heading.unwrap_or(basis[2]),
+            velocity,
+            speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
+                + velocity[2] * velocity[2])
+                .sqrt(),
+            local_forward_speed: local[2],
+            yaw_rate: if flipping {
+                0.
+            } else {
+                vehicle.local_angular_velocity[1]
+            },
+            wheel_contact: vehicle.grounded.iter().any(|v| *v),
+            orbit,
+        };
         if let Some((rider_origin, rider_velocity)) = self.wrecked_rider() {
             let actors = [
                 WreckActor {
@@ -1434,6 +1450,11 @@ impl Ride {
                 Mount::Bike(_) => None,
             };
             if self.wreck_camera.is_none() {
+                // Settling may wreck a newly placed bike before any follow
+                // tick. Seed the same pose used by a normal first tick.
+                if !self.sim.camera.has_wreck_seed() {
+                    self.sim.camera.step(input, dt, height)?;
+                }
                 let mut camera = self.sim.camera.wreck_camera(actors)?;
                 camera.set_static_obstacles(self.sim.obstacles.clone());
                 self.wreck_camera = Some(camera);
@@ -1447,26 +1468,7 @@ impl Ride {
             return Ok(());
         }
         self.wreck_camera = None;
-        self.camera_frame = self.sim.camera.step(
-            FollowInput {
-                origin: vehicle.origin,
-                forward: self.flip_heading.unwrap_or(basis[2]),
-                velocity,
-                speed: ((velocity[0] * velocity[0] + velocity[1] * velocity[1])
-                    + velocity[2] * velocity[2])
-                    .sqrt(),
-                local_forward_speed: local[2],
-                yaw_rate: if flipping {
-                    0.
-                } else {
-                    vehicle.local_angular_velocity[1]
-                },
-                wheel_contact: vehicle.grounded.iter().any(|v| *v),
-                orbit,
-            },
-            dt,
-            height,
-        )?;
+        self.camera_frame = self.sim.camera.step(input, dt, height)?;
         self.camera_mode = CameraMode::Follow;
         Ok(())
     }
