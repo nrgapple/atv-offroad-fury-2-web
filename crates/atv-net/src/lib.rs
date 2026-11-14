@@ -794,6 +794,7 @@ impl Signal {
                                 | signal::CARRIES
                                 | signal::CPU_SOUNDS
                                 | signal::BATCHES
+                                | signal::FRAMES
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
