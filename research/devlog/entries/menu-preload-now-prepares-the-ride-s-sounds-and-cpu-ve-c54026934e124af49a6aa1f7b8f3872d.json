@@ -10,5 +10,5 @@
   ],
   "limitation": "Motorcycle sound bank is not prepared; crowd, train, rain and actor sounds are not preloaded; no physical-phone measurement; a gap of about 0.2 s to a cached ?venue= load remains uninvestigated.",
   "image": "/devlog-images/menu-preload-now-prepares-the-ride-s-sounds-and-cpu-ve-c54026934e124af49a6aa1f7b8f3872d.png",
-  "caption": "ENV01 race intro camera in snow after menu preload, with a CPU quad in the distance."
+  "caption": "ENV01 race intro camera in snow after menu preload, with a sled in the distance."
 }
