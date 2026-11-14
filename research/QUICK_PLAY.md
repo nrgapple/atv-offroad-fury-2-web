@@ -89,8 +89,9 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
 - **Match records.** Every played round appends one line to
   `FURY_STATE_DIR/matches.jsonl` in the spec's contract (`t`, `room`,
   `playlist`, `mode`, `map`, `verified`, `riders[]` with `pid`, `name`,
-  `cpu`, `place`, `value`, `dnf`, `left`). `pid` is the socket's `?pid=`
-  (1–32 printable ASCII characters, unverified) until slice D replaces it;
+  `cpu`, `place`, `value`, `dnf`, `left`). `pid` is the verified player id
+  of the rider's socket (`?rider=` token, `Players::verify`,
+  research/ONLINE_IDENTITY.md), null for a rider without one and for CPUs;
   CPUs are named `CPU n`. A round the driver never started writes none.
 - Restarts keep a Quick Play room's playlist and riders' slots; its loop
   starts again in the lobby.
@@ -107,7 +108,7 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
   between rounds (lobby, vote or podium), else a new room. Rooms are
   `QPR00001`… and `QPS00001`…; the `QP` prefix is reserved (a private room
   cannot take it). Same admission limit as a Free Ride claim. The socket is
-  the usual `/multiplayer/rooms/{code}?key=…` (plus optional `pid`).
+  the usual `/multiplayer/rooms/{code}?key=…&rider=…`.
 - Kind 22 `RoomLoop` (server → every rider in the room; on change and every 2 s):
   phase, playlist, phase deadline in server time (`Pong::server_ms`), up to
   3 cards (mode, map, variant), votes per card and Random, the pick, the
@@ -163,7 +164,8 @@ Two accepted deviations from the spec (epic owner, 2026-11-14):
 - The 3-2-1-GO with sound is the round's own (race lamps and beeps); the
   loop's countdown screen is silent.
 - Ping is each rider's own report, not measured by the server.
-- CPU difficulty is fixed at Normal until slice D's hidden rating.
+- CPU difficulty is fixed at Normal and rooms are not split by skill:
+  `Players::rating(pid)` (slice D) is available; wiring it in is wave 2.
 - The speed cap and drift allowance are authored guesses, not measured on
   slow Chromebooks; a very laggy rider could be refused.
 - Not measured on production or physical phones.

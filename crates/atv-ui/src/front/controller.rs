@@ -16,12 +16,14 @@ pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
 pub mod navigation;
+pub mod online_page;
 pub mod passkey_page;
 pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
 pub mod waypoint_page;
 pub mod world_page;
+pub use online_page::{OnlineCommand, OnlineView};
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -199,6 +201,8 @@ pub enum Event {
     },
     /// A Pass Key page's request: copy, share, look up, save files.
     Cloud(CloudCommand),
+    /// An Online page's request to the game server (friends, code, league).
+    Online(OnlineCommand),
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -551,6 +555,10 @@ pub struct Frontend {
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// The rider's online card, friends and league (the host fills it).
+    pub online: OnlineView,
+    /// The Online pages' working state.
+    pub online_ui: online_page::OnlineUi,
     /// The Waypoint Editor pages' working state.
     pub waypoint: waypoint_page::WaypointUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides
@@ -711,6 +719,8 @@ impl Frontend {
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
+            online: Default::default(),
+            online_ui: Default::default(),
             waypoint: Default::default(),
             split: false,
             split_vertical: matches!(
@@ -829,6 +839,11 @@ impl Frontend {
                 self.championship_choices()
             };
 
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if Self::is_online_page(&self.page) {
+            self.choices = self.online_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -1305,6 +1320,7 @@ impl Frontend {
         }
         match action {
             "codeletter" => return self.step_passkey(direction, view),
+            "friendletter" => return self.step_friend_code(direction, view),
             _ if waypoint_page::waypoint_row(action) => {
                 self.step_waypoint(action, direction, settings)
             }
@@ -1890,6 +1906,12 @@ impl Frontend {
                 value: self.passkey.entry.clone(),
                 max_length: 40,
             }],
+            "friend-add" => vec![Field {
+                action: "friend-code",
+                label: "Friend Code:",
+                value: self.online_ui.entry.clone(),
+                max_length: 9,
+            }],
             "waypoint-course" => vec![Field {
                 action: "wpname",
                 label: "Course name:",
@@ -1931,6 +1953,10 @@ impl Frontend {
             }
             "passkey-code" => {
                 self.set_passkey_entry(text);
+                return;
+            }
+            "friend-code" => {
+                self.set_friend_entry(text);
                 return;
             }
             "wpname" => self.set_waypoint_name(text),
@@ -1995,6 +2021,10 @@ impl Frontend {
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
+            .filter(|&i| {
+                !self.tracks[i].id.starts_with("mx_")
+                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
+            })
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
@@ -2265,6 +2295,9 @@ impl Frontend {
             return None;
         }
         if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
+        }
+        if let Some(event) = self.online_action(action, view) {
             return event;
         }
         if let Some(event) = self.waypoint_action(action, view, settings) {

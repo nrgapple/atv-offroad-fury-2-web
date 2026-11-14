@@ -252,7 +252,8 @@ pub struct Room {
     uncounted: Vec<u8>,
     /// A Quick Play room's server-run loop (research/QUICK_PLAY.md).
     qp: Option<quickplay::Loop>,
-    /// Each slot's socket `pid` (unverified until research/ONLINE_IDENTITY.md).
+    /// Each slot's verified player id (`?rider=` token,
+    /// research/ONLINE_IDENTITY.md), for Quick Play's match records.
     pids: Vec<(u8, String)>,
     loop_sent_ms: u64,
     loop_dirty: bool,
@@ -314,7 +315,8 @@ impl Room {
         self.public || self.qp.is_some()
     }
 
-    /// Keeps the socket's `pid` for `peer`'s slot (None clears it).
+    /// Keeps the socket's verified player id for `peer`'s slot (None
+    /// clears it).
     pub fn set_pid(&mut self, peer: u8, pid: Option<String>) {
         self.pids.retain(|(p, _)| *p != peer);
         if let Some(pid) = pid {

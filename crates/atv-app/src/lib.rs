@@ -18,6 +18,7 @@ mod hockey;
 mod instant_replay;
 mod multiplayer;
 mod net;
+mod online;
 mod overlay;
 mod photo;
 pub mod quick_chat;
@@ -250,6 +251,8 @@ enum Message {
     /// Web: Import Save read a file (name, text).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     CloudImport(String, String),
+    /// A game server answer for the Online pages (online.rs).
+    Online(online::Purpose, Result<(u16, String), String>),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -863,6 +866,8 @@ struct App {
     cloud: cloud::Cloud,
     /// World boards and the daily event (world.rs).
     world: world::World,
+    /// Online identity, friends and the league (online.rs).
+    online: online::Online,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
@@ -6304,6 +6309,7 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Cloud(id, response) => self.cloud_response(id, response),
             Message::World(id, response) => self.world_response(id, response),
+            Message::Online(purpose, result) => self.online_response(purpose, result),
             Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
@@ -6879,6 +6885,7 @@ impl App {
         }
         self.poll_riders();
         self.world_poll();
+        self.online_poll();
         #[cfg(not(target_arch = "wasm32"))]
         let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
@@ -7767,6 +7774,18 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Online rooms carry the rider's identity (Free Ride registers in
+        // `free_ride`).
+        if matches!(
+            event,
+            Event::Host { .. }
+                | Event::Join { .. }
+                | Event::TagHost { .. }
+                | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
+        ) {
+            self.online_wanted();
+        }
         // Multiplayer → Split Screen rides Freestyle, races and the Games
         // King of the Hills, Treasure Hunt and Hockey with two local
         // players; every other ride is one player's.
@@ -8067,45 +8086,8 @@ impl App {
             }
             Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
-            Event::FreeRide { quad, rider, name } => {
-                let Some((site, server)) = self
-                    .defaults
-                    .as_ref()
-                    .map(|d| (d.site.clone(), d.server.clone()))
-                else {
-                    return;
-                };
-                // Many riders keep the default name: number it so strangers
-                // can tell them apart. Like frontend.js `playerName`, the
-                // number stays for the session and the next save keeps it.
-                let name = if name == "Rider" {
-                    let numbered = format!("Rider {}", 1000 + random::below(9000));
-                    if let Some(front) = &self.front {
-                        front.borrow_mut().state.player_name.clone_from(&numbered);
-                    }
-                    numbered
-                } else {
-                    name
-                };
-                let room = RoomStart {
-                    site,
-                    server,
-                    code: None,
-                    host: false,
-                    freeride: true,
-                    quickplay: None,
-                    name,
-                    drop_after: None,
-                    train_place: None,
-                };
-                self.start_ride(
-                    atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
-                    quad,
-                    rider,
-                    None,
-                    Some(room),
-                );
-            }
+            Event::Online(command) => self.online_command(command),
+            Event::FreeRide { quad, rider, name } => self.free_ride(quad, rider, name, None),
             Event::QuickPlay {
                 playlist,
                 quad,
@@ -8227,7 +8209,7 @@ impl App {
                 name,
                 ..
             } if atv_game::multiplayer::is_shared_room(&code) => {
-                self.front_event(Event::FreeRide { quad, rider, name });
+                self.free_ride(quad, rider, name, Some(code));
             }
             Event::Join {
                 code,
@@ -8294,6 +8276,48 @@ impl App {
                 self.wake();
             }
         }
+    }
+
+    /// Arlington Free Ride; `shard` (a friend's Join) asks for that shared
+    /// room first.
+    fn free_ride(&mut self, quad: u16, rider: u16, name: String, shard: Option<String>) {
+        self.online_wanted();
+        let Some((site, server)) = self
+            .defaults
+            .as_ref()
+            .map(|d| (d.site.clone(), d.server.clone()))
+        else {
+            return;
+        };
+        // Many riders keep the default name: number it so strangers
+        // can tell them apart. Like frontend.js `playerName`, the
+        // number stays for the session and the next save keeps it.
+        let name = if name == "Rider" {
+            let numbered = format!("Rider {}", 1000 + random::below(9000));
+            if let Some(front) = &self.front {
+                front.borrow_mut().state.player_name.clone_from(&numbered);
+            }
+            numbered
+        } else {
+            name
+        };
+        let room = RoomStart {
+            site,
+            server,
+            code: shard,
+            host: false,
+            freeride: true,
+            name,
+            drop_after: None,
+            train_place: None,
+        };
+        self.start_ride(
+            atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
+            quad,
+            rider,
+            None,
+            Some(room),
+        );
     }
 
     /// Shows the course loader and loads the ride on the frontend's GPU.
@@ -10388,6 +10412,9 @@ impl App {
         rider: u16,
         name: String,
     ) {
+        // Registers the rider (research/ONLINE_IDENTITY.md): the room socket
+        // carries its token, and the server's match records its verified id.
+        self.online_wanted();
         let Some((site, server)) = self
             .defaults
             .as_ref()
@@ -10758,6 +10785,7 @@ pub fn run(options: Options) {
     let app = App {
         cloud: Default::default(),
         world: Default::default(),
+        online: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),

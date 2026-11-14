@@ -62,7 +62,7 @@ pub const DRIFT_SLACK_MS: f64 = 1_500.;
 pub struct Human {
     pub peer: u8,
     pub name: String,
-    /// The socket's `pid` (unverified until slice D).
+    /// The socket's verified player id (research/ONLINE_IDENTITY.md).
     pub pid: Option<String>,
     /// Can run the round as its driver (every rider today: only new
     /// builds reach a Quick Play room).

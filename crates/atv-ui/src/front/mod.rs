@@ -100,16 +100,24 @@ impl Img {
 }
 
 /// Original event families from tracks.dat ids; labels follow the manual.
-pub const GROUPS: [(&str, &str); 6] = [
+pub const GROUPS: [(&str, &str); 11] = [
     ("all", "All"),
     ("env", "Enduro"),
     ("free", "Stunt"),
     ("nat", "Nationals"),
     ("sx", "Supercross"),
     ("extra", "Arena"),
+    ("mx_fs", "MX Freestyle"),
+    ("mx_mc", "MX Freeride"),
+    ("mx_nat", "MX Nationals"),
+    ("mx_sm", "MX Supermoto"),
+    ("mx_sx", "MX Supercross"),
 ];
 
 pub fn course_group(id: &str) -> &'static str {
+    if let Some(course) = atv_game::launch::mx_courses::get(id) {
+        return course.group;
+    }
     // Enduro and Short Track races list with their Environment venue.
     let id = atv_game::launch::race_venue(id);
     match id.trim_end_matches(|c: char| c.is_ascii_digit()) {
@@ -424,13 +432,13 @@ fn row(gap: f32) -> Style {
     }
 }
 
-fn pill_shadows(paint: Paint) -> Paint {
+pub(crate) fn pill_shadows(paint: Paint) -> Paint {
     paint
         .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")))
         .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009")))
 }
 
-fn arrow(left: bool, size: f32, color: Color, shadow: bool) -> El {
+pub(crate) fn arrow(left: bool, size: f32, color: Color, shadow: bool) -> El {
     let path = if left {
         "M13 3 5 10l8 7z"
     } else {
@@ -601,9 +609,18 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
         ..Default::default()
     });
     let page = s.page.as_str();
-    // Settings opened from the main menu draw over the bare backdrop.
+    // The Jukebox and Credits opened from the main menu draw over the bare
+    // backdrop.
     if page == "backdrop" {
         return root;
+    }
+    // Options opened from the main menu takes the rows' place (atv_ui::menu
+    // draws it); the stage keeps the wordmark beside it.
+    if page == "stage" {
+        if m.portrait {
+            return root;
+        }
+        return root.child(stage(m, s));
     }
     if page == "title" {
         return title(m, s, root);
@@ -917,6 +934,38 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     } else {
         clamp(26., m.w * 0.036, 44.)
     };
+    let padding = if m.portrait {
+        (10., 6.)
+    } else if m.short {
+        (8., 4.)
+    } else {
+        (clamp(12., m.h * 0.03, 28.), clamp(8., m.h * 0.016, 16.))
+    };
+    El::new(Style {
+        padding: sides(padding.0 + m.safe[0], 0., padding.1, 0.),
+        ..column(0.)
+    })
+    .child(title_strip(
+        s.heading
+            .clone()
+            .unwrap_or_else(|| page_title(&s.page).into()),
+        size,
+        dark,
+        m.short,
+        m.sides(),
+    ))
+}
+
+/// A page's name in condensed italics on a band that fades out to the
+/// right (dark lettering on the portrait silver). `pad`: the band's
+/// (left, right) padding.
+pub(crate) fn title_strip(
+    title: String,
+    size: f32,
+    dark: bool,
+    short: bool,
+    pad: (f32, f32),
+) -> El {
     let mut style = TextStyle::new(
         display(size, 800, true),
         Color::hex(if dark { "#1a1a1a" } else { "#f4f4f4" }),
@@ -948,9 +997,9 @@ fn heading(m: &Metrics, s: &Screen) -> El {
             ],
         )
     };
-    let (pad_top, pad_bottom) = if m.short { (3., 4.) } else { (6., 8.) };
-    let strip = El::new(Style {
-        padding: sides(pad_top, m.sides().1, pad_bottom, m.sides().0),
+    let (pad_top, pad_bottom) = if short { (3., 4.) } else { (6., 8.) };
+    El::new(Style {
+        padding: sides(pad_top, pad.1, pad_bottom, pad.0),
         min_size: Size {
             width: length(0.),
             height: auto(),
@@ -963,26 +1012,28 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     })
     .paint(Paint::fill(fill))
     .content(Content::Text {
-        text: s
-            .heading
-            .clone()
-            .unwrap_or_else(|| page_title(&s.page).into()),
+        text: title,
         style,
         line_height: size * 1.05,
         wrap: false,
-    });
-    let padding = if m.portrait {
-        (10., 6.)
-    } else if m.short {
-        (8., 4.)
-    } else {
-        (clamp(12., m.h * 0.03, 28.), clamp(8., m.h * 0.016, 16.))
-    };
-    El::new(Style {
-        padding: sides(padding.0 + m.safe[0], 0., padding.1, 0.),
-        ..column(0.)
     })
-    .child(strip)
+}
+
+/// The silver stage and its wordmark alone, beside a menu column the
+/// pause layer draws (landscape).
+fn stage(m: &Metrics, s: &Screen) -> El {
+    let mut el = El::new(absolute(Some(0.), Some(0.), Some(0.), None));
+    el.style.size.width = length(m.w * 0.52);
+    el.style.display = Display::Flex;
+    el.style.flex_direction = FlexDirection::Column;
+    el.style.justify_content = JustifyContent::CENTER;
+    el.style.padding = sides(
+        0.,
+        m.sides().1,
+        0.,
+        clamp(64., m.w * 0.04 + m.h * 0.12, 160.),
+    );
+    el.children(panel_logo(m, s))
 }
 
 /// `.ms-panel`: the stage contents (logo and ride plate, course hero,
@@ -1123,7 +1174,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         }
         "loading" => panel = panel.child(loading_info(m, s)),
         page if controller::profile_pages::DETAIL_PAGES.contains(&page)
-            || controller::passkey_page::PAGES.contains(&page) =>
+            || controller::passkey_page::PAGES.contains(&page)
+            || controller::online_page::PAGES.contains(&page) =>
         {
             panel = panel.child(details(m, s));
             if let Some(link) = &s.qr {
@@ -1756,11 +1808,16 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "hall-of-fame"
                 | "daily"
         ) || controller::store_page(page)
-            || controller::passkey_page::PAGES.contains(&page) =>
+            || controller::passkey_page::PAGES.contains(&page)
+            || controller::online_page::PAGES.contains(&page) =>
         {
             if matches!(
                 page,
-                "profile-name" | "store-cheats" | "passkey-entry" | "waypoint-course"
+                "profile-name"
+                    | "store-cheats"
+                    | "passkey-entry"
+                    | "friend-add"
+                    | "waypoint-course"
             ) {
                 left = left.child(form(m, s));
             }
@@ -1951,7 +2008,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
     .scroll(s.rows_scroll)
 }
 
-fn bullet() -> El {
+pub(crate) fn bullet() -> El {
     El::new(Style {
         size: Size {
             width: length(14.),
@@ -2763,7 +2820,7 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     left
 }
 
-fn bullet_slot(selected: bool) -> El {
+pub(crate) fn bullet_slot(selected: bool) -> El {
     if selected {
         El::new(Style {
             size: Size {
@@ -4124,5 +4181,30 @@ mod tests {
         // The backdrop layer has no hit targets: input goes to the content.
         let (back, _) = layers(&view, &moving);
         assert!(back.id.is_none() && back.children.iter().all(|c| c.id.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod mx_catalog_tests {
+    #[test]
+    fn imported_groups_append_without_changing_original_groups() {
+        assert_eq!(
+            &super::GROUPS[..6],
+            &[
+                ("all", "All"),
+                ("env", "Enduro"),
+                ("free", "Stunt"),
+                ("nat", "Nationals"),
+                ("sx", "Supercross"),
+                ("extra", "Arena")
+            ]
+        );
+        for c in atv_game::launch::mx_courses::COURSES {
+            assert_eq!(super::course_group(c.id), c.group);
+            assert!(!atv_game::launch::mx_courses::available(c.id, true));
+            assert!(!atv_game::launch::is_race_course(c.id));
+            assert!(atv_game::launch::course_resource(c.id, false).is_err());
+        }
+        assert_eq!(super::course_group("nat01"), "nat");
     }
 }

@@ -37,7 +37,7 @@ pub enum RoomMsg {
         key: Option<String>,
         /// False for a client at an uncounted address.
         counted: bool,
-        /// The socket's `pid` query (unverified).
+        /// The socket's verified player id (`Players::verify` of `?rider=`).
         pid: Option<String>,
         outbox: Arc<Outbox>,
         reply: oneshot::Sender<Result<u8, Refused>>,
