@@ -167,9 +167,15 @@ try {
   await key(page, 'Enter');
   await onPage(page, 'race', 120000);
 
-  // The course list shows the medal (the picker sheet).
+  // The course list shows the medal (the picker sheet, opened by its All
+  // Courses button under the photo), then the setup again.
   await focus(page, 'racetrack');
+  await page.mouse.click(967, 451);
+  await nextFrames(page, 30);
   await shot(page, 'course-medal');
+  await key(page, 'Escape');
+  if ((await front(page)).page !== 'race') { await onPage(page, 'single'); await choose(page, 'race'); }
+  await onPage(page, 'race');
 
   // Lap Attack: the Ghost row and its choices.
   await focus(page, 'raceevent');
