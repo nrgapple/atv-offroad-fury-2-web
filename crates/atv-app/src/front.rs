@@ -2147,7 +2147,7 @@ impl Front {
                 "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
                 "art": self.jukebox_art.is_some(),
                 "credits": self.credits.as_ref().map(|(c, original)| serde_json::json!({
-                    "entries": c.entries.len(), "original": original,
+                    "entries": c.entries.len(), "original": original, "bounds": c.bounds, "nameIndent": c.name_indent,
                     "first": c.entries.iter().find_map(|e| match e {
                         atv_core::credits::Entry::Heading(h) => Some(h.as_str()),
                         _ => None,

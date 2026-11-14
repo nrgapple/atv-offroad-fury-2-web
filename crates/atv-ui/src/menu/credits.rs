@@ -64,6 +64,18 @@ fn text(value: &str, style: TextStyle, line: f32) -> El {
     })
 }
 
+/// Disc column geometry, with a readable portrait fallback.
+pub fn column(width: f32, height: f32, bounds: [f32; 4]) -> (f32, f32) {
+    if width < height {
+        return (16., (width - 32.).max(1.));
+    }
+    let scale = (width / 640.).min(height / 448.);
+    (
+        (width - 640. * scale) * 0.5 + bounds[0] * scale,
+        (bounds[2] - bounds[0]) * scale,
+    )
+}
+
 pub fn element(view: &Viewport, state: &State) -> El {
     let (w, h) = (view.width, view.height);
     let top = 16. + view.safe[0];
@@ -71,7 +83,7 @@ pub fn element(view: &Viewport, state: &State) -> El {
     let area_top = top + header_h + 8.;
     let area_h = (h - area_top - 12. - view.safe[2]).max(80.);
     // Page pixels to view pixels: the script's 448-line page fills the area.
-    let scale = (area_h / PAGE_HEIGHT).clamp(0.8, 2.2);
+    let mut scale = (area_h / PAGE_HEIGHT).clamp(0.8, 2.2);
     let selected = state.rows.choices.get(state.selection).map(String::as_str) == Some("back");
     let label = state.rows.label("back").unwrap_or("Back");
     let dark = Color::hex("#0d0b00");
@@ -134,17 +146,25 @@ pub fn element(view: &Viewport, state: &State) -> El {
         ),
         38.,
     ));
+    // Preserve the disc's right-hand column on landscape screens. Portrait
+    // uses the full width so names remain readable (port adaptation).
+    let bounds = state
+        .credits
+        .as_ref()
+        .map_or(Credits::default().bounds, |c| c.bounds);
+    let (column_x, column_w) = column(w, h, bounds);
+    scale = scale.min(column_w / (bounds[2] - bounds[0]));
     // The scroll: only the lines inside the area are laid out.
     let mut area = El::new(Style {
         position: Position::Absolute,
         inset: Rect {
-            left: length(0.),
+            left: length(column_x),
             top: length(area_top),
             right: length(0.),
             bottom: auto(),
         },
         size: Size {
-            width: length(w),
+            width: length(column_w),
             height: length(area_h),
         },
         overflow: taffy::Point {
@@ -164,22 +184,24 @@ pub fn element(view: &Viewport, state: &State) -> El {
             let height = line_height(entry, credits) * scale;
             let visible = y + height > 0. && y < area_h;
             let line = match entry {
-                Entry::Heading(t) => Some((t, Color::rgb(hr, hg, hb), 700)),
-                Entry::Name(t) => Some((t, Color::rgb(nr, ng, nb), 500)),
+                Entry::Heading(t) => Some((t, Color::rgb(hr, hg, hb), 700, 0.)),
+                Entry::Name(t) => {
+                    Some((t, Color::rgb(nr, ng, nb), 500, credits.name_indent * scale))
+                }
                 Entry::Icon(_) | Entry::Blank => None,
             };
-            if visible && let Some((value, color, weight)) = line {
+            if visible && let Some((value, color, weight, indent)) = line {
                 area = area.child(
                     El::new(Style {
                         position: Position::Absolute,
                         inset: Rect {
-                            left: length(0.),
+                            left: length(indent),
                             top: length(y),
                             right: length(0.),
                             bottom: auto(),
                         },
                         display: Display::Flex,
-                        justify_content: JustifyContent::CENTER,
+                        justify_content: JustifyContent::START,
                         ..Default::default()
                     })
                     .child(text(
@@ -208,6 +230,12 @@ pub fn element(view: &Viewport, state: &State) -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn landscape_uses_disc_column_portrait_stays_readable() {
+        assert_eq!(column(640., 448., Credits::default().bounds), (359., 281.));
+        assert_eq!(column(390., 844., Credits::default().bounds), (16., 358.));
+    }
 
     #[test]
     fn the_script_enters_from_the_bottom_and_wraps() {
