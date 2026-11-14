@@ -41,8 +41,8 @@ pub const TIME_LIMIT: f32 = 120.0;
 /// Menu/session identifier for Classic (not an objective completion bit).
 pub const CLASSIC: usize = usize::MAX;
 pub const CLASSIC_COURSES: [&str; 14] = [
-    "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01", "free02",
-    "free03", "free04", "free05", "free06",
+    "env05", "env02", "env08", "env06", "env04", "env01", "env03", "env07", "free01", "free04",
+    "free02", "free06", "free03", "free05",
 ];
 pub fn classic(seconds: f32) -> Objective {
     Objective {
