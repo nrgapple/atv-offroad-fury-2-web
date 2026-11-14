@@ -3754,7 +3754,7 @@ mod tests {
     }
 
     #[test]
-    fn free_ride_needs_no_setup_and_rides_an_atv() {
+    fn free_ride_needs_no_setup_and_keeps_a_motorcycle() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         settings.set(
@@ -3775,7 +3775,7 @@ mod tests {
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::FreeRide {
-                quad: 1,
+                quad: 29,
                 rider: 1,
                 name: "Ann".into()
             })
