@@ -259,6 +259,9 @@ fn presence_is_friends_only_and_respects_appear_offline() {
     let row = &p.friends(&a, later).unwrap()["friends"][0];
     assert_eq!(row["room"]["kind"], "quickplay");
     assert!(row["room"]["code"].is_null());
+    // …except to a build that joins Quick Play rooms.
+    let row = &p.friends_for(&a, later, true).unwrap()["friends"][0];
+    assert_eq!(row["room"]["code"], "QP000001");
     assert_eq!(p.pid(9).as_deref(), Some(b.as_str()));
     assert_eq!(p.pid(10), None);
 }
@@ -384,6 +387,60 @@ fn verified_matches_count_stats_rating_points_and_levels() {
         (&a, true, 2, false, false),
     ]);
     assert_eq!(p.ingest(&cpu_with_id), 0);
+}
+
+#[test]
+fn podium_rewards_match_what_ingest_counts() {
+    let p = players();
+    let (a, _) = join(&p, 1, "Ann");
+    let (b, _) = join(&p, 2, "Bo");
+    let (a, b) = (Some(a), Some(b));
+    let stranger = Some("f".repeat(32));
+    let none = None;
+    let race = record(&[
+        (&a, false, 1, false, false),
+        (&none, true, 2, false, false),
+        (&b, false, 3, false, false),
+        (&stranger, false, 4, false, false),
+    ]);
+    let peers = [Some(2), None, Some(0), Some(1)];
+    let rewards = p.rewards(&race, &peers);
+    // Registered humans only, by slot.
+    assert_eq!(rewards.rewards.len(), 2);
+    let ann = *rewards.of(2).unwrap();
+    assert_eq!(ann.points, 10 + 15 + 10);
+    assert_eq!(ann.xp, 35);
+    assert_eq!((ann.level, ann.level_xp, ann.next_xp), (1, 0, 100));
+    assert_eq!(ann.flags, 0);
+    assert_eq!(rewards.of(0).unwrap().points, 15);
+    // The preview counts nothing; ingest then gives the same.
+    assert_eq!(p.me(a.as_deref().unwrap(), NOW).unwrap()["xp"], 0);
+    p.ingest(&race);
+    let me = p.me(a.as_deref().unwrap(), NOW).unwrap();
+    assert_eq!(me["xp"], u64::from(ann.xp));
+    assert_eq!(me["league"]["points"], ann.week_points);
+    // Three wins later Ann reaches level 2 (100 XP) and Silver (100).
+    p.ingest(&race);
+    let rewards = p.rewards(&race, &peers);
+    let ann = *rewards.of(2).unwrap();
+    assert_eq!(ann.xp, 105);
+    assert_eq!(ann.level, 2);
+    assert_eq!((ann.level_xp, ann.next_xp), (100, 300));
+    assert_eq!(ann.flags, reward_flag::LEVEL_UP | reward_flag::TIER_UP);
+    assert_eq!(ann.tier, 1);
+    // Unverified rounds earn nothing; a leaver earns 0 points.
+    let mut unverified = race.clone();
+    unverified.verified = false;
+    assert!(p.rewards(&unverified, &peers).rewards.is_empty());
+    let mut left = race.clone();
+    left.riders[0].left = true;
+    assert_eq!(p.rewards(&left, &peers).of(2).unwrap().points, 0);
+    // A record from a later week starts the week's points again.
+    let mut next_week = race.clone();
+    next_week.t = NOW + 7 * 86_400_000;
+    let ann = *p.rewards(&next_week, &peers).of(2).unwrap();
+    assert_eq!((ann.week_points, ann.tier), (35, 0));
+    assert_eq!(ann.flags & reward_flag::TIER_UP, 0);
 }
 
 #[test]

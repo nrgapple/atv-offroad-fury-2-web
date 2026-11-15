@@ -66,6 +66,13 @@ pub async fn claim(
     let avoid = value["avoid"]
         .as_str()
         .and_then(|c| atv_net::parse_room_code(c).ok());
+    // The rider's hidden rating, when the claim carries its token.
+    let mine = value["token"]
+        .as_str()
+        .filter(|t| t.len() <= 256)
+        .and_then(|t| shared.players.verify(t, now_ms()))
+        .and_then(|pid| shared.players.rating(&pid))
+        .map(|r| r.ordinal());
     let ip = client_ip(peer, &headers);
     if !shared
         .admission
@@ -87,12 +94,54 @@ pub async fn claim(
         body.insert("code".into(), String::from_utf8_lossy(&code).into());
         body.insert("key".into(), key.into());
         body.insert("quickplay".into(), true.into());
+        // Takes `signal::REWARDS` and sends the podium's rewards.
+        body.insert("rewards".into(), true.into());
         body.insert(
             "playlist".into(),
             playlist::name(list).unwrap_or("race").into(),
         );
         json(StatusCode::OK, body.into())
     };
+    // Friends → Join: a seat in the friend's room of this playlist, in any
+    // phase (a rider who arrives mid-round watches until the next one).
+    let friend = value["room"]
+        .as_str()
+        .and_then(|c| atv_net::parse_room_code(c).ok())
+        .filter(|c| Some(*c) != avoid && same_playlist(c, list));
+    if let Some(code) = friend
+        && let Some(room) = shared.registry.get(&code)
+        && let Some(Some(key)) = room.claim_quickplay(true).await
+    {
+        return answer(code, key);
+    }
+    // Two rooms forming in the same wait window (both still in their
+    // lobby, both with a seat): the one whose riders' mean rating is
+    // nearest the rider's (unrated riders and rooms count as new riders,
+    // 0). Otherwise rooms are never split by rating.
+    if let Some(mine) = mine {
+        let mut lobbies = Vec::new();
+        for number in 1..=MAX_ROOMS {
+            let code = room_code(list, number);
+            if Some(code) == avoid {
+                continue;
+            }
+            if let Some(room) = shared.registry.get(&code)
+                && let Some(info) = room.quick_info().await
+                && info.open
+                && info.lobby
+            {
+                lobbies.push((code, room, info.rating.unwrap_or(0.)));
+            }
+        }
+        if lobbies.len() >= 2 {
+            lobbies.sort_by(|a, b| nearer(mine, a.2, b.2));
+            for (code, room, _) in lobbies {
+                if let Some(Some(key)) = room.claim_quickplay(false).await {
+                    return answer(code, key);
+                }
+            }
+        }
+    }
     // A room between rounds with a free seat.
     let mut free = None;
     for number in 1..=MAX_ROOMS {
@@ -129,6 +178,16 @@ pub async fn claim(
         StatusCode::SERVICE_UNAVAILABLE,
         "Quick Play is full. Try again shortly.",
     )
+}
+
+/// `code` is a Quick Play room of `list`.
+fn same_playlist(code: &RoomCode, list: u8) -> bool {
+    atv_net::quickplay::is_quickplay_room_code(code) && room_code(list, 1)[2] == code[2]
+}
+
+/// Orders two rooms' mean ratings by distance from the rider's `mine`.
+fn nearer(mine: f64, a: f64, b: f64) -> std::cmp::Ordering {
+    (a - mine).abs().total_cmp(&(b - mine).abs())
 }
 
 /// Appends finished matches to the state directory's record file, off the
@@ -169,5 +228,22 @@ mod tests {
         assert_eq!(&room_code(playlist::STUNTS, 42), b"QPS00042");
         assert!(atv_net::valid_room_code(&code));
         assert!(atv_net::quickplay::is_quickplay_room_code(&code));
+    }
+
+    #[test]
+    fn a_friends_room_must_be_of_the_playlist() {
+        assert!(same_playlist(b"QPR00007", playlist::RACE));
+        assert!(!same_playlist(b"QPS00007", playlist::RACE));
+        assert!(same_playlist(b"QPS00007", playlist::STUNTS));
+        assert!(!same_playlist(b"FREERD01", playlist::RACE));
+    }
+
+    #[test]
+    fn riders_go_to_the_nearest_rated_room() {
+        let mut rooms = [(1, 0.), (2, 24.), (3, 9.)];
+        rooms.sort_by(|a, b| nearer(20., a.1, b.1));
+        assert_eq!(rooms.map(|r| r.0), [2, 3, 1]);
+        rooms.sort_by(|a, b| nearer(0., a.1, b.1));
+        assert_eq!(rooms.map(|r| r.0), [1, 3, 2]);
     }
 }

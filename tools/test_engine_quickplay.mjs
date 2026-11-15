@@ -4,8 +4,10 @@
 // portrait phone). The server seats both in one QPR room with CPU seats,
 // both press GO, both vote the race card, the pick counts down, the
 // server's driver starts the race (CPU-filled, one lap with `raceLaps=1`
-// and the race path driver), the server's checked podium reaches both, and
-// Rematch from both starts the next vote.
+// and the race path driver), the server's checked podium reaches both with
+// each rider's league points and level bar, and Rematch from both starts
+// the next vote. A third rider joins the room by code mid-race (Friends →
+// Join's `room`), watches it, and is seated for the next round.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_quickplay.mjs
 // ATV_QP_SHOTS=<dir> saves a capture of each screen.
 import assert from 'node:assert/strict';
@@ -128,6 +130,18 @@ try {
   await until(one, roomRace, x => x.phase >= 2, 90000, 'racing');
   await shot(two, 'qp-racing-phone');
 
+  // A friend joins mid-round: a seat in that room (the queue alone would
+  // not place anyone mid-round), watching until the next round.
+  const three = await open({ width: 390, height: 844 });
+  await three.goto(`${base}/play.html?${flags}&name=QPThree&quickplay=race&quickplayRoom=${a.code}`);
+  const c = await until(three, mp, m => m.code && m.roomLoop, 240000, 'friend joined');
+  assert.equal(c.code, a.code, 'the friend lands in the same room');
+  const peer = c.peer;
+  const watching = await until(three, loop, x => x.phase === 3 && x.seats.some(s => s.peer === peer), 60000, 'friend seated');
+  assert.ok(watching.seats.find(s => s.peer === peer).flags & 8, 'the friend watches this round');
+  await until(three, panel, s => s.spectating, 30000, 'Next round banner');
+  await shot(three, 'qp-friend-watching-phone');
+
   // 5. The server's podium reaches both, with server-checked times.
   for (const p of [one, two]) {
     await until(p, panel, s => s.phase === 'Results' && s.rows.length >= 2, 600000, 'podium');
@@ -137,6 +151,15 @@ try {
   assert.equal(humans.length, 2, `both riders ranked: ${JSON.stringify(l.results)}`);
   assert.ok(l.verified, 'the server checked the race');
   assert.deepEqual((await loop(two)).results, l.results, 'one podium');
+  // Each verified rider's league points count up beside the name, with
+  // the level bar and tier (research/ONLINE_IDENTITY.md).
+  for (const p of [one, two]) {
+    const shown = await until(p, panel, s => s.level && s.rows.filter(row => !row.cpu).every(row => row.points && row.points !== '+0'), 30000, 'podium points');
+    assert.ok(shown.level.level >= 1 && /^\+\d+ XP$/.test(shown.level.gain), `level strip: ${JSON.stringify(shown.level)}`);
+    assert.ok(shown.rows.filter(row => row.cpu).every(row => row.points == null), 'CPUs earn nothing');
+    const rewards = (await mp(p)).rewards;
+    assert.equal(rewards.round, l.setup.number, 'rewards for this round');
+  }
   await shot(one, 'qp-podium');
   await shot(two, 'qp-podium-phone');
 
@@ -147,8 +170,13 @@ try {
     await until(p, loop, x => x.phase === 1 && x.setup.number === 1, 30000, 'next vote');
   }
   assert.equal((await mp(two)).code, a.code, 'the room stays together');
+  // The friend is seated for the next round.
+  const next = await loop(three);
+  const seat = next.seats.find(s => s.peer === peer);
+  assert.ok(seat && !(seat.flags & 8), `the friend plays the next round: ${JSON.stringify(next.seats)}`);
+  assert.equal(next.seats.filter(s => !(s.flags & 1)).length, 3, 'three riders');
   assertNoErrors(errors);
-  console.log(`Quick Play: menu row and tiles, one room for two riders with CPU seats, GO, vote and roulette, driver-started race, checked podium (${humans.map(h => h.value).join(', ')} ms) and rematch verified`);
+  console.log(`Quick Play: menu row and tiles, one room for two riders with CPU seats, GO, vote and roulette, driver-started race, checked podium (${humans.map(h => h.value).join(', ')} ms) with points and levels, a friend joining mid-round seated next round, and rematch verified`);
 } finally {
   await browser.close();
 }

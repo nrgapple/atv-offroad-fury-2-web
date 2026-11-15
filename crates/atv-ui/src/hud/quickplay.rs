@@ -62,6 +62,26 @@ pub struct RowView {
     pub cpu: bool,
     pub me: bool,
     pub dnf: bool,
+    /// League points earned this round ("+35", counting up); None for
+    /// CPUs, unverified rounds and riders without an online rider.
+    pub points: Option<String>,
+}
+
+/// This rider's level after the round (research/ONLINE_IDENTITY.md).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct LevelView {
+    pub level: u16,
+    /// 0-1 through the level, filling as the XP counts up.
+    pub fill: f32,
+    /// "+35 XP".
+    pub gain: String,
+    /// The weekly league tier's name.
+    pub tier: String,
+    /// The round reached a new tier / level (shown once counted).
+    pub tier_up: bool,
+    pub level_up: bool,
+    /// 0-1 through the level-up beat (0 none).
+    pub beat: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -87,6 +107,10 @@ pub struct View {
     pub focus_visible: bool,
     /// 0-1: the win flash.
     pub flash: f32,
+    /// The podium's level strip.
+    pub level: Option<LevelView>,
+    /// 0-1 through the level-up confetti.
+    pub confetti: Option<f32>,
     /// Watching this round, riding the next one.
     pub spectating: bool,
     /// Narrow (portrait phone) layout.
@@ -358,6 +382,100 @@ fn card(index: usize, card: &CardView, focused: bool, narrow: bool, big: bool) -
     el
 }
 
+/// A "+35" points chip.
+fn points(value: &str) -> El {
+    El::new(Style {
+        padding: sides(1., 8., 1., 8.),
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#2f9e4a")).radius(10.))
+    .child(text(value, 14., 900, Color::hex("#ffffff")))
+}
+
+/// Level n, its bar filling, the XP gained and the league tier.
+fn level_strip(level: &LevelView, width: f32) -> El {
+    let bar = 150f32.min(width - 160.).max(60.);
+    let pulse = 1. + 0.25 * (level.beat * std::f32::consts::PI).sin().max(0.);
+    let mut strip = El::new(row(10., true))
+        .child(text(
+            &format!("Lv {}", level.level),
+            20. * pulse,
+            900,
+            Color::hex(if level.level_up { "#f6dc4a" } else { "#f4f4f4" }),
+        ))
+        .child(
+            El::new(Style {
+                size: Size {
+                    width: length(bar),
+                    height: length(10.),
+                },
+                ..Default::default()
+            })
+            .paint(Paint::fill(Color::hex("#ffffff26")).radius(5.))
+            .child(
+                El::new(Style {
+                    size: Size {
+                        width: length(bar * level.fill.clamp(0., 1.)),
+                        height: length(10.),
+                    },
+                    ..Default::default()
+                })
+                .paint(Paint::fill(gold_pill()).radius(5.)),
+            ),
+        )
+        .child(text(&level.gain, 16., 800, Color::hex("#7be38f")))
+        .child(text(
+            &format!("◆ {}{}", level.tier, if level.tier_up { " ▲" } else { "" }),
+            16.,
+            800,
+            Color::hex(if level.tier_up { "#f6dc4a" } else { "#dddddd" }),
+        ));
+    if level.level_up {
+        strip = strip.child(text("LEVEL UP!", 18. * pulse, 900, Color::hex("#f6dc4a")));
+    }
+    strip
+}
+
+/// Confetti falling over the screen, `t` 0-1 through the beat. Pieces are
+/// placed by a fixed hash of their index, so the same frame draws the same.
+fn confetti(viewport: &Viewport, t: f32) -> El {
+    const PIECES: u32 = 28;
+    let colors = ["#f6dc4a", "#55d66b", "#ef5b50", "#5bb6ef", "#f4f4f4"];
+    let fade = (1. - t).clamp(0., 1.);
+    El::new(Style {
+        position: Position::Absolute,
+        size: Size {
+            width: length(viewport.width),
+            height: length(viewport.height),
+        },
+        ..Default::default()
+    })
+    .children((0..PIECES).map(move |i| {
+        let h = i.wrapping_mul(2_654_435_761);
+        let x = (h % 1000) as f32 / 1000.;
+        let speed = 0.6 + ((h >> 10) % 100) as f32 / 250.;
+        let sway = (t * 9. + i as f32).sin() * 14.;
+        let y = -20. + t * speed * (viewport.height + 40.);
+        let mut c = Color::hex(colors[i as usize % colors.len()]);
+        c.a *= fade;
+        El::new(Style {
+            position: Position::Absolute,
+            inset: taffy::Rect {
+                left: LengthPercentageAuto::length(x * viewport.width + sway),
+                top: LengthPercentageAuto::length(y),
+                right: LengthPercentageAuto::auto(),
+                bottom: LengthPercentageAuto::auto(),
+            },
+            size: Size {
+                width: length(if i % 2 == 0 { 8. } else { 5. }),
+                height: length(if i % 3 == 0 { 12. } else { 7. }),
+            },
+            ..Default::default()
+        })
+        .paint(Paint::fill(c).radius(1.5))
+    }))
+}
+
 fn podium(rows: &[RowView]) -> El {
     // 2nd, 1st, 3rd.
     let order = [1usize, 0, 2];
@@ -380,6 +498,7 @@ fn podium(rows: &[RowView]) -> El {
                     Color::hex(if r.me { "#f6dc4a" } else { "#f4f4f4" }),
                 ))
                 .child(text(&r.value, 15., 700, Color::hex("#dddddd")))
+                .children(r.points.as_deref().map(points))
                 .child(
                     El::new(Style {
                         size: Size {
@@ -476,6 +595,9 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
         Phase::Results => {
             body.push(header("Results"));
             body.push(podium(&view.rows));
+            if let Some(level) = &view.level {
+                body.push(level_strip(level, width));
+            }
             let rest: Vec<El> = view
                 .rows
                 .iter()
@@ -496,7 +618,11 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
                         700,
                         Color::hex(if r.me { "#f6dc4a" } else { "#dddddd" }),
                     ))
-                    .child(text(&r.value, 15., 700, Color::hex("#bbbbbb")))
+                    .child(
+                        El::new(row(6., false))
+                            .child(text(&r.value, 15., 700, Color::hex("#bbbbbb")))
+                            .children(r.points.as_deref().map(points)),
+                    )
                 })
                 .collect();
             if !rest.is_empty() {
@@ -554,7 +680,11 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
             ))),
         );
     }
-    Some(root.child(panel))
+    root = root.child(panel);
+    if let Some(t) = view.confetti {
+        root = root.child(confetti(viewport, t));
+    }
+    Some(root)
 }
 
 /// Keyboard, without taking the riding keys: Tab moves the focus, Enter
@@ -670,9 +800,20 @@ mod tests {
                 .map(|i| RowView {
                     name: format!("R{i}"),
                     value: "1:02.50".into(),
+                    points: (i % 2 == 0).then(|| "+45".into()),
                     ..Default::default()
                 })
                 .collect(),
+            level: Some(LevelView {
+                level: 12,
+                fill: 0.4,
+                gain: "+45 XP".into(),
+                tier: "Platinum".into(),
+                tier_up: true,
+                level_up: true,
+                beat: 0.5,
+            }),
+            confetti: Some(0.5),
             narrow: true,
             ..Default::default()
         }

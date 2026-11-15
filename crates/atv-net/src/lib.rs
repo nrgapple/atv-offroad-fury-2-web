@@ -708,6 +708,12 @@ pub mod signal {
     /// [`super::Packet::RoomLoop`]. Quick Play rooms need no flag (only new
     /// builds reach them); no build sends it yet.
     pub const LOOP: u8 = 1;
+    /// Second hello flags byte bit: the build takes
+    /// [`super::Packet::Rewards`], what each rider earned on a Quick Play
+    /// podium (research/QUICK_PLAY.md "Podium rewards"). Sent only to a
+    /// server whose Quick Play claim says `rewards` (earlier servers refuse
+    /// the bit); such a server sends rewards only to builds that said it.
+    pub const REWARDS: u8 = 2;
     /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
     /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
     pub const CHAT: u8 = 64;
@@ -820,7 +826,9 @@ impl Signal {
         let valid = valid_peer(self.peer)
             && match self.kind {
                 signal::HELLO => {
-                    (self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP))
+                    (self.data.len() == 1
+                        || (self.data.len() == 2
+                            && self.data[1] & !(signal::LOOP | signal::REWARDS) == 0))
                         && self.data[0]
                             & !(signal::DIRECT
                                 | signal::CARRIES
@@ -938,6 +946,10 @@ pub enum Packet {
     RoomLoop(Box<quickplay::RoomLoop>),
     /// Client to game server: a rider's vote, rematch and ready choices.
     Vote(quickplay::Vote),
+    /// Game server to the riders of a Quick Play room that said
+    /// [`signal::REWARDS`]: the league points and XP each verified rider
+    /// earned for the round on the podium.
+    Rewards(Box<quickplay::Rewards>),
     /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
     /// to and from the server only for builds that said [`signal::CHAT`].
     Chat(chat::Chat),

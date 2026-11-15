@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::engine::{ConnId, Entropy};
+use atv_net::quickplay::{Reward, Rewards, reward_flag};
 pub use rating::Rating;
 pub use routes::routes;
 
@@ -120,6 +121,32 @@ pub struct MatchRider {
     pub left: bool,
 }
 
+impl From<&crate::engine::quickplay::Record> for MatchRecord {
+    fn from(r: &crate::engine::quickplay::Record) -> Self {
+        MatchRecord {
+            t: r.t,
+            room: r.room.clone(),
+            playlist: r.playlist.into(),
+            mode: r.mode,
+            map: r.map.into(),
+            verified: r.verified,
+            riders: r
+                .riders
+                .iter()
+                .map(|h| MatchRider {
+                    pid: h.pid.clone(),
+                    name: h.name.clone(),
+                    cpu: h.cpu,
+                    place: h.place,
+                    value: u64::from(h.value),
+                    dnf: h.dnf,
+                    left: h.left,
+                })
+                .collect(),
+        }
+    }
+}
+
 /// Lower values are better in timed races; King of the Hills (mode 4) and
 /// the Stunts playlist count points or scores.
 pub fn lower_is_better(playlist: &str, mode: u8) -> bool {
@@ -127,7 +154,8 @@ pub fn lower_is_better(playlist: &str, mode: u8) -> bool {
 }
 
 /// The presence kind of a room code: Free Ride shards and private rooms can
-/// be joined from a friend's row; Quick Play (`QP…`) joins come later.
+/// be joined from a friend's row, and Quick Play (`QP…`) rooms by builds
+/// that ask for them.
 pub fn room_kind(code: &atv_net::RoomCode) -> &'static str {
     if atv_net::is_public_room_code(code) {
         "freeride"
@@ -568,6 +596,12 @@ impl Players {
 
     /// Friends with presence, requests both ways, recent riders and blocks.
     pub fn friends(&self, pid: &str, now: u64) -> Result<Value, Refusal> {
+        self.friends_for(pid, now, false)
+    }
+
+    /// [`Players::friends`]; `quickplay` (a build that joins Quick Play
+    /// rooms) also gets the code of a friend's Quick Play room.
+    pub fn friends_for(&self, pid: &str, now: u64, quickplay: bool) -> Result<Value, Refusal> {
         let mut s = self.lock();
         s.touch(pid, now);
         let me = s.rider(pid)?.clone();
@@ -582,7 +616,8 @@ impl Players {
                 let room = online.then(|| s.socket_of(f)).flatten().map(|socket| {
                     let kind = room_kind(&socket.room);
                     let code = String::from_utf8_lossy(&socket.room).into_owned();
-                    let join = matches!(kind, "freeride" | "private");
+                    let join = matches!(kind, "freeride" | "private")
+                        || (quickplay && kind == "quickplay");
                     json!({"kind": kind, "code": join.then_some(code)})
                 });
                 let mut row = State::badge(r, now);
@@ -853,6 +888,66 @@ impl Players {
         }
         s.dirty = true;
         humans.len()
+    }
+
+    /// What [`Players::ingest`] will give each registered human of a
+    /// match, worked out now from the stored XP and week without counting
+    /// anything (the record file's reader counts it, within 15 s). `peers`
+    /// are the riders' room slots, in record order; riders without one, or
+    /// without a registered id, and unverified records get nothing.
+    pub fn rewards(&self, record: &MatchRecord, peers: &[Option<u8>]) -> Rewards {
+        let mut out = Rewards::default();
+        if !record.verified {
+            return out;
+        }
+        let s = self.lock();
+        let riders = record.riders.len() as u32;
+        let week = league::week(record.t);
+        for (h, peer) in record.riders.iter().zip(peers) {
+            let (Some(pid), Some(peer)) = (&h.pid, peer) else {
+                continue;
+            };
+            let Some(rider) = s.riders.get(pid).filter(|_| !h.cpu) else {
+                continue;
+            };
+            if out.rewards.len() >= atv_net::quickplay::QUICKPLAY_HUMANS
+                || usize::from(*peer) >= atv_net::quickplay::QUICKPLAY_HUMANS
+                || out.of(*peer).is_some()
+            {
+                continue;
+            }
+            let points = league::match_points(h.place, riders, h.left);
+            let before = if rider.week == week { rider.points } else { 0 };
+            // A record from an older week adds XP only.
+            let week_points = if week < rider.week {
+                rider.points
+            } else {
+                before.saturating_add(points)
+            };
+            let xp = rider.xp.saturating_add(u64::from(points));
+            let level = league::level(xp);
+            let mut flags = 0;
+            if level > league::level(rider.xp) {
+                flags |= reward_flag::LEVEL_UP;
+            }
+            let tier = league::tier(week_points);
+            if week >= rider.week && tier > league::tier(before) {
+                flags |= reward_flag::TIER_UP;
+            }
+            let wide = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+            out.rewards.push(Reward {
+                peer: *peer,
+                flags,
+                points: points.min(1_000) as u16,
+                xp: wide(xp),
+                level: level.min(u32::from(u16::MAX)) as u16,
+                level_xp: wide(league::level_xp(level)),
+                next_xp: wide(league::level_xp(level + 1)),
+                tier: tier as u8,
+                week_points,
+            });
+        }
+        out
     }
 
     /// Reads match lines appended to `path` since the last pass. A file

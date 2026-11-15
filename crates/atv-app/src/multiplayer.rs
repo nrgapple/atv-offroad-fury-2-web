@@ -44,8 +44,9 @@ pub struct RoomStart {
     /// Arlington Free Ride: the relay reserves a slot in a shared room.
     pub freeride: bool,
     /// Quick Play (research/QUICK_PLAY.md): a seat in a server-run room of
-    /// this playlist, never the room code `avoid` (the room just left).
-    pub quickplay: Option<(u8, Option<String>)>,
+    /// this playlist, never the room code `avoid` (the room just left),
+    /// trying a friend's room first: (playlist, avoid, friend's room).
+    pub quickplay: Option<(u8, Option<String>, Option<String>)>,
     pub name: String,
     /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
     /// riding, exercising the slot-key reconnect.
@@ -245,11 +246,14 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
     if shared && start.host {
         return Err(RESERVED_CODE.into());
     }
-    if let Some((list, avoid)) = &start.quickplay {
+    if let Some((list, avoid, room)) = &start.quickplay {
         let url = format!("{server}/multiplayer/quickplay");
         let body = serde_json::json!({
             "playlist": atv_game::multiplayer::quickplay::playlist::name(*list).unwrap_or("race"),
             "avoid": avoid,
+            // A friend's room first (Friends → Join).
+            "room": room,
+            "token": crate::online::token(),
         });
         let (status, text) = net::post(&url, &origin, &body.to_string()).await?;
         match status {
@@ -1025,6 +1029,18 @@ impl Net {
         self.session.room_loop.as_ref().map(|(l, _)| l)
     }
 
+    /// The latest Quick Play podium rewards.
+    pub fn rewards(&self) -> Option<&atv_game::multiplayer::quickplay::Rewards> {
+        self.session.rewards.as_ref()
+    }
+
+    /// The room moved to `environment`, but this ride stays where it is
+    /// until the round there loads it (Quick Play's one load a round): the
+    /// move is taken without a reload, and Ready is not sent again.
+    pub fn defer_course(&mut self, environment: &str) {
+        self.environment = environment.to_string();
+    }
+
     /// The room's server runs a Quick Play loop.
     pub fn quickplay(&self) -> bool {
         self.serves.quickplay
@@ -1539,6 +1555,7 @@ impl Net {
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
             "roomLoop": self.room_loop(),
+            "rewards": self.rewards(),
             "closed": self.closed,
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),

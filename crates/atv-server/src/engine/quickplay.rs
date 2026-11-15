@@ -46,6 +46,12 @@ pub const LAPS: u8 = 2;
 pub const MINUTES: u8 = 2;
 /// A race field fills to this many riders with CPUs (at most four CPUs).
 pub const RACE_FIELD: u8 = 6;
+/// CPUs race at Expert when the rated humans in the room average at least
+/// this ordinal (mu − 3 sigma). A judgment call: a new rider is 0, an
+/// established average rider settles near 15-20 as sigma shrinks, so only
+/// rooms of proven strong riders (mu clearly above the 25 start) get
+/// Expert CPUs; everyone else keeps Normal, the original's default.
+pub const EXPERT_ORDINAL: f64 = 20.;
 /// Fastest plausible race speed along the racing line (ft/s): an ATV's top
 /// speed is about 100 ft/s; jumps and slopes add little along the line.
 pub const MAX_SPEED_FPS: f32 = 180.;
@@ -57,6 +63,17 @@ pub const DRIFT: f64 = 0.03;
 /// Plus this much for report cadence and network latency (ms).
 pub const DRIFT_SLACK_MS: f64 = 1_500.;
 
+/// The race CPUs' difficulty for `humans`: 2 Expert when the rated riders
+/// average [`EXPERT_ORDINAL`] or more, else 1 Normal.
+pub fn difficulty(humans: &[Human]) -> u8 {
+    let rated: Vec<f64> = humans.iter().filter_map(|h| h.rating).collect();
+    if rated.is_empty() {
+        return 1;
+    }
+    let mean = rated.iter().sum::<f64>() / rated.len() as f64;
+    if mean >= EXPERT_ORDINAL { 2 } else { 1 }
+}
+
 /// A connected rider, as the room sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Human {
@@ -64,6 +81,9 @@ pub struct Human {
     pub name: String,
     /// The socket's verified player id (research/ONLINE_IDENTITY.md).
     pub pid: Option<String>,
+    /// The verified rider's hidden rating ordinal (mu − 3 sigma; a new
+    /// rider 0), for CPU difficulty.
+    pub rating: Option<f64>,
     /// Can run the round as its driver (every rider today: only new
     /// builds reach a Quick Play room).
     pub can_drive: bool,
@@ -114,6 +134,9 @@ struct Watched {
 /// One rider in a match record.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RecordRider {
+    /// The rider's slot (humans; for the podium's rewards, not recorded).
+    #[serde(skip)]
+    pub peer: Option<u8>,
     pub pid: Option<String>,
     pub name: String,
     pub cpu: bool,
@@ -127,6 +150,10 @@ pub struct RecordRider {
 /// research/MULTIPLAYER_EXPERIENCE.md "Match records").
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Record {
+    /// The round's number in its room (for the podium's rewards, not
+    /// recorded).
+    #[serde(skip)]
+    pub number: u32,
     pub t: u64,
     pub room: String,
     pub playlist: &'static str,
@@ -493,7 +520,11 @@ impl Loop {
                         } else {
                             0
                         },
-                        difficulty: if round.mode == game_kind::RACE { 1 } else { 0 },
+                        difficulty: if round.mode == game_kind::RACE {
+                            difficulty(humans)
+                        } else {
+                            0
+                        },
                         seed: seed.max(1),
                     };
                     fx.map = Some(round.map);
@@ -691,6 +722,7 @@ impl Loop {
                         .unwrap_or_else(|| (format!("Rider {}", p.peer + 1), None))
                 };
                 RecordRider {
+                    peer: (!cpu).then_some(p.peer),
                     pid,
                     name,
                     cpu,
@@ -702,6 +734,7 @@ impl Loop {
             })
             .collect();
         self.records.push(Record {
+            number: self.setup.number,
             t: now,
             room: room.to_string(),
             playlist: playlist::name(self.playlist).unwrap_or("race"),
@@ -805,6 +838,7 @@ mod tests {
             peer,
             name: format!("R{peer}"),
             pid: Some(format!("pid{peer}")),
+            rating: None,
             can_drive: true,
         }
     }
@@ -866,6 +900,27 @@ mod tests {
             distance,
             finish_ms,
         }
+    }
+
+    #[test]
+    fn cpu_difficulty_follows_the_rooms_ratings() {
+        let rated = |peer: u8, r: f64| Human {
+            rating: Some(r),
+            ..human(peer)
+        };
+        assert_eq!(difficulty(&[]), 1);
+        assert_eq!(difficulty(&[human(0), human(1)]), 1);
+        assert_eq!(difficulty(&[rated(0, 0.)]), 1);
+        assert_eq!(difficulty(&[rated(0, 26.), rated(1, 18.)]), 2);
+        assert_eq!(difficulty(&[rated(0, 26.), rated(1, 10.)]), 1);
+        // Unrated riders do not pull the mean down.
+        assert_eq!(difficulty(&[rated(0, 21.), human(1)]), 2);
+        // The round's setup carries it.
+        let strong = [rated(0, 30.)];
+        let (l, _) = to_play(&strong);
+        assert_eq!(l.setup.difficulty, 2);
+        let (l, _) = to_play(&[human(0)]);
+        assert_eq!(l.setup.difficulty, 1);
     }
 
     #[test]

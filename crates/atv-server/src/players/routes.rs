@@ -41,6 +41,8 @@ struct Ask {
     code: Option<String>,
     id: Option<String>,
     hidden: Option<bool>,
+    /// The asking build joins Quick Play rooms.
+    quickplay: Option<bool>,
 }
 
 fn answer(result: Result<Value, Refusal>) -> Response {
@@ -140,7 +142,10 @@ async fn new_code(
 }
 
 async fn friends(State(shared): State<Arc<Shared>>, body: Body) -> Response {
-    answer(rider(&shared, &body).and_then(|(_, pid)| shared.players.friends(&pid, now_ms())))
+    answer(rider(&shared, &body).and_then(|(ask, pid)| {
+        let quickplay = ask.quickplay == Some(true);
+        shared.players.friends_for(&pid, now_ms(), quickplay)
+    }))
 }
 
 async fn friend(

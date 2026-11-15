@@ -169,6 +169,9 @@ struct Conn {
     motorcycles: bool,
     /// Takes quick chat, and its quick-chat budget.
     chat_on: bool,
+    /// Takes Quick Play podium rewards (`signal::REWARDS`, the second
+    /// hello byte).
+    rewards: bool,
     chat: atv_net::chat::Limits,
     last_seen_ms: u64,
     window_ms: u64,
@@ -232,6 +235,14 @@ pub struct SavedRoom {
     pub quickplay: Option<u8>,
 }
 
+/// A Quick Play room as the queue sees it ([`Room::quick_info`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct QuickInfo {
+    pub open: bool,
+    pub lobby: bool,
+    pub rating: Option<f64>,
+}
+
 pub struct Room {
     code: RoomCode,
     public: bool,
@@ -255,6 +266,9 @@ pub struct Room {
     /// Each slot's verified player id (`?rider=` token,
     /// research/ONLINE_IDENTITY.md), for Quick Play's match records.
     pids: Vec<(u8, String)>,
+    /// Each verified slot's hidden rating ordinal, refreshed by the room
+    /// task: Quick Play's CPU difficulty and room choice.
+    ratings: Vec<(u8, f64)>,
     loop_sent_ms: u64,
     loop_dirty: bool,
     records: Vec<quickplay::Record>,
@@ -287,6 +301,7 @@ impl Room {
             uncounted: Vec::new(),
             qp: None,
             pids: Vec::new(),
+            ratings: Vec::new(),
             loop_sent_ms: 0,
             loop_dirty: false,
             records: Vec::new(),
@@ -327,6 +342,61 @@ impl Room {
     /// Finished Quick Play matches since the last call.
     pub fn take_records(&mut self) -> Vec<quickplay::Record> {
         std::mem::take(&mut self.records)
+    }
+
+    /// Refreshes each verified slot's rating ordinal with `rating`.
+    pub fn rate(&mut self, rating: impl Fn(&str) -> Option<f64>) {
+        self.ratings = self
+            .pids
+            .iter()
+            .filter_map(|(peer, pid)| rating(pid).map(|r| (*peer, r)))
+            .collect();
+    }
+
+    /// The verified player ids of the riders in the room, by slot.
+    pub fn pids(&self) -> &[(u8, String)] {
+        &self.pids
+    }
+
+    /// What the Quick Play queue weighs: a seat is free between rounds,
+    /// the loop is still in its lobby, and the mean rating ordinal of the
+    /// rated riders in it.
+    pub fn quick_info(&self) -> Option<QuickInfo> {
+        let qp = self.qp.as_ref()?;
+        let mut taken: Vec<u8> = self
+            .conns
+            .iter()
+            .map(|c| c.peer)
+            .chain(self.reserved.iter().map(|r| r.peer))
+            .collect();
+        taken.sort_unstable();
+        taken.dedup();
+        let rated: Vec<f64> = self
+            .ratings
+            .iter()
+            .filter(|(peer, _)| self.conns.iter().any(|c| c.peer == *peer))
+            .map(|(_, r)| *r)
+            .collect();
+        Some(QuickInfo {
+            open: !self.closed && qp.joinable() && taken.len() < self.capacity(),
+            lobby: qp.phase() == atv_net::quickplay::loop_phase::LOBBY,
+            rating: (!rated.is_empty()).then(|| rated.iter().sum::<f64>() / rated.len() as f64),
+        })
+    }
+
+    /// Sends a podium's rewards to the riders whose build takes them.
+    pub fn send_rewards(&self, rewards: &atv_net::quickplay::Rewards, out: &mut Vec<Out>) {
+        let Ok(bytes) = atv_net::encode(&Packet::Rewards(Box::new(rewards.clone()))) else {
+            return;
+        };
+        let bytes = Bytes::from(bytes);
+        for c in self
+            .conns
+            .iter()
+            .filter(|c| c.rewards && c.player.is_some())
+        {
+            out.push(Out::Send(c.id, bytes.clone()));
+        }
     }
 
     pub fn code(&self) -> RoomCode {
@@ -558,6 +628,7 @@ impl Room {
             frames: false,
             motorcycles: false,
             chat_on: false,
+            rewards: false,
             chat: Default::default(),
             last_seen_ms: now,
             window_ms: now,
@@ -790,6 +861,10 @@ impl Room {
                     conn.frames = flags & signal::FRAMES != 0;
                     conn.motorcycles = flags & signal::MOTORCYCLES != 0;
                     conn.chat_on = chat::said_chat(flags);
+                    conn.rewards = message
+                        .data
+                        .get(1)
+                        .is_some_and(|b| b & signal::REWARDS != 0);
                 }
                 // Session descriptions and link reports: no links here.
             }
@@ -1098,6 +1173,11 @@ impl Room {
                         .iter()
                         .find(|(p, _)| *p == c.peer)
                         .map(|(_, pid)| pid.clone()),
+                    rating: self
+                        .ratings
+                        .iter()
+                        .find(|(p, _)| *p == c.peer)
+                        .map(|(_, r)| *r),
                     can_drive: true,
                 })
             })
@@ -1283,6 +1363,7 @@ impl Room {
                 .filter(|p| atv_net::quickplay::playlist::name(*p).is_some())
                 .map(|p| quickplay::Loop::new(p, saved.created_ms ^ now)),
             pids: Vec::new(),
+            ratings: Vec::new(),
             loop_sent_ms: 0,
             loop_dirty: false,
             records: Vec::new(),

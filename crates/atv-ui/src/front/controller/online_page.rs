@@ -67,7 +67,8 @@ pub struct Me {
 #[serde(default)]
 pub struct Room {
     pub kind: String,
-    /// Present when the room can be joined (Free Ride, private).
+    /// Present when the room can be joined (Free Ride, private, and Quick
+    /// Play for builds that ask).
     pub code: Option<String>,
 }
 
@@ -654,19 +655,31 @@ impl Frontend {
                 let code = self
                     .open_rider()
                     .and_then(|(r, _)| r.room.as_ref()?.code.clone());
-                code.map(|code| Event::Join {
-                    environment: if atv_game::multiplayer::is_shared_room(&code) {
-                        atv_game::multiplayer::FREERIDE_ENVIRONMENT.into()
-                    } else {
-                        self.tracks
-                            .get(self.track)
-                            .map_or("env01".into(), |t| t.id.clone())
-                    },
-                    code,
-                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
-                    rider: self.rider_id,
-                    name: self.room_name(),
-                })
+                // A friend's Quick Play room: a seat in it, watching until
+                // its next round (motorcycles ride ATV01, as Quick Play).
+                if let Some(code) = code.clone().filter(|c| c.starts_with("QP")) {
+                    Some(Event::QuickPlay {
+                        playlist: u8::from(code.as_bytes().get(2) == Some(&b'S')),
+                        quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                        rider: self.rider_id,
+                        name: self.room_name(),
+                        room: Some(code),
+                    })
+                } else {
+                    code.map(|code| Event::Join {
+                        environment: if atv_game::multiplayer::is_shared_room(&code) {
+                            atv_game::multiplayer::FREERIDE_ENVIRONMENT.into()
+                        } else {
+                            self.tracks
+                                .get(self.track)
+                                .map_or("env01".into(), |t| t.id.clone())
+                        },
+                        code,
+                        quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                        rider: self.rider_id,
+                        name: self.room_name(),
+                    })
+                }
             }
             "rideraccept" => act("accept", rider(&self.online_ui)),
             "riderdecline" => act("decline", rider(&self.online_ui)),
@@ -806,6 +819,21 @@ mod tests {
         assert_eq!(front.choices()[0].0, "riderjoin");
         match front.run("riderjoin", &view, &mut settings) {
             Some(Event::Join { code, .. }) => assert_eq!(code, "FREERD03"),
+            other => panic!("{other:?}"),
+        }
+        // A friend in Quick Play: Join takes a seat in that room.
+        if let Some(lists) = &mut front.online.lists {
+            lists.friends[0].room = Some(Room {
+                kind: "quickplay".into(),
+                code: Some("QPS00002".into()),
+            });
+        }
+        front.show("friends", &view);
+        front.run("friend:a1", &view, &mut settings);
+        match front.run("riderjoin", &view, &mut settings) {
+            Some(Event::QuickPlay { playlist, room, .. }) => {
+                assert_eq!((playlist, room.as_deref()), (1, Some("QPS00002")));
+            }
             other => panic!("{other:?}"),
         }
         // A request: Accept first.
