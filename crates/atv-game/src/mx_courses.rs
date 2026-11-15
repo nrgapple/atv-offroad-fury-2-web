@@ -2,8 +2,9 @@
 //! No multiplayer numbers are assigned. atv-net currently validates only IDs 1..=40.
 //! Online support requires appending to MAP_ENVIRONMENTS (preserving 1..=40),
 //! updating MAX_MAP_ID/valid_map consumers and client/server compatibility tests.
-/// Remains false until the terrain decoder and real-map acceptance checks are integrated.
-pub const RUNTIME_SUPPORTED: bool = false;
+/// Native all-venue acceptance passed. This draft enables private browser
+/// validation; public content promotion/release remains a separate gate.
+pub const RUNTIME_SUPPORTED: bool = true;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MxCourse {
     pub id: &'static str,
@@ -479,7 +480,8 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for c in COURSES {
             assert!(ids.insert(c.id));
-            assert!(!available(c.id, true));
+            assert!(!available(c.id, false));
+            assert_eq!(available(c.id, true), RUNTIME_SUPPORTED);
             assert_eq!(c.scene_stem, c.mode_stem);
             assert_eq!(
                 c.archive,

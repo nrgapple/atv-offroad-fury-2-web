@@ -112,6 +112,7 @@ pub fn load(
         // `anim/`.
         let index = member_at(archive, &path)
             .or_else(|| member_at(archive, &format!("anim/{}.psg", model.name)))
+            .or_else(|| member_at(archive, &format!("geo/{}.psg", model.name)))
             .ok_or_else(|| format!("Original scene mesh is missing: {}", model.name))?;
         match model_chunks(archive, index, &mut materials, &mut scenery) {
             Ok((chunks, lod)) => geometry.push((model.name.clone(), chunks, Some(lod))),
@@ -259,7 +260,7 @@ fn model_chunks(
             for v in &group.vertices {
                 vertices.extend(v.position);
                 vertices.extend(v.normal);
-                vertices.extend(v.uv);
+                vertices.extend([v.uv[0] * pass.uv_scale[0], v.uv[1] * pass.uv_scale[1]]);
                 colors.push(if prelit {
                     v.color.unwrap_or([128; 4])
                 } else {

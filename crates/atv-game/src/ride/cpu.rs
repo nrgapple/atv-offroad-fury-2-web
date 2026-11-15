@@ -278,7 +278,11 @@ impl CpuRacer {
             vehicle.set_boundary(config, sim.extended_boundary)?;
         }
         vehicle.set_linkage(model.quad_pose.clone());
-        vehicle.set_materials(sim.materials);
+        if let Some(materials) = sim.mx_materials {
+            vehicle.set_materials16(materials);
+        } else {
+            vehicle.set_materials(sim.materials);
+        }
         vehicle.set_chassis_points(&model.chassis_points)?;
         vehicle.set_obstacles(model.obstacle_rays.clone(), sim.obstacles.clone())?;
         if let Some(config) = sim.scene_partition {
