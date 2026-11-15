@@ -61,6 +61,9 @@ pub struct State {
     pub chat: bool,
 }
 
+/// A labelled button's width with its gap (CSS px).
+const LABELLED: f32 = 96.;
+
 /// `#toolbar .atv-control` label: italic 800 14px/1, .05em tracking.
 pub fn label_style(color: Color) -> TextStyle {
     let shadow = tokens::HUD_TEXT_SHADOW;
@@ -108,7 +111,12 @@ pub fn element(view: &Viewport, state: &State) -> El {
         buttons.push((Button::Gate, GATE_ICON, "GATE", !state.paused));
         buttons.push((Button::Undo, UNDO_ICON, "UNDO", !state.paused));
     }
-    let compact = state.compact || view.width <= 360.;
+    // Icon-only where the labelled row would not fit (about 96 px a
+    // labelled button with its gap, past the 14 px insets): PAUSE CAMERA
+    // KEYS CHAT clipped CHAT at 390 px.
+    let compact = state.compact
+        || view.width <= 360.
+        || view.width < LABELLED * buttons.len() as f32 + 2. * 14.;
     let row = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
@@ -175,4 +183,47 @@ pub fn element(view: &Viewport, state: &State) -> El {
         }
         el
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{paint::DisplayList, text::Fonts};
+
+    /// The labelled row never runs past the screen: it turns icon-only
+    /// first (KEYS and CHAT at 390 px).
+    #[test]
+    fn labels_drop_before_the_row_clips() {
+        for (width, keys) in [(390., true), (390., false), (1280., true), (360., false)] {
+            let view = Viewport {
+                width,
+                height: 800.,
+                scale: 1.,
+                ..Default::default()
+            };
+            let state = State {
+                paused: false,
+                hovered: None,
+                pressed: None,
+                camera_enabled: true,
+                keys_enabled: true,
+                keys_visible: keys,
+                compact: false,
+                editor: false,
+                chat: true,
+            };
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            let mut fonts = Fonts::new();
+            crate::layout::render(
+                &element(&view, &state),
+                &mut fonts,
+                width,
+                800.,
+                &mut list,
+                &mut hits,
+            );
+            let right = hits.iter().map(|(r, _)| r.right()).fold(0., f32::max);
+            assert!(right <= width, "{width} keys={keys}: row ends at {right}");
+        }
+    }
 }

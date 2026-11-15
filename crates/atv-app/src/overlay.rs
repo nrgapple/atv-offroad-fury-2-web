@@ -1144,8 +1144,15 @@ impl Overlay {
                 .quickplay
                 .as_ref()
                 .is_some_and(|q| q.spectating && q.phase == atv_ui::hud::quickplay::Phase::Play);
-            self.touch
-                .paint(active && !watching, now, &mut self.fonts, &mut self.list);
+            // Under a loop panel the idle "hold to ride" coaching steps
+            // aside; a finger riding still sees its control.
+            let quiet = self.loop_panel() && !self.touch.held();
+            self.touch.paint(
+                active && !watching && !quiet,
+                now,
+                &mut self.fonts,
+                &mut self.list,
+            );
         }
         // Options → Accessibility: the HUD size (split views keep the
         // original, their quarters have no room) and colour assistance.
@@ -1178,6 +1185,7 @@ impl Overlay {
         }
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
+        let loop_panel = self.loop_panel();
         let map_visible = self.minimap.visible() && !paused && race.is_none();
         let keys_visible = !touch_driving;
         let chat = shown.and_then(|h| h.chat).filter(|c| c.available);
@@ -1435,7 +1443,10 @@ impl Overlay {
             }
         } else if let (Some(meter), Some(h)) = (&self.meter, shown) {
             let mut items = DisplayList::default();
-            if let Some((frame, score, origin)) = race {
+            // Under a loop panel (vote, countdown, podium) the race's place,
+            // score, lap and times step aside, as on the original race-over
+            // screen; the map and speed stay.
+            if let Some((frame, score, origin)) = race.filter(|_| !loop_panel) {
                 // toolbarBottom(): the toolbar's bottom edge.
                 let top_inset = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                     hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
@@ -1464,8 +1475,11 @@ impl Overlay {
                 meter.paint_compass(&mut items, compass, hw, hh);
                 self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
-            if race.is_none() || self.race_overlays.shown("info") {
+            if !loop_panel && (race.is_none() || self.race_overlays.shown("info")) {
                 meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
+            }
+            if loop_panel {
+                self.lap_history = None;
             }
             self.list
                 .items
@@ -1740,6 +1754,7 @@ impl Overlay {
         }
         // The Free Ride hub: Challenge, its prompt, the event chip, the map
         // vote and toasts, under the toolbar (one view: rooms do not split).
+        let mut hub_bottom = 0f32;
         if let Some((hub, _)) = shown.and_then(|h| h.hub.as_ref())
             && !self.results.shown
         {
@@ -1763,6 +1778,7 @@ impl Overlay {
                 &mut list,
                 &mut hits,
             );
+            hub_bottom = panels_bottom(&list, view.width);
             self.list.items.extend(list.items);
             self.hits.extend(hits);
         }
@@ -1810,7 +1826,8 @@ impl Overlay {
         if self.results.shown && active && !self.quickplay_hides_results {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
-        let panel_bottom = self.paint_quickplay();
+        let wheel = chat.is_some() && self.chat.open;
+        let panel_bottom = self.paint_quickplay(wheel).max(hub_bottom);
         if let Some(chat) = chat {
             // The feed runs under the Quick Play panel, not over its title.
             atv_ui::hud::chat::paint_feed(
@@ -1827,6 +1844,8 @@ impl Overlay {
                     &mut self.list,
                     &mut self.hits,
                     &view,
+                    // In the free space under any open panel.
+                    panel_bottom,
                     chat,
                     &self.chat.lines(),
                     self.chat.emotes,
@@ -1966,10 +1985,10 @@ impl Overlay {
     }
 
     /// Quick Play's panel over the ride (and the round's results); the
-    /// panel's bottom edge, 0 when none shows.
-    fn paint_quickplay(&mut self) -> f32 {
+    /// panel's bottom edge, 0 when none shows. With the chat wheel open and
+    /// no room for it under the panel, the panel steps aside meanwhile.
+    fn paint_quickplay(&mut self, wheel: bool) -> f32 {
         let view = self.view;
-        let mut bottom = 0f32;
         if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
             && let Some(element) =
                 atv_ui::hud::quickplay::element(&view, state, &|v| self.photos.get(v).copied())
@@ -1983,20 +2002,23 @@ impl Overlay {
                 &mut list,
                 &mut hits,
             );
-            // The panel is the widest box short of the whole view (the win
-            // flash covers it; buttons and confetti are narrower).
-            for item in &list.items {
-                if let atv_ui::paint::Item::Box(b) = item
-                    && b.rect.w >= 120.
-                    && b.rect.w < view.width - 1.
-                {
-                    bottom = bottom.max(b.rect.bottom());
-                }
+            let bottom = panels_bottom(&list, view.width);
+            if wheel && view.height - bottom < atv_ui::hud::chat::WHEEL_SPACE {
+                return 0.;
             }
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(&hits);
+            return bottom;
         }
-        bottom
+        0.
+    }
+
+    /// A Quick Play or private-room panel other than the round's spectator
+    /// line is up (lobby, vote, countdown, podium).
+    fn loop_panel(&self) -> bool {
+        self.quickplay
+            .as_ref()
+            .is_some_and(|q| self.menu.is_none() && q.phase != atv_ui::hud::quickplay::Phase::Play)
     }
 
     /// Venues whose photo a vote shows (Quick Play's cards, the hub's
@@ -2897,6 +2919,21 @@ pub(crate) fn terrain_blocks(
         let p: [f32; 3] = std::array::from_fn(|k| from[k] + (to[k] - from[k]) * t);
         ground(p[0], p[2]) > p[1]
     })
+}
+
+/// The lowest edge of a laid-out overlay's panels: boxes at least 120 px
+/// wide and short of the whole view (a win flash covers it; buttons and
+/// confetti are narrower), 0 for none.
+fn panels_bottom(list: &DisplayList, width: f32) -> f32 {
+    list.items
+        .iter()
+        .filter_map(|item| match item {
+            atv_ui::paint::Item::Box(b) if b.rect.w >= 120. && b.rect.w < width - 1. => {
+                Some(b.rect.bottom())
+            }
+            _ => None,
+        })
+        .fold(0., f32::max)
 }
 
 #[cfg(test)]

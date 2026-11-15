@@ -274,14 +274,24 @@ pub fn paint_feed(
     }
 }
 
-/// The wheel's centre and line radius in a `view`.
-pub fn wheel_geometry(view: &Viewport) -> (f32, f32, f32) {
+/// The wheel's smallest ring: its 84 x 48 line targets clear their
+/// diagonal neighbours from 119 px.
+const MIN_RING: f32 = 120.;
+/// The height the wheel needs below an open panel: its smallest ring with
+/// a 48 px target and margin at each end.
+pub const WHEEL_SPACE: f32 = 2. * (MIN_RING + 30.);
+
+/// The wheel's centre and line radius in a `view`, centred in the space
+/// below `top` (an open panel's bottom edge, 0 for none).
+pub fn wheel_geometry(view: &Viewport, top: f32) -> (f32, f32, f32) {
+    let top = top.clamp(0., (view.height - WHEEL_SPACE).max(0.));
+    let room = view.height - top;
     let cx = view.width / 2.;
-    let cy = view.height / 2.;
+    let cy = top + room / 2.;
     let r = 130f32
         .min(view.width / 2. - 50.)
-        .min(view.height / 2. - 30.)
-        .max(96.);
+        .min(room / 2. - 30.)
+        .max(MIN_RING);
     (cx, cy, r)
 }
 
@@ -291,8 +301,8 @@ const DOT: f32 = 48.;
 /// Each wheel target's rectangle and hit id: eight lines (or with
 /// `emotes` eight emotes) round the ring, then the page switch and the horn
 /// in the middle.
-pub fn wheel_targets(view: &Viewport, emotes: bool) -> [(Rect, u32); 10] {
-    let (cx, cy, r) = wheel_geometry(view);
+pub fn wheel_targets(view: &Viewport, top: f32, emotes: bool) -> [(Rect, u32); 10] {
+    let (cx, cy, r) = wheel_geometry(view, top);
     std::array::from_fn(|i| match i {
         0..8 => {
             let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::FRAC_PI_4;
@@ -314,7 +324,8 @@ pub fn wheel_targets(view: &Viewport, emotes: bool) -> [(Rect, u32); 10] {
     })
 }
 
-/// The open wheel: a dimmed backdrop that closes it, then the targets.
+/// The open wheel: a dimmed backdrop that closes it, then the targets in
+/// the space below `top` (an open panel's bottom edge).
 /// `focus` is the controller's highlighted target (its index in
 /// [`wheel_targets`]) and `hovered` the pointer's hit.
 #[allow(clippy::too_many_arguments)]
@@ -323,6 +334,7 @@ pub fn paint_wheel(
     list: &mut DisplayList,
     hits: &mut Vec<(Rect, u32)>,
     view: &Viewport,
+    top: f32,
     chat: &View,
     lines: &[&str; 8],
     emotes: bool,
@@ -333,7 +345,7 @@ pub fn paint_wheel(
     // A light dim only: the ride stays in view.
     list.rect(full, Color::hex("#00000026"));
     hits.push((full, CLOSE_HIT));
-    for (index, (rect, id)) in wheel_targets(view, emotes).into_iter().enumerate() {
+    for (index, (rect, id)) in wheel_targets(view, top, emotes).into_iter().enumerate() {
         let ready = match id {
             HORN_HIT => chat.ready[2],
             PAGE_HIT => true,
@@ -397,10 +409,14 @@ mod tests {
     #[test]
     fn wheel_targets_are_touch_sized_apart_and_on_screen() {
         for v in [view(360., 640.), view(640., 360.), view(1280., 720.)] {
-            for emotes in [false, true] {
-                let targets = wheel_targets(&v, emotes);
+            for (emotes, top) in [(false, 0.), (true, 0.), (false, 230.), (true, 300.)] {
+                let targets = wheel_targets(&v, top, emotes);
                 for (i, (a, _)) in targets.iter().enumerate() {
                     assert!(a.w >= 48. && a.h >= 48., "{a:?}");
+                    // Under the panel whenever the room below holds the wheel.
+                    if v.height - top >= WHEEL_SPACE {
+                        assert!(a.y >= top, "{a:?} under a panel ending at {top}");
+                    }
                     assert!(
                         a.x >= 0. && a.y >= 0. && a.right() <= v.width && a.bottom() <= v.height,
                         "{a:?} in {v:?}"
