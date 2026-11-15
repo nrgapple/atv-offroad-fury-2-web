@@ -1198,7 +1198,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::HELLO, vec![]),
         // Every bit of the first flags byte is allocated since the hub took
         // 128, so no first-byte value is refused; the second byte is bounded.
-        signal(1, signal::HELLO, vec![0, signal::LOOP * 2]),
+        signal(1, signal::HELLO, vec![0, signal::REWARDS * 2]),
         signal(1, signal::HELLO, vec![0, 0, 0]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {

@@ -32,6 +32,16 @@ pub fn with_rider(url: String) -> String {
     format!("{url}{join}rider={token}")
 }
 
+/// This rider's token, once registered (Quick Play's claim carries it in
+/// its body so the server can weigh rooms by rating).
+pub fn token() -> Option<String> {
+    TOKEN
+        .lock()
+        .ok()
+        .map(|t| t.clone())
+        .filter(|t| !t.is_empty())
+}
+
 /// What a request was for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Purpose {
@@ -56,7 +66,7 @@ pub struct Online {
     token: Option<String>,
     registering: bool,
     /// The rider has used something online on this device.
-    wanted: Option<bool>,
+    pub(crate) wanted: Option<bool>,
     lists_at: Option<Instant>,
     secret_at: Option<Instant>,
     /// The launch's site and game server, for rides without the menus.
@@ -180,7 +190,12 @@ impl App {
         if page == "online" {
             self.online_send(Purpose::Me, "/multiplayer/players/me", json!({}));
         }
-        self.online_send(Purpose::Lists, "/multiplayer/friends", json!({}));
+        // This build joins a friend's Quick Play room (it asks for codes).
+        self.online_send(
+            Purpose::Lists,
+            "/multiplayer/friends",
+            json!({"quickplay": true}),
+        );
     }
 
     /// An Online page's request.
@@ -343,7 +358,12 @@ impl App {
         {
             // Lap Attack's Friend ghost needs the friends' ghost tags.
             self.online.lists_at = Some(now);
-            self.online_send(Purpose::Lists, "/multiplayer/friends", json!({}));
+            // Asked as the Friends page asks, so its Quick Play Joins stay.
+            self.online_send(
+                Purpose::Lists,
+                "/multiplayer/friends",
+                json!({"quickplay": true}),
+            );
         }
     }
 

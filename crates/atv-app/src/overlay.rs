@@ -2508,7 +2508,12 @@ impl Overlay {
                 })).collect::<Vec<_>>(),
                 "rows": q.rows.iter().map(|r| serde_json::json!({
                     "name": r.name, "value": r.value, "cpu": r.cpu, "me": r.me,
+                    "points": r.points,
                 })).collect::<Vec<_>>(),
+                "level": q.level.as_ref().map(|l| serde_json::json!({
+                    "level": l.level, "fill": l.fill, "gain": l.gain, "tier": l.tier,
+                    "levelUp": l.level_up, "tierUp": l.tier_up,
+                })),
                 "spectating": q.spectating,
                 "private": q.private,
                 "host": q.host,
