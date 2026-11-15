@@ -2808,12 +2808,15 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         let paint = if selected {
             pill_shadows(Paint::fill(gold_pill()).radius(5.))
         } else {
-            Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                .radius(5.)
-                .shadow(BoxShadow {
-                    spread: 2.,
-                    ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e"))
-                })
+            // The gold outline alone on the backdrop, no dark well.
+            let mut paint = Paint::default().radius(5.).shadow(BoxShadow {
+                spread: 2.,
+                ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e"))
+            });
+            if hovered {
+                paint.fill = Some(Color::hex("#ffffff14").into());
+            }
+            paint
         };
         let mut style = row(10.);
         style.justify_content = JustifyContent::CENTER;

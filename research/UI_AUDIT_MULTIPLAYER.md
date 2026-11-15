@@ -49,6 +49,7 @@ screens (approximate private composites of the exact build's page layouts,
 | Single Race "All Courses" button | A port addition (the course picker), no original counterpart | A small gold pill, dark list glyph and label |
 | Garage list: the current vehicle | No vehicle list in the original (ATV is one row stepped with arrows) | The gold edge plus a gold hairline; the dark well is gone. Other rows were already clear |
 | Garage Male/Female switch, unfocused | No switch in the original (Rider is one row) | A gold hairline track; the dark well is gone |
+| Garage "Rider gear" button, unfocused | No such button in the original (Gear is one of its rows) | The gold outline alone; the dark well is gone (focused it stays the gold pill) |
 | Back, Copy ride link and the title's Pass Key link | Every original page draws its hints in a black pill with a white rim across the lower right (`✕ Next △ Back`, `✕ Edit Stats △ Back`) | Kept dark: these are that hint pill |
 | ATV stats box (portrait) | The original's stats box is the dark translucent `atvoverlay` panel | Already light on the port; unchanged |
 
