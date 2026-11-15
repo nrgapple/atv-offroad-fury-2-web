@@ -228,3 +228,31 @@ a visible prop at every final pose would conflict with preserved frustum/fog
 culling. The gate therefore requires uploaded scene instances and a completed
 draw/cull pass, records all culled counts, and retains image inspection alongside
 actual venue identity, finite simulation, contact and movement assertions.
+
+## Browser acceptance and delivery checkpoint
+
+All 56 venues passed the registered browser sweep on the authored application
+artifact from GitHub Actions run `43656216594`, CI merge
+`a6440637aaa2512cd3a99d833119757b8383ffba` (source tree
+`dbbf90afcde16ea6e2ff4660dacaaac8bbecb9fa`). The run took 594.4 seconds and
+checked the actual loaded venue IDs, finite simulation, ground contact,
+movement, scene upload/visibility, page errors, and 360 live simulation steps
+separately from each scripted trace. It captured 56 screenshots; inspection
+covered every venue family, the partial NAT04 coast/submerged edge, and maps
+with omitted reflection passes. The earlier ENV01 fallback and diagnostic runs
+are excluded from acceptance. Native acceptance separately covers both vehicles
+on every venue; the browser sweep alternates ATV and motorcycle selections.
+
+This is functional host acceptance, not a phone-performance claim. Headless
+Chromium on an Apple M4 at a 720-by-405 touch viewport measured median engine
+CPU time of 5.63 ms per rendered frame; SX04 reached 63.26 ms with a 101 ms
+95th-percentile frame interval. Dense arenas still need optimization. JS heap
+measurements exclude Wasm, GPU allocations and total process memory. Warm
+sequential loads do not establish cold-network startup performance.
+
+The 56 venues are exposed through five appended single-player Freeride groups
+when their packages and the compatibility adapter are available. Existing ATV2
+ordering and multiplayer IDs remain intact. Source collider omissions,
+secondary reflection omissions, original weather/LOD/contact behavior and MX
+multiplayer integration remain open as described above. Runtime assets are
+published separately to R2; none belong in Git or CI.
