@@ -3,6 +3,7 @@ pub mod assets;
 pub mod chat;
 pub mod games;
 pub mod help;
+pub mod hub;
 pub mod meter;
 pub mod minimap;
 pub mod objective;

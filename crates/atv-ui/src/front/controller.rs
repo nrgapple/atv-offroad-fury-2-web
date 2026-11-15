@@ -480,8 +480,10 @@ pub struct Frontend {
     pub stats_link: bool,
     /// Saved selection fields other than the ones this port changes.
     saved: Value,
-    /// Riders in Arlington Free Ride (the main menu's live count).
+    /// Riders in Free Ride (the main menu's live count).
     pub freeride_riders: Option<u32>,
+    /// The venue Free Ride rides now (research/FREERIDE_HUB.md).
+    pub freeride_map: Option<String>,
     /// The game server runs Quick Play (research/QUICK_PLAY.md): the main
     /// menu leads with its row.
     pub quickplay: bool,
@@ -691,6 +693,7 @@ impl Frontend {
             stats_link: true,
             saved,
             freeride_riders: None,
+            freeride_map: None,
             quickplay: false,
             player_name: String::new(),
             create_code: String::new(),
@@ -3412,6 +3415,7 @@ impl Frontend {
             selection: self.selection,
             hovered: self.hovered,
             freeride_riders: self.freeride_riders,
+            freeride_map: self.freeride_map.clone(),
             fields: {
                 let fields = self.fields();
                 fields
