@@ -15,6 +15,10 @@ pub const PAGES: [&str; 6] = [
     "league",
 ];
 
+/// The rider lists, which scroll with the original Lobby's gold rail
+/// ([`crate::scroll::Scroller::paint_rail`]).
+pub const RAIL_PAGES: [&str; 2] = ["friends", "friend-recent"];
+
 /// Friend-code symbols (the server's alphabet: no 0, 1, A, E, I, L, O, U).
 pub const CODE_ALPHABET: &[u8; 28] = b"23456789BCDFGHJKMNPQRSTVWXYZ";
 pub const CODE_LEN: usize = 8;

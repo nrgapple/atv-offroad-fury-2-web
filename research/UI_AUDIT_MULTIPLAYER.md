@@ -26,6 +26,7 @@ The before set is the deployed main build 6ea3dfd5.
 | Multiplayer → Free Ride badges | Red glowing pill with the map name, green glowing dot and "n riding" | The map and riders as one gold value on the right ("Caribou Peak · 3 riding"), dimmed grey when nobody rides; no glow |
 | Friends list | Glyph prefixes in the label (`●`, `○`, `+`, `…`, `⊘`) and "· Join" | `Name: Value` rows: the name, then Join / Online / Offline / Request / Sent / Blocked in the gold value face (Offline dimmed) |
 | Friends: Recent row and Recent Riders | "Recent · 2", "✓ Ann · 2h" | "Recent: 2"; "Ann: Friend", "Vega: 1h" |
+| Friends and Recent Riders scrolling | The rows column's generic cue (edge fades, a thin white thumb, a gold chevron) | The original Lobby game list's rail at the list's right: a gold up arrow, a gold capsule on a thin light rail and a gold down arrow (an arrow dims at its end), with the edge fades (`Scroller::paint_rail`) |
 | Friends table, rider page | `● Online`, `○ Offline`, `+ Wants to be friends`, `… Sent`, `◆ Gold` | Plain labels in the `details` table: Online / Offline, Friend Request, Request Sent, Gold |
 | Profile → Online card | Level and Next Tier as `▰▰▱▱` text, League `◆ Silver · 420` | The garage stat meter (ten gold steps) before the numbers; League `Silver · 420` |
 | Online → Friends row | "Friends · ● 2 · +1" | "Friends" with "+1 New" (requests) or "2 Online" as its value |
@@ -50,6 +51,21 @@ screens (approximate private composites of the exact build's page layouts,
 | Garage Male/Female switch, unfocused | No switch in the original (Rider is one row) | A gold hairline track; the dark well is gone |
 | Back, Copy ride link and the title's Pass Key link | Every original page draws its hints in a black pill with a white rim across the lower right (`✕ Next △ Back`, `✕ Edit Stats △ Back`) | Kept dark: these are that hint pill |
 | ATV stats box (portrait) | The original's stats box is the dark translucent `atvoverlay` panel | Already light on the port; unchanged |
+
+## Original multiplayer pages
+
+- `Lobby` (approximate private composite): the game list sits on the red
+  side, eight 30px lines of light text, with a vertical rail left of it:
+  a gold up arrow, a gold capsule thumb on a thin light rail and a gold
+  down arrow; the silver panel curves in from the right and the hint bar
+  runs along the foot. The Friends and Recent Riders lists take that rail
+  (on the right, where the port's rows leave room; the gold bullet keeps
+  the left). Their rows keep the classic bullet and pill, which the
+  original's other pages use for choices.
+- `MultiATVRiderSelect` gives the four players red `#e12b00`, blue
+  `#0f91c4`, green `#87c71a` and yellow `#fee50e` columns. Those colours
+  mark a player's seat, so they belong to seat lists (the in-ride lobby
+  and split-screen seats), not to friends, whose status is a word.
 
 ## Original entry screens
 
