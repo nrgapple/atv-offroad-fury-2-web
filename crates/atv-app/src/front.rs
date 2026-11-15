@@ -2238,6 +2238,15 @@ impl Front {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
         });
+        // Keep preview diagnostics outside the large page macro so nested
+        // menu hit objects stay within serde_json's default recursion limit.
+        out["photoIds"] = serde_json::json!(self.art.photos.keys().collect::<Vec<_>>());
+        out["photoTextures"] = serde_json::json!(
+            self.images
+                .keys()
+                .filter(|key| key.starts_with("thumb:") || key.starts_with("hero:course:"))
+                .collect::<Vec<_>>()
+        );
         out["quickplay"] = self.state.quickplay.into();
         out["kinetic"] = kinetic;
         out["online"] = online;

@@ -373,6 +373,35 @@ def package(output):
     (output / 'map-packages.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
 
+def package_previews(output):
+    """Only original menu PSTs, retaining source paths and bytes."""
+    output = staging_output(output)
+    rows = json.loads((ROOT / 'private/reports/mx-unleashed/psr-directory.json').read_text())
+    index = {r['name'].lower(): r for r in rows}
+    members = []
+    with (ROOT / 'private/source/MX vs. ATV Unleashed (USA).iso').open('rb') as disc:
+        disc.seek(277*2048)
+        if hashlib.sha256(disc.read(2965120)).hexdigest() != MX_BUILD:
+            raise ValueError('unexpected source build')
+        for stem in VENUES:
+            for frame in range(1,6):
+                row = index[f'ui/tex/{stem.lower()}_preview_{frame:02}.pst']
+                if not 0 < row['bytes'] <= 1024*1024:
+                    raise ValueError('invalid preview size')
+                disc.seek((1400000+row['lba'])*2048)
+                data = disc.read(row['bytes'])
+                if len(data) != row['bytes']:
+                    raise ValueError('truncated preview')
+                members.append((row['name'], data))
+    packed = pack_resource(sorted(members))
+    digest = hashlib.sha256(packed).hexdigest()
+    output.mkdir(parents=True, exist_ok=True)
+    (output / (digest+'.bin')).write_bytes(packed)
+    record = dict(archive='/MX/PREVIEWS.RES', sha256=digest, bytes=len(packed), member_count=len(members))
+    (output / 'preview-package.json').write_text(json.dumps(record, indent=2)+'\n')
+    return record
+
+
 def classify_previous_warnings(previous, current):
     """Account for warnings from the retired opaque-byte lexical scan."""
     by_id = {row['id']: row for row in current}
@@ -419,9 +448,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--integrate-manifest', action='store_true')
+    parser.add_argument('--previews-only', action='store_true')
     parser.add_argument('--adapter-only', action='store_true', help='build only the small ATV2 handling adapter, not 56 venues')
     args = parser.parse_args()
-    result = [package_adapter(args.output)] if args.adapter_only else package(args.output)
+    result = [package_previews(args.output)] if args.previews_only else [package_adapter(args.output)] if args.adapter_only else package(args.output)
     if args.integrate_manifest:
         integrate_manifest(args.output.resolve(), result)
     print(json.dumps({'archives':len(result),'bytes':sum(r['bytes'] for r in result)}))

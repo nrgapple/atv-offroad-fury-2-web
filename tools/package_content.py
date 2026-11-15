@@ -604,6 +604,7 @@ def validate_motorcycle_resource(record, payload):
 
 
 MX_MAP_IDS = tuple(f'{prefix}{i:02}' for prefix,count in [('FS',8),('MC',10),('NAT',17),('SM',3),('SX',18)] for i in range(1,count+1))
+MX_PREVIEW_SHA = 'cbc74508de80fdb9d12f52e2c79cf0a7d80f1276ba9b6bf8f678bcb860c2ce93'
 MX_ADAPTER_SHA = '95c5e9ec6f225ef8dc320d088b2406a32eda7114c572c4c8c29b210462fe1083'
 
 
@@ -620,6 +621,17 @@ def validate_mx_resource(record, payload):
     path = record['path']
     if re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', path):
         return validate_motorcycle_resource(record, payload)
+    if path == '/MX/PREVIEWS.RES':
+        if record.get('source_build_sha256') != MX_SOURCE_SHA or record.get('repacked') is not True:
+            raise ValueError('invalid preview provenance')
+        if hashlib.sha256(payload).hexdigest() != MX_PREVIEW_SHA:
+            raise ValueError('unexpected original preview bytes')
+        archive = Resource(payload)
+        expected = {f'ui/tex/{stem.lower()}_preview_{frame:02}.pst' for stem in MX_MAP_IDS for frame in range(1,6)}
+        names = [name.lower() for name,_,_ in archive.members]
+        if set(names) != expected or len(names) != 280 or record.get('member_count') != 280:
+            raise ValueError('invalid preview inventory')
+        return
     adapter = path == '/MX/ADAPTER.RES'
     maps = mx_map_hashes()
     if not adapter and path not in maps:
@@ -728,7 +740,7 @@ def validated_content(directory):
         raise ValueError('overlapping hosted resource extents')
     allowed = {manifest}
     for record in records:
-        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and record['path'] not in mx_map_hashes() and record['path'] != '/MX/ADAPTER.RES' and not re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', record['path']) and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
+        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and record['path'] not in mx_map_hashes() and record['path'] not in ('/MX/ADAPTER.RES', '/MX/PREVIEWS.RES') and not re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', record['path']) and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
             raise ValueError('unapproved hosted resource path')
         chunks = record.get('chunks', [dict(record, offset=0)])
         end = 0
