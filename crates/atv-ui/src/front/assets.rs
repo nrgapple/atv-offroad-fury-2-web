@@ -132,6 +132,15 @@ fn mx_preview_stem(id: &str, frame: u8) -> Option<String> {
 
 const MX_PREVIEWS: &str = "/MX/PREVIEWS.RES";
 
+/// MX preview PST palettes use PS2 GS alpha (0..128), while the UI renderer
+/// expects straight RGBA8 alpha (0..255). Keep the shared PST decoder raw.
+fn mx_preview_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Rgba {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel[3] = (u16::from(pixel[3]) * 255 / 128).min(255) as u8;
+    }
+    Rgba::new(width, height, rgba)
+}
+
 fn pst(bytes: &[u8]) -> Result<Rgba, String> {
     let decoded = texture::decode_pst(bytes)?;
     Ok(Rgba::new(
@@ -266,7 +275,7 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
             {
                 out.push((
                     track.id.clone(),
-                    Rgba::new(*w, *h, rgba.clone()).trim_dark(),
+                    mx_preview_rgba(*w, *h, rgba.clone()).trim_dark(),
                 ));
             }
             atv_content::yield_frame().await;
@@ -320,7 +329,7 @@ pub async fn shots(content: &Content, environment: &str) -> Result<Vec<Rgba>, St
             .filter_map(|image| {
                 image
                     .ok()
-                    .map(|(w, h, rgba)| Rgba::new(w, h, rgba).trim_dark())
+                    .map(|(w, h, rgba)| mx_preview_rgba(w, h, rgba).trim_dark())
             })
             .collect());
     }
@@ -594,6 +603,19 @@ pub async fn menu_rider(content: &Content, female: bool) -> Result<MenuRider, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mx_preview_gs_alpha_becomes_ui_alpha_for_photos_and_shots() {
+        let source = vec![80, 120, 160, 128, 220, 40, 20, 0, 10, 30, 50, 64];
+        let photo = mx_preview_rgba(3, 1, source.clone());
+        let shot = mx_preview_rgba(3, 1, source.clone());
+        assert_eq!(photo, shot);
+        assert_eq!(
+            photo.data,
+            vec![80, 120, 160, 255, 220, 40, 20, 0, 10, 30, 50, 127]
+        );
+        assert_eq!(source[3], 128, "source decoder output stays in GS units");
+    }
 
     #[test]
     fn every_mx_course_has_five_namespaced_source_previews() {
