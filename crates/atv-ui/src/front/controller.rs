@@ -3275,10 +3275,7 @@ impl Frontend {
                 let quad = (id - VEHICLE) as u16;
                 let online = self.online_garage();
                 if !online && !self.quad_owned(quad) {
-                    self.notice = Some(format!(
-                        "{} is locked. Unlock it in Profile Editor → Unlock Items.",
-                        self.quad_label(quad)
-                    ));
+                    self.notice = Some(store::ATV_LOCKED.into());
                     return None;
                 }
                 if self.catalog.iter().any(|v| v.id == quad) {
