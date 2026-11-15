@@ -12,7 +12,7 @@
     "Note: research/GHOST_CHALLENGES.md. PRs #642 (Worker side) and #657 (game side), part of #631.",
     "Verification: 76 Worker tests, focused game unit tests, and tools/test_engine_ghost_challenges.mjs against a local Worker over SQLite. Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
   ],
-  "limitation": "No human lap was measured, so how hard the medals are for a person is untested; author times come from the game's own driver. The weekly 'no CPUs' rule is enforced by the client only. Not run against production D1. The Rival-race capture showed no visible ghost, so it is not published.",
+  "limitation": "No human lap was measured, so how hard the medals are for a person is untested; author times come from the game's own driver. The weekly 'no CPUs' rule is enforced by the client only. Not run against production D1.",
   "image": "/devlog-images/ghost-challenges-medals-rival-ghost-weekly-challenge-13e7be98f95740ef89e80a9eb2285ac8.png",
-  "caption": "Race results revealing a new Gold medal"
+  "caption": "Weekly Challenge page: time left, your best with its band, top ten"
 }

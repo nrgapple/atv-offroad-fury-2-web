@@ -14,5 +14,5 @@
   ],
   "limitation": "Stunt-Off scores are self-reported. Hub points last only for the session. Waypoints can fall off the course in a room nobody has ridden. The ground ring is dots in the HUD layer and does not hide behind hills. The main menu row did not yet show the room's current map when the note was written. No gamepad buttons for the hub yet.",
   "image": "/devlog-images/free-ride-hub-challenges-pop-up-events-map-rotation-7d79513c6f9e458c9912cadf3f1f9be5.png",
-  "caption": "A Sprint event open for joining, with the ground marker and a Challenge button for a nearby rider"
+  "caption": "Free Ride map rotation vote: three venues and a one-minute timer"
 }

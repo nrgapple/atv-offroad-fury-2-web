@@ -13,5 +13,5 @@
   ],
   "limitation": "There is no Friend choice offline, since friend tags come only through the game server. A friend who has not improved for a while can drop out of a busy board's 32 stored ghosts. A second device on the same Pass Key shows the medal but has no PB ghost until it rides one.",
   "image": "/devlog-images/online-integration-friend-ghosts-block-by-player-id-cl-93d2af37424e4cdcb6c4319371567557.png",
-  "caption": "Ghost row set to Friend: a friend's best lap on Sausalito"
+  "caption": "A friend's page: Join, Remove and Block"
 }
