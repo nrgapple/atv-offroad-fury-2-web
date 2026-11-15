@@ -42,12 +42,14 @@ uses it. No overlay in this change draws a black or near-black panel.
 | Quick Play / private room: panel | A rounded `#101010c7` card | A white title strip with the phase's clock in HUD gold, over a silver sheet |
 | Lobby seats | `#0000008c` chips, a blue `#5b8def` CPU pill, a gold HOST pill and coloured ping bars | Player plates in the four player colours by seat. Each shows the name in white, a gold HOST or silver CPU tag, white ping bars and a ready tick; your plate has a gold edge and open seats are plain silver |
 | Vote cards | `#000000a6` cards with invented per-mode colours | Select Track cards: the track photo in the thin gold frame, votes in gold on the photo, the track name and its mode in dark-gold capitals; your choice sits on the gold pill |
+| Venue names and Random | Long names were cut ("Newcastle Landi…", "Freeport Ha…"); Random was an empty well | Names wrap to a second line, and the hub's Next Map takes up to 520 px so its cards are wider. Random shows a large "?" in the HUD's italic lettering in its well |
 | Countdown | A big version of the vote card | The picked track's card under the title strip and clock |
 | Podium and rewards (#672) | Gold, silver and bronze blocks, green `+points` pills, a `#ffffff26` bar and green `+XP` | Hall of Fame style table on silver. Columns: gold, silver and bronze place bullets, RIDER, TIME or POINTS, LEAGUE (#672's league points), with your row on the gold pill. The level strip below has "Lv n", the menu slider's gold track, `+XP` and the tier in dark-gold capitals. Confetti is gold and silver |
 | Rematch / Leave | Pressing changed nothing visible (the view's `stay` was unused), so the podium's 8 s timer looked like the only effect | Gold Rematch and silver Leave buttons. A press shows at once: "Rematch ✓" with the white ring. The UI state reports `stay`/`leaving`, and both loop tests assert it right after the tap |
 | Start / Mode / CPUs, Ready, Skip | `#ffffff1f` buttons with radius 8 | The gold pill for the main choice, silver plates for the rest |
 | Spectator "Next round" and Watch | A `#000000a6` pill and a dark button | "NEXT ROUND" in race HUD gold with no box; Watch is a silver plate |
 | Race HUD under the panel | The race's PLACE list, SCORE/LAP labels and LAP TIME block showed through or collided with the Results panel and its title; a name tag sat on the place list | While a loop panel is up (vote, countdown, podium), the race's place, score, lap, times, lamps and stunt text step aside, as on the original race-over screen. The map and speed stay |
+| Speed meter on a phone | In portrait the speed meter sits top right and ran into the loop panel's clock | Hidden while a loop panel is up on narrow screens; the minimap stays |
 | Touch coaching under the panel | "HOLD ANYWHERE TO RIDE" and the resting touch circle sat under the panel | Hidden while a loop panel is up. A finger that is riding (riders can ride during lobby, vote and podium) still sees its control |
 | Phone placement | The panel at the top covered the minimap at 360 px portrait | The panel starts below the minimap whenever the minimap sits at the top over the panel's span. It uses the minimap's own rect, which #697's compass styling keeps. On a phone the vote shows cards two across and leaves out the seat plates |
 | Free Ride hub: status line | A rounded `#0c0c0cc8` chip | Race HUD lettering: gold title, silver detail and the clock, no box |
@@ -75,4 +77,3 @@ uses it. No overlay in this change draws a black or near-black panel.
   single-player race-over screen. That panel is still the dark box the owner
   objected to, but it predates epic #631 and is left for its own restyle.
 - Peer name tags draw under the panels (unchanged from before).
-- The Random card has no photo; it shows "Random" in the silver well.

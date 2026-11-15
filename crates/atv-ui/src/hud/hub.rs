@@ -218,8 +218,11 @@ pub fn element(
         y += 60.;
     }
     if let Some((options, clock)) = &state.vote {
+        // The vote takes the room the screen has (up to 520 px), so each
+        // venue's photo and whole name read.
+        let vote_w = 520f32.min(view.width - 24.);
         let per = options.len().clamp(1, 3);
-        let card_w = classic::card_width(width, per);
+        let card_w = classic::card_width(vote_w, per);
         let cards = options
             .iter()
             .enumerate()
@@ -232,6 +235,7 @@ pub fn element(
                     option.mine,
                     false,
                     photo(&option.venue),
+                    None,
                     card_w,
                 )
             })
@@ -239,11 +243,11 @@ pub fn element(
         let sheet = classic::sheet(
             "Next Map",
             Some(timer(clock, false)),
-            width,
+            vote_w,
             vec![classic::grid(cards)],
         );
-        root = root.child(El::new(absolute(left, y, width)).child(sheet));
-        y += 100. + card_w * 0.67 + 40.;
+        root = root.child(El::new(absolute((view.width - vote_w) / 2., y, vote_w)).child(sheet));
+        y += 100. + card_w * 0.67 + 56.;
     }
     if let Some(toast) = &state.toast {
         let at = y.max(view.height * 0.3);

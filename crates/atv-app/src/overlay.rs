@@ -1170,7 +1170,14 @@ impl Overlay {
                     .as_ref()
                     .is_some_and(|m| m.split_layout(*set, name).is_some())
             });
-        if let (Some(meter), Some(h)) = (&self.meter, shown.filter(|_| seated.is_none())) {
+        let loop_panel = self.loop_panel();
+        // A portrait phone's speed meter sits top right, where a loop
+        // panel's title and clock go: it steps aside meanwhile.
+        let speed_aside = loop_panel && self.narrow();
+        if let (Some(meter), Some(h)) = (
+            &self.meter,
+            shown.filter(|_| seated.is_none() && !speed_aside),
+        ) {
             let speed = match race {
                 Some(_) => self.race_overlays.shown("speed"),
                 None => !self.minimap.settings.enabled || second.is_some(),
@@ -1181,7 +1188,6 @@ impl Overlay {
         }
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
-        let loop_panel = self.loop_panel();
         let map_visible = self.minimap.visible() && !paused && race.is_none();
         let chat = shown.and_then(|h| h.chat).filter(|c| c.available);
         self.chat_shown = chat.is_some();

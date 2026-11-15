@@ -458,10 +458,11 @@ fn table_row(
     row
 }
 
-/// A Select Track choice: the track photo in the thin gold frame, the vote
-/// count in the gold values over its corner, then the venue's name and its
-/// kind in small capitals; the chosen card sits on the gold pill. Focus
-/// shows the course list's white ring.
+/// A Select Track choice: the track photo in the thin gold frame (or
+/// `mark`, large, in its place: Random's "?"), the vote count in the gold
+/// values over its corner, then the venue's whole name (wrapping to a
+/// second line) and its kind in small capitals; the chosen card sits on the
+/// gold pill. Focus shows the course list's white ring.
 #[allow(clippy::too_many_arguments)]
 pub fn card(
     id: Option<u32>,
@@ -471,6 +472,7 @@ pub fn card(
     chosen: bool,
     focused: bool,
     photo: Option<Photo>,
+    mark: Option<&str>,
     width: f32,
 ) -> El {
     let inner = width - 8.;
@@ -522,6 +524,32 @@ pub fn card(
             }),
         );
     }
+    if let Some(mark) = mark.filter(|_| photo.is_none()) {
+        frame = frame.child(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(0.),
+                    top: LengthPercentageAuto::length(0.),
+                    right: LengthPercentageAuto::auto(),
+                    bottom: LengthPercentageAuto::auto(),
+                },
+                size: Size {
+                    width: length(inner - 4.),
+                    height: length(photo_h - 4.),
+                },
+                display: Display::Flex,
+                align_items: AlignItems::CENTER,
+                justify_content: JustifyContent::CENTER,
+                ..Default::default()
+            })
+            .child(hud_text(
+                mark,
+                (photo_h * 0.6).clamp(28., 72.),
+                Color::WHITE,
+            )),
+        );
+    }
     if votes > 0 {
         frame = frame.child(hud_text(votes.to_string(), 26., VALUE));
     }
@@ -556,7 +584,21 @@ pub fn card(
     })
     .paint(paint)
     .child(frame)
-    .child(ellipsis(name, ink(15., 800, INK), 18.))
+    .child(
+        El::new(Style {
+            max_size: Size {
+                width: percent(1.),
+                height: auto(),
+            },
+            ..Default::default()
+        })
+        .content(Content::Text {
+            text: name.into(),
+            style: ink(15., 800, INK),
+            line_height: 17.,
+            wrap: true,
+        }),
+    )
     .children((!kind.is_empty()).then(|| {
         caps(
             kind,

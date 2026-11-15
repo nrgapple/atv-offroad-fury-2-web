@@ -261,6 +261,7 @@ fn card(
         card.chosen,
         focused,
         photo(&card.venue),
+        card.venue.is_empty().then_some("?"),
         width,
     )
 }
