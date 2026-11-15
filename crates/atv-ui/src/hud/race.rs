@@ -15,7 +15,7 @@ use atv_core::race::Frame;
 
 /// 002e0770: overlay text without a colour draws 190,190,190.
 pub(super) const RACE_TEXT: Color = Color::rgb(190, 190, 190);
-const RACE_GOLD: Color = Color::rgb(218, 192, 31);
+pub(super) const RACE_GOLD: Color = Color::rgb(218, 192, 31);
 
 /// What a compass shows: the player's heading (yaw about +Y, forward =
 /// (sin, cos)) and origin, other riders and the mode's icons, each with

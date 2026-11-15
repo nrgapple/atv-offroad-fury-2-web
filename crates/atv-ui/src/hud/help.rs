@@ -1,6 +1,6 @@
 //! Keyboard controls card (web/keyboard-help.js; game.css + hud.css
 //! `#keyboard-help`). Opens on a player's first keyboard ride for 15 s and
-//! toggles with H or the Keys button.
+//! toggles with H.
 use super::{Viewport, tokens};
 use crate::{
     color::{Color, Gradient},
