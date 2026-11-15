@@ -246,3 +246,26 @@ and atomically replaces the manifest. It does not copy diagnostic reports,
 acceptance JSON, source files or arbitrary staging artifacts. It neither invokes
 R2 upload nor starts a deployment. No promotion has been performed during this
 packaging task; parent runtime/browser acceptance is still pending.
+
+## Original menu previews
+
+`python3 tools/package_mx_maps.py --output private/reports/mx-previews-stage --previews-only`
+builds `/MX/PREVIEWS.RES`: 280 original `UI/Tex/<source-stem>_preview_01..05.pst`
+members, preserving source path case and bytes. All 56 venues have five source
+images; no gameplay screenshot fallback is needed. The deterministic package is
+11,746,495 bytes. It is separate from the venue archives so the course selector
+can fetch only the first image of each venue using the existing ranged archive
+reader, and decode through the Rust PST workers. The selected-map hero uses the
+same first photo; the loading carousel uses all five standalone photos. ATV2
+keeps its original two-half photo and six-shot loader paths.
+
+The hosted-content validator pins the original compact package digest and checks
+its exact 280-member inventory and source build. Base regeneration retains it
+through `preserve_mx_records`; bike regeneration replaces only bike archive keys.
+Use the existing additive `integrate_manifest` publication lock after validation.
+An absent or failed optional MX preview package preserves already decoded ATV2
+photos. `test_engine_mx_previews.mjs` is the registered private-content portrait
+selector acceptance test; it checks all 56 source IDs and actual thumbnail/hero
+texture creation while advancing the existing selection carousel. Screenshots
+stay in ignored private reports. Physical-phone performance is not established
+by this host viewport test.

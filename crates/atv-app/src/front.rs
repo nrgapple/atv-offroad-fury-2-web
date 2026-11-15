@@ -2199,6 +2199,8 @@ impl Front {
             "createCode": self.state.create_code,
             "tracks": self.state.tracks.len(),
             "photos": self.art.photos.len(),
+            "photoIds": self.art.photos.keys().collect::<Vec<_>>(),
+            "photoTextures": self.images.keys().filter(|key| key.starts_with("thumb:") || key.starts_with("hero:course:")).collect::<Vec<_>>(),
             "scroll": self.state.list.offset(),
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,

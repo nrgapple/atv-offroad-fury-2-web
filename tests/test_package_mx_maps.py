@@ -9,6 +9,32 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(len(VENUES), 56)
         self.assertEqual(len(set(v.lower() for v in VENUES)), 56)
 
+    def test_preview_allowlist_rejects_changed_bytes_and_unrelated_content(self):
+        from package_content import validate_mx_resource, pack_resource, MX_SOURCE_SHA
+        record = dict(path='/MX/PREVIEWS.RES', source_build_sha256=MX_SOURCE_SHA, repacked=True, member_count=280)
+        for members in [[('UI/Tex/FS01_preview_01.pst', b'wrong')], [('GAME_REL.BIN', b'executable')]]:
+            with self.assertRaises(ValueError):
+                validate_mx_resource(record, pack_resource(members))
+
+    def test_base_regeneration_preserves_preview_and_map_records(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        from package_content import preserve_mx_records
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            preview = dict(path='/MX/PREVIEWS.RES', lba=100, bytes=400, sha256='preview')
+            venue = dict(path='/MX/MAPS/FS01.RES', lba=101, bytes=800, sha256='venue')
+            (output/'manifest.json').write_text(json.dumps(dict(files=[preview, venue])))
+            regenerated = dict(files=[dict(path='/STARTAPP.RES', lba=0, bytes=2048)])
+            with patch('package_content.validated_content') as validate:
+                result = preserve_mx_records(output, regenerated)
+                validate.assert_called_once_with(output)
+            retained = result['files'][1:]
+            self.assertEqual([r['path'] for r in retained], [preview['path'], venue['path']])
+            self.assertEqual([r['sha256'] for r in retained], ['preview', 'venue'])
+            self.assertGreater(retained[1]['lba'], retained[0]['lba'])
+
     def test_legacy_warnings_require_typed_evidence(self):
         from package_mx_maps import classify_previous_warnings
         previous = [dict(id='mx_fs01', missing=['terrain.ps2.trn: 4..cs', 'Tex/Screen.psm: rendertarget.pst'])]

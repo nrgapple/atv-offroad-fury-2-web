@@ -12,7 +12,7 @@ use std::collections::HashMap;
 pub struct Track {
     pub id: String,
     pub name: String,
-    /// TP photo stem (`<image>a.pst` + `<image>b.pst`).
+    /// Source photo stem (ATV2 halves, or one standalone MX PST).
     pub image: String,
 }
 
@@ -114,11 +114,23 @@ pub fn unlocked_courses(
             .map(|course| Track {
                 id: course.id.into(),
                 name: course.name.into(),
-                image: String::new(),
+                image: mx_preview_stem(course.id, 1).unwrap(),
             }),
     );
     available
 }
+
+/// Original MX UI/Tex artwork uses the venue's source stem, not its display name.
+fn mx_preview_stem(id: &str, frame: u8) -> Option<String> {
+    let course = launch::mx_courses::COURSES
+        .iter()
+        .find(|course| course.id == id)?;
+    (1..=5)
+        .contains(&frame)
+        .then(|| format!("{}_preview_{frame:02}", course.id.trim_start_matches("mx_")))
+}
+
+const MX_PREVIEWS: &str = "/MX/PREVIEWS.RES";
 
 fn pst(bytes: &[u8]) -> Result<Rgba, String> {
     let decoded = texture::decode_pst(bytes)?;
@@ -242,6 +254,24 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
         out.push((id, Rgba::join(&left, &right).trim_dark()));
         atv_content::yield_frame().await;
     }
+    // An optional MX package failure must not discard the ATV2 photos above.
+    if content.manifest.record(MX_PREVIEWS).is_some()
+        && let Ok(archive) = Archive::open(content, MX_PREVIEWS).await
+    {
+        for track in tracks.iter().filter(|t| t.id.starts_with("mx_")) {
+            if let Some(index) = archive.named(&format!("{}.pst", track.image))
+                && let Ok(bytes) = archive.member(index).await
+                && let Ok(decoded) = atv_game::offload::psts(&[&bytes]).await
+                && let Some(Ok((w, h, rgba))) = decoded.first()
+            {
+                out.push((
+                    track.id.clone(),
+                    Rgba::new(*w, *h, rgba.clone()).trim_dark(),
+                ));
+            }
+            atv_content::yield_frame().await;
+        }
+    }
     Ok(out)
 }
 
@@ -269,6 +299,31 @@ pub async fn tips(content: &Content) -> Result<Vec<Vec<String>>, String> {
 
 /// The original loader's six action shots for a course (frames 02-07).
 pub async fn shots(content: &Content, environment: &str) -> Result<Vec<Rgba>, String> {
+    if mx_preview_stem(environment, 1).is_some() {
+        if content.manifest.record(MX_PREVIEWS).is_none() {
+            return Ok(Vec::new());
+        }
+        let archive = Archive::open(content, MX_PREVIEWS).await?;
+        let mut bytes = Vec::new();
+        for frame in 1..=5 {
+            if let Some(index) = archive.named(&format!(
+                "{}.pst",
+                mx_preview_stem(environment, frame).unwrap()
+            )) {
+                bytes.push(archive.member(index).await?);
+            }
+        }
+        let inputs: Vec<&[u8]> = bytes.iter().map(Vec::as_slice).collect();
+        return Ok(atv_game::offload::psts(&inputs)
+            .await?
+            .into_iter()
+            .filter_map(|image| {
+                image
+                    .ok()
+                    .map(|(w, h, rgba)| Rgba::new(w, h, rgba).trim_dark())
+            })
+            .collect());
+    }
     let Some(path) = launch::loading_shots_resource(environment) else {
         return Ok(Vec::new());
     };
@@ -539,6 +594,26 @@ pub async fn menu_rider(content: &Content, female: bool) -> Result<MenuRider, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_mx_course_has_five_namespaced_source_previews() {
+        let tracks = unlocked_courses(&[], &|_| true);
+        let mx: Vec<_> = tracks.iter().filter(|t| t.id.starts_with("mx_")).collect();
+        assert_eq!(mx.len(), 56);
+        let mut names = std::collections::HashSet::new();
+        for track in mx {
+            assert_eq!(Some(track.image.clone()), mx_preview_stem(&track.id, 1));
+            for frame in 1..=5 {
+                assert!(names.insert(mx_preview_stem(&track.id, frame).unwrap()));
+            }
+        }
+        assert_eq!(names.len(), 280);
+        for id in ["env01", "mx_fs00", "mx_fs09", "mx_nat18", "fs01"] {
+            assert!(mx_preview_stem(id, 1).is_none());
+        }
+        assert!(mx_preview_stem("mx_fs01", 0).is_none());
+        assert!(mx_preview_stem("mx_fs01", 6).is_none());
+    }
 
     #[test]
     fn imported_courses_need_both_venue_and_driving_adapter_packages() {
