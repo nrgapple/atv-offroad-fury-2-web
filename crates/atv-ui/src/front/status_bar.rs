@@ -701,9 +701,7 @@ pub(super) fn toast(m: &Metrics, notice: &str) -> El {
     // rim, rounded on the right and running off the left edge) in its
     // place at the lower left, above the hint row, clear of the title.
     let hint_row = if m.short { 44. } else { 50. }
-        + if m.portrait {
-            6.
-        } else if m.short {
+        + if m.portrait || m.short {
             6.
         } else {
             (m.h * 0.014).clamp(6., 14.)
