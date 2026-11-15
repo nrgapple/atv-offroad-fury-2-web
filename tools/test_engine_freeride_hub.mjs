@@ -118,6 +118,14 @@ try {
   await hubIs(ann, (h, mask) => h.event && (h.event.mask & mask) === mask, (1 << annPeer) | (1 << boPeer), 30000);
   report.event = { kind: open.kind, point: open.point };
   await hubIs(ann, h => h.event && h.event.phase === 1, null, 30000);
+  // The hill lies clear of the circle: waiting there never holds it (#685).
+  const run = (await hub(ann)).event;
+  report.event.target = run.target;
+  if (open.kind === 'Hill King') {
+    const gap = Math.hypot(run.target[0] - run.point[0], run.target[2] - run.point[2]);
+    report.event.hillGap = gap;
+    assert.ok(gap > 75, `the hill is ${gap} ft from the circle`);
+  }
   await nextFrames(ann, 10);
   await shot(ann, 'event-run');
   await hubIs(ann, h => h.outcomes.some(o => o.kind !== 'challenge'), null, 90000);

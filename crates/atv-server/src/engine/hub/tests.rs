@@ -265,14 +265,14 @@ fn a_pop_up_event_opens_a_join_circle_and_runs_a_hill_for_its_joiners() {
     hub.step(now, 8, &riders, &mut out);
     assert_eq!(events(&out, 0).last().unwrap().mask, 0b11);
     // The window closes: the hill is the highest spot near the circle.
-    hub.spots.push([point[0] + 100., 40., point[2]]);
+    hub.spots.push([point[0] + 200., 40., point[2]]);
     now += 45_000;
     let mut out = Vec::new();
     hub.step(now, 8, &riders, &mut out);
     let run = events(&out, 0).last().unwrap().clone();
     assert_eq!(run.phase, event_phase::RUN);
     assert_eq!(run.choice, 0, "two joined: not solo");
-    assert_eq!(run.target, [point[0] + 100., 40., point[2]]);
+    assert_eq!(run.target, [point[0] + 200., 40., point[2]]);
     assert_eq!(run.radius, HILL_RADIUS);
     // Rider 1 holds the hill for 20 s (driving there at a believable speed).
     for k in 0..400 {
@@ -539,4 +539,69 @@ fn only_riders_who_scored_take_podium_places_and_ties_share_one() {
         points(event_kind::SPRINT, &mut rows),
         vec![(1, 100), (0, 10)]
     );
+}
+
+#[test]
+fn waiting_in_the_join_circle_never_holds_the_hill() {
+    // Issue #685: the riders gathered at the circle, so its own spot was the
+    // highest ridden near it and the hill landed on the circle; a rider who
+    // only waited there held it for the whole event.
+    let point = [0., 30., 0.];
+    for spots in [
+        // The circle's spot is the highest; a lower one lies well away.
+        vec![point, [10., 25., 0.], [250., 5., 0.]],
+        // Only spots in and around the circle.
+        vec![point, [20., 10., 0.], [60., 0., 0.]],
+        // No spots at all.
+        vec![],
+    ] {
+        let mut now = 10_000;
+        let mut hub = quiet_hub(now);
+        hub.spots = spots.clone();
+        hub.next_event = now;
+        hub.next_kind = event_kind::HILL;
+        let mut riders = vec![rider(0, point), rider(1, point)];
+        for r in &mut riders {
+            r.moving = false;
+        }
+        let mut out = Vec::new();
+        hub.step(now, 8, &riders, &mut out);
+        // Both wait in the circle at the highest spot.
+        let event = hub.event.as_mut().expect("announced");
+        (event.point, event.target) = (point, point);
+        now += 45_100;
+        let mut out = Vec::new();
+        hub.step(now, 8, &riders, &mut out);
+        let run = events(&out, 0).last().unwrap().clone();
+        assert_eq!(run.phase, event_phase::RUN, "{spots:?}");
+        assert!(
+            flat(run.target, point) > JOIN_RADIUS + HILL_RADIUS,
+            "{spots:?}: hill {:?}, circle {point:?}",
+            run.target
+        );
+        // Rider 1 drives to the hill at a believable speed; rider 0 stays.
+        let mut results = None;
+        for k in 0..700 {
+            now += 100;
+            if k == 0 {
+                let b = run.target;
+                riders[1].position = Some([b[0] / 2., b[1], b[2] / 2.]);
+            } else if k == 20 {
+                riders[1].position = Some(run.target);
+            }
+            let mut out = Vec::new();
+            hub.step(now, 8, &riders, &mut out);
+            if let Some(e) = events(&out, 1)
+                .into_iter()
+                .find(|e| e.phase == event_phase::RESULTS)
+            {
+                results = Some(e);
+                break;
+            }
+        }
+        let results = results.expect("the hill ends");
+        let row = |peer| results.rows.iter().find(|r| r.peer == peer).unwrap();
+        assert_eq!(row(0).value, 0., "{spots:?}: the circle is not the hill");
+        assert_eq!((row(0).points, row(1).points), (10, 100), "{spots:?}");
+    }
 }

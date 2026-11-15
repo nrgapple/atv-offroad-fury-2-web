@@ -43,6 +43,11 @@ pub const JOIN_RADIUS: f32 = 40.;
 /// The hill's radius (ft) and height band.
 pub const HILL_RADIUS: f32 = 35.;
 const HILL_BAND: f32 = 30.;
+/// A hill lies 160-500 ft from its join circle, so nobody holds it while
+/// waiting in the circle (issue #685). `waypoint`'s fallback halves the near
+/// bound, which still clears the circle plus the hill (75 ft).
+const HILL_NEAR: f32 = 160.;
+const HILL_FAR: f32 = 500.;
 /// Each event runs this long at most.
 pub const EVENT_MS: u64 = 60_000;
 /// How long the vote stays open before the room moves.
@@ -530,13 +535,16 @@ impl Hub {
         [from[0] + near * x, from[1], from[2] + near * z]
     }
 
-    /// The highest spot within `range` ft of `from`, else `from`.
-    fn hill(&self, from: [f32; 3], range: f32) -> [f32; 3] {
+    /// The highest spot `HILL_NEAR`-`HILL_FAR` ft from the circle at
+    /// `from`, else a waypoint that far off. Never the circle itself: riders
+    /// gather there, so its spot is often the highest nearby.
+    fn hill(&mut self, from: [f32; 3]) -> [f32; 3] {
         self.spots
             .iter()
-            .filter(|s| flat(**s, from) <= range)
+            .filter(|s| (HILL_NEAR..=HILL_FAR).contains(&flat(**s, from)))
             .copied()
-            .fold(from, |best, s| if s[1] > best[1] { s } else { best })
+            .reduce(|best, s| if s[1] > best[1] { s } else { best })
+            .unwrap_or_else(|| self.waypoint(from, HILL_NEAR, HILL_FAR))
     }
 
     /// A rider's hub message.
@@ -806,7 +814,7 @@ impl Hub {
                         event.joined = joined.iter().fold(0, |m, r| m | bit(r.peer));
                         event.target = match event.kind {
                             event_kind::SPRINT => self.waypoint(event.point, 400., 1000.),
-                            event_kind::HILL => self.hill(event.point, 500.),
+                            event_kind::HILL => self.hill(event.point),
                             _ => event.point,
                         };
                         if event.kind == event_kind::SPRINT {
