@@ -61,12 +61,6 @@ pub struct QuickPlay {
     beeped: Option<u32>,
     /// One-shots for the ride's mixer (the countdown's beeps).
     pub sounds: Vec<&'static str>,
-    /// The round's course, not loaded yet: the round's own start loads it
-    /// (once) instead of the room's move there.
-    pub pending: Option<String>,
-    /// Load this course now (a deferred move whose round did not start).
-    pub reload: Option<String>,
-    setup: Setup,
     /// The last panel built (tests and diagnostics).
     pub view: View,
 }
@@ -158,17 +152,6 @@ impl QuickPlay {
         }
     }
 
-    /// The room moved to `environment` for a race or game round that is
-    /// counting down: that round's own start reloads the course as the race
-    /// or game, so the move's plain reload is skipped (one load a round).
-    /// Freestyle rides the moved course as it is.
-    pub fn defers(&self, environment: &str) -> bool {
-        self.phase == loop_phase::COUNTDOWN
-            && self.setup.number > 0
-            && self.setup.round.mode != game_kind::FREESTYLE
-            && self.setup.round.environment() == Some(environment)
-    }
-
     /// One frame: follow the loop, send this rider's choices, and say what
     /// to start when this rider drives a round that has not started.
     /// `environment` is the course this client has loaded; `name` names a
@@ -205,14 +188,6 @@ impl QuickPlay {
                 }
                 _ => {}
             }
-        }
-        self.setup = state.setup;
-        // A deferred move whose round never started (a stalled driver):
-        // load the course after all.
-        if self.pending.is_some()
-            && !matches!(state.phase, loop_phase::COUNTDOWN | loop_phase::PLAY)
-        {
-            self.reload = self.pending.take();
         }
         // The countdown card beeps its last three seconds with the start
         // lamps' beep; the round's own lamps play GO.
@@ -718,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn the_countdown_beeps_and_a_race_round_loads_once() {
+    fn the_countdown_beeps_its_last_three_seconds() {
         let mut q = QuickPlay::new(playlist::RACE, "QPR00001".into());
         let countdown = RoomLoop {
             deadline_ms: 10_000,
@@ -729,34 +704,5 @@ mod tests {
             frame_with(&mut q, &countdown, None, t, Some(t), "env05");
         }
         assert_eq!(q.sounds, ["beep01.vag"; 3]);
-        // The move to the race's course waits for the race's own load.
-        assert!(q.defers("nat01"));
-        assert!(!q.defers("env05"));
-        q.pending = Some("nat01".into());
-        frame_with(
-            &mut q,
-            &state(loop_phase::PLAY),
-            None,
-            10_000.,
-            None,
-            "nat01",
-        );
-        assert!(q.reload.is_none());
-        // A round that never started: load it after all.
-        frame_with(
-            &mut q,
-            &state(loop_phase::VOTE),
-            None,
-            60_000.,
-            None,
-            "nat01",
-        );
-        assert_eq!(q.reload.as_deref(), Some("nat01"));
-        // Freestyle rides the moved course as it is.
-        let mut free = state(loop_phase::COUNTDOWN);
-        free.setup.round.mode = game_kind::FREESTYLE;
-        let mut q = QuickPlay::new(playlist::STUNTS, "QPS00001".into());
-        frame_with(&mut q, &free, None, 0., None, "env05");
-        assert!(!q.defers("nat01"));
     }
 }

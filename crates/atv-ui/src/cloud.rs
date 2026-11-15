@@ -8,7 +8,9 @@
 //! always did, and the machine pushes the changes when it can, merging a
 //! conflicting server save in (`atv_core::cloud_save::merge`) instead of
 //! dropping either side (research/CLOUD_SAVE.md, client section).
-use crate::settings::{Settings, load_book, load_hall_of_fame, save_book, save_hall_of_fame};
+use crate::settings::{
+    Settings, load_book, load_hall_of_fame, load_medals, save_book, save_hall_of_fame, save_medals,
+};
 use atv_core::cloud_save::{self, Save};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -83,20 +85,36 @@ pub fn local_save(settings: &Settings) -> Save {
     if let (Some(secret), Some(key)) = (rider_secret(settings), pass_key(settings)) {
         save.rider = Some(wrap_rider(&secret, &key));
     }
+    save.medals = cloud_save::Medals::of(&load_medals(settings));
     save
 }
 
 /// Replaces the progress saved on this device; false when it lasts only for
-/// this session.
+/// this session. A save without medals (an older build's) leaves this
+/// device's medals as they are.
 pub fn write_save(settings: &mut Settings, save: &Save) -> bool {
     adopt_rider(settings, save);
+    let mut medals = true;
+    if let Some(carried) = &save.medals {
+        let mut book = load_medals(settings);
+        if carried.apply(&mut book) {
+            medals = save_medals(settings, &book);
+        }
+    }
     let book = save_book(settings, &save.profiles);
-    save_hall_of_fame(settings, &save.hall_of_fame) && book
+    save_hall_of_fame(settings, &save.hall_of_fame) && book && medals
 }
 
 /// This device's online rider secret, if it has one.
 pub fn rider_secret(settings: &Settings) -> Option<String> {
     settings.get(RIDER_KEY).filter(|s| valid_secret(s))
+}
+
+/// The player id the game server derives from a rider secret (32 hex
+/// digits of SHA-256 of `fury-rider:` and the secret). The rider's friend
+/// ghost uploads carry it (research/GHOST_CHALLENGES.md "Friend ghosts").
+pub fn rider_pid(secret: &str) -> String {
+    hex(&digest(&format!("fury-rider:{secret}"))[..16])
 }
 
 fn valid_secret(secret: &str) -> bool {
@@ -1315,6 +1333,15 @@ mod tests {
     }
 
     #[test]
+    fn the_player_id_is_the_game_server_s() {
+        // atv-server players::codes::pid of the same secret.
+        assert_eq!(
+            rider_pid("0123456789abcdef0123456789abcdef"),
+            "cb309075d22ee3c4596bd8b6e34cbdb5"
+        );
+    }
+
+    #[test]
     fn the_rider_wraps_with_the_key_only() {
         let secret = "0123456789abcdef0123456789abcdef";
         let key = cloud_save::pass_key([1; 10]);
@@ -1390,6 +1417,58 @@ mod tests {
         a.settle(&mut server);
         assert_eq!(a.profile().points, 22);
         assert_eq!(server.saves[&key].0, 3);
+    }
+
+    #[test]
+    fn medals_and_weekly_results_follow_the_pass_key() {
+        use atv_core::medals::{Badge, WeekResult};
+        let mut server = Server::default();
+        let mut a = Device::new(1);
+        let mut book = load_medals(&a.settings);
+        book.record_lap("nat01", 51_000);
+        book.record_week("2026-W45", 300_000);
+        book.weeks.get_mut("2026-W45").unwrap().badge = Some(Badge::Top25);
+        book.ghosts.insert("nat01".into(), 51_000);
+        save_medals(&mut a.settings, &book);
+        // Medals alone make the key.
+        a.sync.poke();
+        a.now += PUSH_GAP_MS;
+        a.settle(&mut server);
+        let key = pass_key(&a.settings).unwrap();
+        let mut b = Device::new(2);
+        let mut theirs = load_medals(&b.settings);
+        theirs.record_lap("nat01", 49_500);
+        theirs.record_lap("sx01", 40_000);
+        theirs.ghosts.insert("sx01".into(), 40_000);
+        save_medals(&mut b.settings, &theirs);
+        b.sync.fetch(&key);
+        b.settle(&mut server);
+        let Some(Notice::Fetched(fetched)) = b.notices.pop() else {
+            panic!("no fetched save");
+        };
+        apply(&mut b.settings, &fetched, Choice::Merge).unwrap();
+        let merged = load_medals(&b.settings);
+        assert_eq!(merged.best("nat01"), Some(49_500));
+        assert_eq!(merged.best("sx01"), Some(40_000));
+        assert_eq!(
+            merged.weeks["2026-W45"],
+            WeekResult {
+                value: 300_000,
+                badge: Some(Badge::Top25)
+            }
+        );
+        // Each device keeps its own personal best ghosts.
+        assert_eq!(merged.ghosts.keys().collect::<Vec<_>>(), ["sx01"]);
+        // B pushes the merge; A pulls B's quicker lap.
+        b.sync.poke();
+        b.now += PUSH_GAP_MS;
+        b.settle(&mut server);
+        a.sync.wake(a.now + PULL_MS);
+        a.now += PULL_MS;
+        a.settle(&mut server);
+        let pulled = load_medals(&a.settings);
+        assert_eq!(pulled.best("nat01"), Some(49_500));
+        assert_eq!(pulled.ghosts["nat01"], 51_000);
     }
 
     #[test]

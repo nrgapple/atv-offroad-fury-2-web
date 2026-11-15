@@ -30,6 +30,7 @@ pub fn routes() -> Router<Arc<Shared>> {
         .route("/multiplayer/friends", post(friends))
         .route("/multiplayer/friends/{action}", post(friend))
         .route("/multiplayer/league", post(league))
+        .route("/multiplayer/room/riders", post(room_riders))
 }
 
 #[derive(Deserialize, Default)]
@@ -43,6 +44,7 @@ struct Ask {
     hidden: Option<bool>,
     /// The asking build joins Quick Play rooms.
     quickplay: Option<bool>,
+    room: Option<String>,
 }
 
 fn answer(result: Result<Value, Refusal>) -> Response {
@@ -175,4 +177,17 @@ async fn league(State(shared): State<Arc<Shared>>, body: Body) -> Response {
         .and_then(|ask| ask.token)
         .and_then(|t| shared.players.verify(&t, now_ms()));
     answer(Ok(shared.players.league(pid.as_deref(), now_ms())))
+}
+
+/// `{token, room}`: the room's verified riders by slot, for quick chat's
+/// mute and block (research/QUICK_CHAT.md "Block").
+async fn room_riders(State(shared): State<Arc<Shared>>, body: Body) -> Response {
+    answer(rider(&shared, &body).and_then(|(ask, pid)| {
+        let room = ask
+            .room
+            .as_deref()
+            .and_then(|c| atv_net::parse_room_code(c).ok())
+            .ok_or((400, "Room needed"))?;
+        shared.players.room_riders(&pid, room, now_ms())
+    }))
 }

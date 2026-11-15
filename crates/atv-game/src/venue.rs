@@ -260,11 +260,41 @@ pub async fn load_with(
     racing: bool,
     options: LoadOptions,
 ) -> Result<Venue> {
+    load_selected(content, environment, racing, options, None).await
+}
+
+/// Host-only private-content acceptance path. This does not change the public
+/// launch/picker gate; the caller can validate an import before enabling it.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn load_mx_candidate(content: &Content, environment: &str) -> Result<Venue> {
+    let course = crate::launch::mx_course_resource(environment).ok_or("unknown MX venue")?;
+    load_selected(
+        content,
+        environment,
+        false,
+        LoadOptions::default(),
+        Some(course),
+    )
+    .await
+}
+
+async fn load_selected(
+    content: &Content,
+    environment: &str,
+    racing: bool,
+    options: LoadOptions,
+    candidate: Option<crate::launch::CourseResource>,
+) -> Result<Venue> {
+    let mx = crate::launch::mx_courses::get(environment);
+    let source_stem = mx.map_or(environment, |course| course.scene_stem);
     let mut freeride_scene = None;
     let course = if racing {
         crate::launch::race_resource(environment, options.race)?
     } else {
-        let mut course = course_resource(environment, false)?;
+        let mut course = match candidate {
+            Some(course) => course,
+            None => course_resource(environment, false)?,
+        };
         if let Some((archive, stem)) = &options.game_scene {
             freeride_scene = Some(course.scene_stem.clone());
             course.overlay = Some(archive.clone());
@@ -299,18 +329,22 @@ pub async fn load_with(
     let scene_text = extract(&format!("{scene_stem}.scn"), "start position")?;
     let mode_index = member_named(&archive, &format!("{}.toy", course.mode_stem));
     let mode = mode_index.map(|i| archive.extract(i)).transpose()?;
-    let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
+    let mut scene = if mx.is_some() {
+        atv_core::scene::parse_mx(&scene_text)?
+    } else {
+        atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?
+    };
     // 00208cc0 reads [Weather] from the common/mode TOYs; an inactive
     // weather removes its model from the scene.
     // The browser compares this index with the ambient mode TOY's course
     // index even when it came from the placements archive; keep that.
-    let (toy, toy_index) = match member_named(&archive, &format!("{environment}.toy")) {
+    let (toy, toy_index) = match member_named(&archive, &format!("{source_stem}.toy")) {
         Some(index) => (Some(archive.extract(index)?), Some(index)),
         None => match &course.placements {
             Some(path) => {
                 let bytes = content.file(path).await?;
                 let placements = Resource::parse(&bytes)?;
-                match member_named(&placements, &format!("{environment}.toy")) {
+                match member_named(&placements, &format!("{source_stem}.toy")) {
                     Some(index) => (Some(placements.extract(index)?), Some(index)),
                     None => (None, None),
                 }
@@ -318,8 +352,10 @@ pub async fn load_with(
             None => (None, None),
         },
     };
+    // MX weather selection has not been recovered. Preserve SCN fog and sky;
+    // do not apply ATV2's weather-removal rules to another game's models.
     let weather = match &toy {
-        Some(common) => {
+        Some(common) if mx.is_none() => {
             let definition =
                 atv_core::weather::Definition::parse(common, mode.as_deref().unwrap_or(&[]))?;
             let random = match options.weather {
@@ -329,7 +365,7 @@ pub async fn load_with(
             };
             Some(atv_core::weather::select(definition, random, 1)?)
         }
-        None => None,
+        _ => None,
     };
     if let Some(removed) = weather.as_ref().and_then(|w| w.removed_model.as_deref()) {
         scene
@@ -492,8 +528,17 @@ pub async fn load_with(
         }
         _ => None,
     };
-    let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
-    let decoded = terrain::decode_tr2(&tr2)?;
+    let terrain_name = if mx.is_some() {
+        format!("{source_stem}.ps2.trn")
+    } else {
+        format!("{source_stem}.tr2")
+    };
+    let tr2 = extract(&terrain_name, "terrain")?;
+    let decoded = if mx.is_some() {
+        terrain::decode_pln(&tr2)?.terrain
+    } else {
+        terrain::decode_tr2(&tr2)?
+    };
     crate::yield_frame().await;
     // One dense grid serves both (render_heights builds the same one).
     let ground = decoded.render_heights()?;
@@ -519,60 +564,83 @@ pub async fn load_with(
         max = max.max(h);
     }
 
-    let layout = terrain::texture_layout(&tr2)?;
-    // The layers decode in parallel off the page's thread (offload.rs).
-    let sources = terrain_sources(&tr2, &layout)?;
+    let layout = if mx.is_some() {
+        terrain::pln_texture_layout(&tr2)?
+    } else {
+        terrain::texture_layout(&tr2)?
+    };
     let mut layers = Vec::with_capacity(layout.records.len());
     let mut layer_mips = Vec::with_capacity(layout.records.len());
-    for (record, image) in layout
-        .records
-        .iter()
-        .zip(crate::offload::ipums_with(&sources, false, true).await?)
-    {
-        layer_mips.push(image.mips);
-        if record.width != 256 || record.height != 256 || image.rgba.len() != 256 * 256 * 4 {
-            return Err("unsupported terrain texture image".into());
+    if mx.is_some() {
+        // One bounded indexed layer and its shared box-filtered mip chain
+        // per yield. Keep mip generation out of the synchronous GPU upload;
+        // terrain geometry still uses the existing renderer's LOD selection.
+        for record in &layout.records {
+            let image = terrain::decode_pln_texture(&tr2, record)?;
+            if image.info.width != 256
+                || image.info.height != 256
+                || image.rgba.len() != 256 * 256 * 4
+            {
+                return Err("unsupported MX terrain texture image".into());
+            }
+            let mut mips = Vec::with_capacity(8);
+            let (mut w, mut h) = (256, 256);
+            while w > 1 || h > 1 {
+                let pixels = mips.last().map_or(image.rgba.as_slice(), Vec::as_slice);
+                let (next, nw, nh) = texture::downsample(pixels, w, h);
+                mips.push(next);
+                (w, h) = (nw, nh);
+            }
+            layers.push(Image {
+                width: 256,
+                height: 256,
+                rgba: image.rgba,
+            });
+            layer_mips.push(mips);
+            crate::yield_frame().await;
         }
-        layers.push(Image {
-            width: 256,
-            height: 256,
-            rgba: image.rgba,
-        });
+    } else {
+        let sources = terrain_sources(&tr2, &layout)?;
+        for (record, image) in layout
+            .records
+            .iter()
+            .zip(crate::offload::ipums_with(&sources, false, true).await?)
+        {
+            layer_mips.push(image.mips);
+            if record.width != 256 || record.height != 256 || image.rgba.len() != 256 * 256 * 4 {
+                return Err("unsupported terrain texture image".into());
+            }
+            layers.push(Image {
+                width: 256,
+                height: 256,
+                rgba: image.rgba,
+            });
+        }
     }
     let mapping_width = (width - 1).div_ceil(64) as u32;
     let mapping_height = (depth - 1).div_ceil(64) as u32;
-    let mut mapping = vec![u16::MAX; (mapping_width * mapping_height) as usize];
-    for region in &layout.regions {
-        if region.span_cells != 256 || region.x % 256 != 0 || region.z % 256 != 0 {
-            return Err("unsupported terrain texture region".into());
-        }
-        for (index, layer) in region.subtextures.iter().enumerate() {
-            let layer = layer.ok_or("unsupported terrain texture region")?;
-            let x = region.x / 64 + index as u32 % 4;
-            let z = region.z / 64 + index as u32 / 4;
-            let slot = (z * mapping_width + x) as usize;
-            if x >= mapping_width
-                || z >= mapping_height
-                || layer as usize >= layers.len()
-                || mapping[slot] != u16::MAX
-            {
-                return Err("invalid terrain texture region coverage".into());
-            }
-            mapping[slot] = layer;
-        }
-    }
-    if mapping.contains(&u16::MAX) {
-        return Err("terrain texture regions do not cover the terrain".into());
-    }
+    let mapping = terrain_mapping(&layout, mapping_width, mapping_height, mx.is_some())?;
     // 002098b0 derives the original detail resource from the terrain basename.
     let detail = texture::decode_pst(&extract(
-        &format!("{environment}_d.pst"),
+        &format!("{source_stem}_d.pst"),
         "ground detail texture",
     )?)?;
+    let mx_cube = mx.and_then(|_| {
+        last_component(&scene.cube_file)
+            .to_ascii_lowercase()
+            .strip_suffix(".cub")
+            .map(|stem| format!("{stem}.ps2.cub"))
+    });
     let sky_index = archive
         .members
         .iter()
-        .position(|m| last_component(&m.name).eq_ignore_ascii_case(&scene.cube_file))
+        .position(|m| {
+            let name = last_component(&m.name);
+            name.eq_ignore_ascii_case(&scene.cube_file)
+                || mx_cube
+                    .as_ref()
+                    .is_some_and(|cube| name.eq_ignore_ascii_case(cube))
+        })
         .ok_or("Original scene sky is missing.")?;
     let sky = Some(crate::sky::load(&archive.extract(sky_index)?, options.sky_smooth).await?);
     crate::yield_frame().await;
@@ -675,29 +743,35 @@ pub async fn load_with(
     let scenery =
         crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model, &enduro_dress)?;
     crate::yield_frame().await;
-    let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
+    let vegetation = crate::vegetation::load(&archive, source_stem, &scene, &ground)?;
     crate::yield_frame().await;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
-    let ambient = crate::ambient::load(
-        &archive,
-        environment,
-        &scene_text,
-        toy.as_deref(),
-        toy_index,
-        crate::ambient::Sources {
-            mode: mode.as_deref(),
-            mode_index,
-            game: options.game_scene.is_some() && !racing,
-            targets: target_toy.as_deref(),
-        },
-    )
-    .unwrap_or_else(|error| {
-        // The browser skips effects it cannot configure.
-        eprintln!("ambient effects: {error}");
+    // MX emitter layouts are not the recovered ATV2 particle program. Keep
+    // them inactive until a source adapter exists rather than misreading TOYs.
+    let ambient = if mx.is_some() {
         None
-    })
-    .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
+    } else {
+        crate::ambient::load(
+            &archive,
+            environment,
+            &scene_text,
+            toy.as_deref(),
+            toy_index,
+            crate::ambient::Sources {
+                mode: mode.as_deref(),
+                mode_index,
+                game: options.game_scene.is_some() && !racing,
+                targets: target_toy.as_deref(),
+            },
+        )
+        .unwrap_or_else(|error| {
+            // The browser skips effects it cannot configure.
+            eprintln!("ambient effects: {error}");
+            None
+        })
+        .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)))
+    };
     // Keyframed actors of the common and mode TOYs. Treasure Hunt's bombs
     // and the locomotive wheels are drawn by their own systems.
     let treasure_refs: Vec<String> = treasures
@@ -808,4 +882,103 @@ pub async fn load_with(
             },
         },
     })
+}
+
+fn terrain_mapping(
+    layout: &terrain::TerrainTextures,
+    mapping_width: u32,
+    mapping_height: u32,
+    mx: bool,
+) -> Result<Vec<u16>> {
+    let mut mapping = vec![u16::MAX; (mapping_width * mapping_height) as usize];
+    for region in &layout.regions {
+        if region.span_cells != 256 || region.x % 256 != 0 || region.z % 256 != 0 {
+            return Err("unsupported terrain texture region".into());
+        }
+        for (index, layer) in region.subtextures.iter().enumerate() {
+            let layer = layer.ok_or("unsupported terrain texture region")?;
+            let x = region.x / 64 + index as u32 % 4;
+            let z = region.z / 64 + index as u32 / 4;
+            if layer as usize >= layout.records.len() {
+                return Err("invalid terrain texture layer".into());
+            }
+            // MX can retain complete 256-cell texture regions over a partial
+            // final terrain region (NAT04: 896 cells across). The unused outer
+            // texels have no geometry; all in-bounds cells remain mandatory.
+            if mx && (x >= mapping_width || z >= mapping_height) {
+                continue;
+            }
+            let slot = (z * mapping_width + x) as usize;
+            if x >= mapping_width
+                || z >= mapping_height
+                || layer as usize >= layout.records.len()
+                || mapping[slot] != u16::MAX
+            {
+                return Err("invalid terrain texture region coverage".into());
+            }
+            mapping[slot] = layer;
+        }
+    }
+    if mapping.contains(&u16::MAX) {
+        return Err("terrain texture regions do not cover the terrain".into());
+    }
+    Ok(mapping)
+}
+
+#[cfg(test)]
+mod mapping_tests {
+    use super::*;
+    #[test]
+    fn mx_partial_edge_regions_clip_only_outside_geometry() {
+        let mut layout = terrain::TerrainTextures {
+            records: vec![terrain::TerrainTextureRecord {
+                width: 256,
+                height: 256,
+                format: 39,
+                mips: Vec::new(),
+            }],
+            regions: Vec::new(),
+        };
+        for z in 0..5 {
+            for x in 0..4 {
+                layout.regions.push(terrain::TerrainTextureRegion {
+                    x: x * 256,
+                    z: z * 256,
+                    span_cells: 256,
+                    base_texture: None,
+                    subtextures: [Some(0); 16],
+                });
+            }
+        }
+        assert_eq!(
+            terrain_mapping(&layout, 14, 20, true).unwrap(),
+            vec![0; 280]
+        );
+        assert!(terrain_mapping(&layout, 14, 20, false).is_err());
+        layout.regions.pop();
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("cover")
+        );
+        layout.regions[0].subtextures[0] = Some(1);
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("layer")
+        );
+        layout.regions[0].subtextures[0] = Some(0);
+        layout.regions.push(terrain::TerrainTextureRegion {
+            x: 0,
+            z: 0,
+            span_cells: 256,
+            base_texture: None,
+            subtextures: [Some(0); 16],
+        });
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("coverage")
+        );
+    }
 }

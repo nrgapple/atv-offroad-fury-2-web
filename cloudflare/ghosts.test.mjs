@@ -5,13 +5,13 @@ import test from 'node:test';
 import worker from './worker.mjs';
 import {
   GHOST_HEADER, GHOST_KEY, GHOST_LIMIT, GHOST_MAX_AGE, GHOST_STRIDE, GHOST_TOP, MAX_GHOST_BYTES, MAX_GHOST_KEYS, MAX_GHOST_TEXT,
-  checkGhost, decodeGhost, ghostHeader, keptGhosts,
+  FRIEND_GHOST_LIMIT, checkGhost, decodeGhost, ghostHeader, ghostTag, keptGhosts,
 } from './ghosts.mjs';
 
 // A D1 stand-in over real SQLite with the production migrations applied.
 function d1() {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['0001_cloud_saves.sql', '0002_world_boards.sql', '0003_board_ghosts.sql']) db.exec(readFileSync(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
+  for (const file of ['0001_cloud_saves.sql', '0002_world_boards.sql', '0003_board_ghosts.sql', '0007_friend_ghosts.sql']) db.exec(readFileSync(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
   const statement = (sql, params = []) => ({
     bind: (...values) => statement(sql, values),
     run: async () => statement(sql, params).exec(),
@@ -248,4 +248,68 @@ test('ghost refusals: method, size, JSON, origin, rate limit and storage failure
   const broken = setup();
   broken.SAVES.batch = async () => { throw new Error('storage'); };
   assert.equal((await call(broken, 'POST', `/api/ghosts/${BOARD}`, { name: 'ADA', ghost: text(ghost()) })).status, 503);
+});
+
+const PID = '0123456789abcdef0123456789abcdef';
+const pid = n => n.toString(16).padStart(32, '0');
+const friendUpload = (env, rider, name, bytes, board = BOARD) => call(env, 'POST', `/api/ghosts/${board}/friends`, { rider, name, ghost: text(bytes) });
+
+test('friend ghosts: stored under the tag of the uploader\'s player id, the quicker lap wins, listed and downloaded by tag', async () => {
+  // The game server's derivation (atv-server players/codes.rs pins the same pair).
+  const tag = await ghostTag(PID);
+  assert.equal(tag, '29f2df97c620405170dde2ef53393d77');
+  const env = setup();
+  const store = new Map();
+  globalThis.caches = { default: { match: async request => store.get(request.url)?.clone(), put: async (request, response) => { store.set(request.url, response); }, delete: async request => store.delete(request.url) } };
+  try {
+    // No board row is needed: a friend's personal best is anywhere on the board.
+    assert.deepEqual((await friendUpload(env, PID, 'ada', ghost({ lapMs: 61_000 }))).body, { board: BOARD, kept: true, value: 61_000 });
+    // A slower lap keeps the quicker one; a quicker one replaces it.
+    assert.deepEqual((await friendUpload(env, PID, 'ADA', ghost({ lapMs: 62_000 }))).body, { board: BOARD, kept: false, value: 61_000 });
+    const quick = ghost({ lapMs: 60_000, vehicle: 28 });
+    assert.deepEqual((await friendUpload(env, PID, 'ADA', quick)).body, { board: BOARD, kept: true, value: 60_000 });
+    await friendUpload(env, pid(2), 'BOB', ghost({ lapMs: 59_000 }));
+    const other = await ghostTag(pid(2)), stranger = await ghostTag(pid(3));
+    // The id is never stored; only its tag.
+    assert.deepEqual(env.SAVES.db.prepare('SELECT tag FROM friend_ghosts ORDER BY value').all().map(r => r.tag), [other, tag]);
+    const list = await call(env, 'GET', `/api/ghosts/${BOARD}/friends?tags=${tag},${stranger},${other}`);
+    assert.equal(list.status, 200);
+    assert.deepEqual(list.body, { board: BOARD, ghosts: [
+      { tag: other, name: 'BOB', value: 59_000, vehicle: 3 },
+      { tag, name: 'ADA', value: 60_000, vehicle: 28 },
+    ] });
+    assert.equal(list.headers.get('Cache-Control'), 'public, max-age=60');
+    const got = await call(env, 'GET', `/api/ghosts/${BOARD}/friends/${tag}/60000`);
+    assert.deepEqual(got.body, { board: BOARD, name: 'ADA', value: 60_000, vehicle: 28, ghost: text(quick) });
+    assert.equal(got.headers.get('Cache-Control'), `public, max-age=${GHOST_MAX_AGE}`);
+    assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/friends/${tag}/61000`)).status, 404);
+    // Refusals: the id, the tags, the floor, the ghost's motion and the paths.
+    assert.equal((await friendUpload(env, 'ABC', 'ADA', quick)).status, 400);
+    assert.equal((await friendUpload(env, PID.toUpperCase(), 'ADA', quick)).status, 400);
+    assert.deepEqual((await friendUpload(env, PID, 'ADA', ghost({ lapMs: 5_000, feet: 2000 }))).body, { error: 'implausible', reason: 'lap_floor' });
+    assert.deepEqual((await friendUpload(env, PID, 'ADA', ghost({ feet: 100 }))).body, { error: 'implausible', reason: 'ghost_short' });
+    assert.deepEqual((await friendUpload(env, PID, 'ADA', ghost({ course: 'nat02' }))).body, { error: 'implausible', reason: 'ghost_row' });
+    assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/friends?tags=`)).status, 400);
+    assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/friends?tags=${PID.toUpperCase()}`)).status, 400);
+    const many = await Promise.all(Array.from({ length: 101 }, (_, i) => ghostTag(pid(100 + i))));
+    assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/friends?tags=${many.join(',')}`)).status, 400);
+    assert.equal((await call(env, 'PUT', `/api/ghosts/${BOARD}/friends`, {})).status, 405);
+    assert.equal((await call(env, 'POST', `/api/ghosts/${BOARD}/friends/${tag}/60000`, {})).status, 405);
+    assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/friends/${tag}`)).status, 404);
+    assert.equal((await call(env, 'GET', `/api/ghosts/score:fs:arl/friends?tags=${tag}`)).status, 404);
+  } finally { delete globalThis.caches; }
+});
+
+test('a board keeps the most recent friend ghosts up to its limit', async () => {
+  const env = setup();
+  const lap = ghost();
+  for (let n = 1; n <= FRIEND_GHOST_LIMIT + 3; n++) {
+    assert.equal((await friendUpload(env, pid(n), 'R', lap)).body.kept, true);
+    // Distinct upload times, oldest first.
+    env.SAVES.db.prepare('UPDATE friend_ghosts SET updated_at = ? WHERE tag = ?').run(n, await ghostTag(pid(n)));
+  }
+  const kept = env.SAVES.db.prepare('SELECT updated_at FROM friend_ghosts WHERE board = ? ORDER BY updated_at').all(BOARD).map(r => r.updated_at);
+  assert.equal(kept.length, FRIEND_GHOST_LIMIT);
+  // The last upload pruned the oldest beyond the limit before its own time was set.
+  assert.ok(kept[0] >= 3, `${kept[0]}`);
 });

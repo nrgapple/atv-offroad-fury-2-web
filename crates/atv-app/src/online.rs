@@ -16,6 +16,8 @@ static TOKEN: Mutex<String> = Mutex::new(String::new());
 
 /// Lists refresh this often while an Online page shows (presence).
 const LISTS_S: f32 = 20.;
+/// Lap Attack's setup reads the friend list (its ghost tags) this often.
+const GHOST_LISTS_S: f32 = 60.;
 /// The stored secret is compared with the registered one this often (a
 /// Pass Key on another device may hand this one its rider).
 const SECRET_S: f32 = 10.;
@@ -51,6 +53,10 @@ pub enum Purpose {
     Act,
     Settings,
     NewCode,
+    /// The room's verified riders, for quick chat (research/QUICK_CHAT.md).
+    Room,
+    /// A quick-chat block or unblock mirrored to the identity list.
+    Sync,
 }
 
 #[derive(Default)]
@@ -63,6 +69,10 @@ pub struct Online {
     wanted: Option<bool>,
     lists_at: Option<Instant>,
     secret_at: Option<Instant>,
+    /// The launch's site and game server, for rides without the menus.
+    pub endpoints: Option<(String, String)>,
+    /// The rider name a ride opened from a room link rides under.
+    pub name: Option<String>,
     /// Consecutive failed registrations (backs off).
     failures: u32,
     retry_at: Option<Instant>,
@@ -108,12 +118,17 @@ fn state_line(state: &str) -> &'static str {
 }
 
 impl App {
-    fn online_send(&mut self, purpose: Purpose, path: &str, mut body: Value) {
-        let Some((site, server)) = self
-            .defaults
+    /// The site and game server: the menus' defaults, else the launch's
+    /// (a ride opened from a room link has no menus).
+    fn online_endpoints(&self) -> Option<(String, String)> {
+        self.defaults
             .as_ref()
             .map(|d| (d.site.clone(), d.server.clone()))
-        else {
+            .or_else(|| self.online.endpoints.clone())
+    }
+
+    fn online_send(&mut self, purpose: Purpose, path: &str, mut body: Value) {
+        let Some((site, server)) = self.online_endpoints() else {
             return;
         };
         if purpose != Purpose::Register {
@@ -143,7 +158,7 @@ impl App {
     }
 
     fn online_register(&mut self) {
-        if self.defaults.is_none() {
+        if self.online_endpoints().is_none() {
             return;
         }
         let secret = self.online_secret();
@@ -151,6 +166,7 @@ impl App {
             .front
             .as_ref()
             .map(|f| f.borrow().state.player_name.clone())
+            .or_else(|| self.online.name.clone())
             .unwrap_or_default();
         self.online.registering = true;
         self.online.registered = Some(secret.clone());
@@ -216,14 +232,76 @@ impl App {
         }
     }
 
+    /// A registration's answer: the token for requests and room sockets.
+    fn online_token(&mut self, value: &Value) {
+        self.online.failures = 0;
+        self.online.retry_at = None;
+        let token = value["token"].as_str().unwrap_or_default().to_string();
+        if let Ok(mut shared) = TOKEN.lock() {
+            shared.clone_from(&token);
+        }
+        self.online.token = (!token.is_empty()).then_some(token);
+    }
+
+    /// A failed registration waits 10 s, doubling to about 10 minutes.
+    fn online_backoff(&mut self) {
+        self.online.failures += 1;
+        let wait = 5u64 << self.online.failures.min(7);
+        self.online.retry_at = Some(Instant::now() + std::time::Duration::from_secs(wait));
+    }
+
+    /// `/multiplayer/room/riders`' answer: quick chat's verified ids, and
+    /// name-only blocks they upgrade sent to the identity list.
+    fn online_room(&mut self, value: &Value) {
+        let riders: Vec<(u8, String, bool)> = value["riders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                Some((
+                    u8::try_from(r["slot"].as_u64()?).ok()?,
+                    r["id"].as_str()?.to_string(),
+                    r["blocked"].as_bool().unwrap_or(false),
+                ))
+            })
+            .collect();
+        let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) else {
+            return;
+        };
+        let mut settings = Settings::load();
+        let names: Vec<(u8, String)> = riders
+            .iter()
+            .filter_map(|(slot, ..)| Some((*slot, net.rider_name(*slot)?)))
+            .collect();
+        let name = |slot: u8| {
+            names
+                .iter()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, n)| n.clone())
+        };
+        let push = net.chat.set_riders(&mut settings, &riders, name);
+        for id in push {
+            self.online_block(&id, true);
+        }
+    }
+
+    /// Quick chat's Block on a verified rider is the identity block too
+    /// (research/QUICK_CHAT.md "Block"), so it holds on every device on the
+    /// Pass Key and in the Friends lists.
+    pub(crate) fn online_block(&mut self, id: &str, on: bool) {
+        let action = if on { "block" } else { "unblock" };
+        self.online_send(
+            Purpose::Sync,
+            &format!("/multiplayer/friends/{action}"),
+            json!({"id": id}),
+        );
+    }
+
     /// Each event-loop pass: register a rider who uses online, follow a
     /// secret a Pass Key brought, and keep an open Online page's presence
     /// fresh.
     pub(crate) fn online_poll(&mut self) {
-        let Some(front) = self.front.clone() else {
-            return;
-        };
-        if self.defaults.is_none() {
+        if self.online_endpoints().is_none() {
             return;
         }
         let now = Instant::now();
@@ -248,16 +326,44 @@ impl App {
             self.online_register();
             return;
         }
-        let page = {
+        if self.online.token.is_some()
+            && let Some(room) = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.net.as_mut())
+                .and_then(|n| n.room_riders_due(now))
+        {
+            self.online_send(
+                Purpose::Room,
+                "/multiplayer/room/riders",
+                json!({"room": room}),
+            );
+        }
+        // A ride opened from a room link has no menus: it still registers
+        // (above) and reads its room's riders.
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let (page, ghosts) = {
             let mut f = front.borrow_mut();
             f.state.online.now_ms = now_ms();
-            f.state.page.clone()
+            (f.state.page.clone(), f.state.wants_friend_lists())
         };
         if atv_ui::front::controller::online_page::PAGES.contains(&page.as_str())
             && self.online.token.is_some()
             && due(self.online.lists_at, LISTS_S)
         {
             self.online_refresh(&page);
+        } else if ghosts && self.online.token.is_some() && due(self.online.lists_at, GHOST_LISTS_S)
+        {
+            // Lap Attack's Friend ghost needs the friends' ghost tags.
+            self.online.lists_at = Some(now);
+            // Asked as the Friends page asks, so its Quick Play Joins stay.
+            self.online_send(
+                Purpose::Lists,
+                "/multiplayer/friends",
+                json!({"quickplay": true}),
+            );
         }
     }
 
@@ -277,6 +383,12 @@ impl App {
             return;
         }
         let Some(front) = self.front.clone() else {
+            match purpose {
+                Purpose::Register if status == 200 => self.online_token(&value),
+                Purpose::Register => self.online_backoff(),
+                Purpose::Room if status == 200 => self.online_room(&value),
+                _ => {}
+            }
             return;
         };
         let mut f = front.borrow_mut();
@@ -285,10 +397,7 @@ impl App {
         if status != 200 {
             let message = value["error"].as_str().map(str::to_string);
             if purpose == Purpose::Register {
-                // 10 s, doubling to about 10 minutes.
-                self.online.failures += 1;
-                let wait = 5u64 << self.online.failures.min(7);
-                self.online.retry_at = Some(Instant::now() + std::time::Duration::from_secs(wait));
+                self.online_backoff();
             }
             match purpose {
                 Purpose::Register | Purpose::Me | Purpose::Lists
@@ -319,13 +428,7 @@ impl App {
         let mut refresh = false;
         match purpose {
             Purpose::Register => {
-                self.online.failures = 0;
-                self.online.retry_at = None;
-                let token = value["token"].as_str().unwrap_or_default().to_string();
-                if let Ok(mut shared) = TOKEN.lock() {
-                    shared.clone_from(&token);
-                }
-                self.online.token = (!token.is_empty()).then_some(token);
+                self.online_token(&value);
                 refresh =
                     atv_ui::front::controller::online_page::PAGES.contains(&state.page.as_str());
             }
@@ -337,10 +440,28 @@ impl App {
             }
             Purpose::Lists => {
                 if let Ok(lists) = serde_json::from_value::<Lists>(value) {
+                    let blocked: Vec<(String, String)> = lists
+                        .blocked
+                        .iter()
+                        .map(|r| (r.id.clone(), r.name.clone()))
+                        .collect();
                     state.online.lists = Some(lists);
+                    // The identity block list wins for verified riders.
+                    let mut settings = Settings::load();
+                    if crate::quick_chat::sync_blocked(&mut settings, &blocked)
+                        && let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut())
+                    {
+                        net.chat.blocked = crate::quick_chat::load_blocked(&settings);
+                    }
                 }
                 state.online_changed(&view);
             }
+            Purpose::Room => {
+                drop(f);
+                self.online_room(&value);
+                return;
+            }
+            Purpose::Sync => {}
             Purpose::Board => {
                 if let Ok(board) = serde_json::from_value::<Board>(value) {
                     state.online.board = Some(board);

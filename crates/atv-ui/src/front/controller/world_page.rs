@@ -6,6 +6,7 @@
 use super::{Event, Frontend, Viewport};
 use crate::settings::Settings;
 use atv_core::world_board::{self, Board, DailyPick, VehicleClass};
+use atv_core::world_ghost::{self, FriendGhost};
 use std::collections::BTreeMap;
 
 /// The Daily Event page.
@@ -43,6 +44,9 @@ pub struct WorldView {
     pub weekly_percentile: Option<(String, u32)>,
     /// Lap Attack's ghost picker: the chosen row.
     pub ghost_pick: usize,
+    /// Friend ghosts per friend board (`world_ghost::friend_board`): the
+    /// tags asked for and the answer, quickest first (None while loading).
+    pub friends: BTreeMap<String, (String, Option<Vec<FriendGhost>>)>,
 }
 
 /// One choice of Lap Attack's ghost picker.
@@ -51,7 +55,8 @@ pub struct GhostPick {
     /// "PB 1:02.33", "~Gold 0:45.70", "Rival R4 0:50.00"…
     pub label: String,
     /// The lap board, row name and lap ms of a world ghost; an empty board
-    /// for this device's personal best ghost; `None` for Off.
+    /// for this device's personal best ghost; `@` and the tag for a
+    /// friend's ghost; `None` for Off.
     pub ghost: Option<(String, String, i64)>,
 }
 
@@ -366,9 +371,8 @@ impl Frontend {
     /// Lap Attack's ghost picker (research/GHOST_CHALLENGES.md): Off (the
     /// original's own best-lap ghost), then the choices that exist: this
     /// device's personal best, the next medal's ghost, the rival just
-    /// above the rider and the board's #1.
+    /// above the rider, the board's #1 and the quickest friend.
     pub fn ghost_picks(&self) -> Vec<GhostPick> {
-        use atv_core::medals;
         let course = &self.race.course;
         let mut picks = vec![GhostPick {
             label: "Off".into(),
@@ -381,12 +385,21 @@ impl Frontend {
             });
         }
         let board = self.lap_attack_board();
-        let Some(BoardState::Ready(rows)) = self.world.boards.get(&board) else {
-            return picks;
-        };
+        if let Some(BoardState::Ready(rows)) = self.world.boards.get(&board) {
+            self.world_picks(&board, rows, &mut picks);
+        }
+        picks.extend(self.friend_pick());
+        picks
+    }
+
+    /// The picker's choices from the lap board: the next medal's ghost, the
+    /// rival and #1.
+    fn world_picks(&self, board: &str, rows: &Board, picks: &mut Vec<GhostPick>) {
+        use atv_core::medals;
+        let course = &self.race.course;
         let world = |label: String, e: &world_board::BoardEntry| GhostPick {
             label: format!("{label} {}", ms_time(e.value)),
-            ghost: Some((board.clone(), e.name.clone(), e.value)),
+            ghost: Some((board.to_string(), e.name.clone(), e.value)),
         };
         let best = self.medals.best(course);
         if let Some(medal) = medals::next_medal(course, best)
@@ -410,7 +423,88 @@ impl Frontend {
         if let Some(top) = medals::top_ghost(&rows.entries) {
             picks.push(world("#1".into(), top));
         }
-        picks
+    }
+
+    /// The friends whose ghosts Lap Attack can ask for: their tags, sorted.
+    fn friend_tags(&self) -> Vec<&str> {
+        let mut tags: Vec<&str> = self
+            .online
+            .lists
+            .iter()
+            .flat_map(|l| &l.friends)
+            .map(|f| f.ghost.as_str())
+            .filter(|t| !t.is_empty())
+            .collect();
+        tags.sort_unstable();
+        tags.dedup();
+        tags.truncate(world_ghost::MAX_FRIEND_TAGS);
+        tags
+    }
+
+    /// Lap Attack's setup wants the friend list (for the friends' ghost
+    /// tags) once the rider is online.
+    pub fn wants_friend_lists(&self) -> bool {
+        self.page == "race" && self.lap_attack()
+    }
+
+    /// The friend ghost list Lap Attack's setup wants and the host has not
+    /// asked for with these friends: the board and the tags' query path.
+    pub fn friend_wants(&self) -> Option<(String, String, String)> {
+        if !self.wants_friend_lists() {
+            return None;
+        }
+        let tags = self.friend_tags();
+        if tags.is_empty() {
+            return None;
+        }
+        let board = world_ghost::friend_board(&self.race.course);
+        let joined = tags.join(",");
+        if self
+            .world
+            .friends
+            .get(&board)
+            .is_some_and(|(asked, _)| *asked == joined)
+        {
+            return None;
+        }
+        let path = world_ghost::friend_list_path(&board, &tags);
+        Some((board, joined, path))
+    }
+
+    /// The host asked for these friends' ghosts on `board`.
+    pub fn friend_loading(&mut self, board: &str, tags: String) {
+        self.world.friends.insert(board.to_string(), (tags, None));
+    }
+
+    /// The host's answer (empty when it failed): the picker gains Friend.
+    pub fn friend_answer(&mut self, board: &str, ghosts: Vec<FriendGhost>, view: &Viewport) {
+        if let Some(entry) = self.world.friends.get_mut(board) {
+            entry.1 = Some(ghosts);
+        }
+        if self.page == "race" {
+            self.refresh(view);
+        }
+    }
+
+    /// Friend: the quickest friend with a stored ghost on the course
+    /// (research/GHOST_CHALLENGES.md "Friend ghosts").
+    fn friend_pick(&self) -> Option<GhostPick> {
+        let friends = &self.online.lists.as_ref()?.friends;
+        let board = world_ghost::friend_board(&self.race.course);
+        let (_, Some(ghosts)) = self.world.friends.get(&board)? else {
+            return None;
+        };
+        let (friend, ghost) = ghosts.iter().find_map(|g| {
+            let friend = friends
+                .iter()
+                .find(|f| !f.ghost.is_empty() && f.ghost == g.tag)?;
+            Some((friend, g))
+        })?;
+        let name: String = friend.name.chars().take(8).collect();
+        Some(GhostPick {
+            label: format!("Friend {} {}", name.trim(), ms_time(ghost.value)),
+            ghost: Some((board, format!("@{}", ghost.tag), ghost.value)),
+        })
     }
 
     /// The race setup's Ghost row (Lap Attack only).
@@ -925,6 +1019,81 @@ mod tests {
             ghost,
             house: false,
         }
+    }
+
+    #[test]
+    fn lap_attack_offers_the_quickest_friend_s_ghost() {
+        use crate::front::controller::online_page::{Lists, Rider};
+        use atv_core::race_event::EventType;
+        let (mut front, view, mut settings) = front();
+        front.race.course = "nat01".into();
+        front.race.event = EventType::LapAttack;
+        front.show("race", &view);
+        assert!(front.wants_friend_lists());
+        // No friends yet: nothing to ask.
+        assert_eq!(front.friend_wants(), None);
+        let friend = |name: &str, tag: &str| Rider {
+            id: format!("id{name}"),
+            name: name.into(),
+            ghost: tag.into(),
+            ..Default::default()
+        };
+        let (a, b, gone) = ("a".repeat(32), "b".repeat(32), "c".repeat(32));
+        front.online.lists = Some(Lists {
+            friends: vec![friend("Zed", &b), friend("Ann Longname", &a)],
+            ..Default::default()
+        });
+        let (board, tags, path) = front.friend_wants().unwrap();
+        assert_eq!(board, "lap:nat01:n");
+        assert_eq!(tags, format!("{a},{b}"));
+        assert_eq!(
+            path,
+            format!("/api/ghosts/lap:nat01:n/friends?tags={a},{b}")
+        );
+        front.friend_loading(&board, tags);
+        assert_eq!(front.friend_wants(), None, "asked once for these friends");
+        assert!(
+            front
+                .ghost_picks()
+                .iter()
+                .all(|p| !p.label.starts_with("Friend"))
+        );
+        let ghost = |tag: &str, value| FriendGhost {
+            tag: tag.into(),
+            name: "X".into(),
+            value,
+            vehicle: 3,
+        };
+        // Quickest first; a tag no longer a friend is skipped.
+        front.friend_answer(
+            &board,
+            vec![ghost(&gone, 40_000), ghost(&a, 47_250), ghost(&b, 48_000)],
+            &view,
+        );
+        let picks = front.ghost_picks();
+        let last = picks.last().unwrap();
+        assert_eq!(last.label, "Friend Ann Long 00:47.25");
+        assert_eq!(last.ghost, Some((board.clone(), format!("@{a}"), 47_250)));
+        front.world.ghost_pick = picks.len() - 1;
+        front.refresh(&view);
+        match front.run("racestart", &view, &mut settings) {
+            Some(Event::GhostRace {
+                board: b,
+                name,
+                value,
+                ..
+            }) => assert_eq!((b, name, value), (board.clone(), format!("@{a}"), 47_250)),
+            other => panic!("{other:?}"),
+        }
+        // A new friend asks again.
+        front
+            .online
+            .lists
+            .as_mut()
+            .unwrap()
+            .friends
+            .push(friend("New", &gone));
+        assert!(front.friend_wants().is_some());
     }
 
     #[test]

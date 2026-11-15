@@ -209,13 +209,17 @@ Two accepted deviations from the spec (epic owner, 2026-11-14):
   a lone racer gets a field of five, not six. Wave 2 (#670) found 8 human
   seats unsafe without a protocol step (below).
 
-- One load a round for races, King of the Hills and Treasure Hunt: when
-  the countdown moves the room to the round's course, the client keeps
-  riding where it is (`QuickPlay::defers`, `Net::defer_course`) and the
-  round's own start loads the course once as the race or game. Freestyle
-  rides the moved course (its start does not reload). If the move comes
-  before the client has seen the countdown, or the round never starts,
-  the course loads as before (twice, or once afterwards).
+- The double load stays: the countdown moves the room to the round's map,
+  then the driver's round start reloads it again as the race or game (as a
+  private room's Select Track then Play Race does). Skipping the move's
+  reload was tried (#670) and refused by the server: it accepts the host's
+  round state (`Game`, `Cpus`) only from a rider whose Ready names the
+  room's current map (and closes the socket otherwise, "Message not
+  permitted"), and it forwards round state only to riders on that map, so a
+  deferred guest would never hear the race start. One load a round needs
+  the server to let Quick Play riders report Ready for a map they will load
+  as the round (or to forward the round's start before Ready), not a
+  client-only change.
 - The countdown's beeps need `beep01.vag`, which room rides now load even
   off a race (`World::lamps`); GO is left to the round's own lamps a
   moment later, since the round still loads and holds on its grid.

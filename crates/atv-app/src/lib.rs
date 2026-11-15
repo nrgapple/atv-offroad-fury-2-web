@@ -2216,7 +2216,6 @@ impl App {
         let mut ended = None;
         let mut quick_start = None;
         let mut quick_leave = None;
-        let mut quick_reload = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
             // paused presence pose; the online pause menu and blur keep
@@ -2412,17 +2411,10 @@ impl App {
                 }
                 quick_start = start;
                 quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
-                quick_reload = qp.reload.take();
                 if let Some(sound) = &mut riding.sound {
                     for name in qp.sounds.drain(..) {
                         sound.one_shot(name);
                     }
-                }
-                // The room moved to a race or game round's course: that
-                // round's start loads it once, as the race or game.
-                if let Some(environment) = course.take_if(|e| qp.defers(e)) {
-                    net.defer_course(&environment);
-                    qp.pending = Some(environment);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     // Between rounds the podium and the vote replace the
@@ -2516,7 +2508,7 @@ impl App {
             self.quick_play_start(start);
             return;
         }
-        if let Some(environment) = course.or(quick_reload) {
+        if let Some(environment) = course {
             self.room_race = None;
             self.room_freestyle = None;
             self.reload_room(environment, None);
@@ -4450,6 +4442,8 @@ impl App {
                     return;
                 };
                 let mut settings = atv_ui::settings::Settings::load();
+                // A verified rider's block is also the identity block.
+                let mut identity = None;
                 let notice = match event {
                     Event::Mute(_) => Some(if net.chat.toggle_mute(peer) {
                         "Muted."
@@ -4457,11 +4451,10 @@ impl App {
                         "Unmuted."
                     }),
                     Event::Block(_) => net.rider_name(peer).map(|name| {
-                        if net.chat.toggle_block(&mut settings, &name, None) {
-                            "Blocked."
-                        } else {
-                            "Unblocked."
-                        }
+                        let id = net.chat.id(peer).map(str::to_string);
+                        let on = net.chat.toggle_block(&mut settings, &name, id.as_deref());
+                        identity = id.map(|id| (id, on));
+                        if on { "Blocked." } else { "Unblocked." }
                     }),
                     Event::MuteAll => {
                         let on = !net.chat.mute_all;
@@ -4488,6 +4481,9 @@ impl App {
                     && let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut())
                 {
                     menu.notice = Some(notice.into());
+                }
+                if let Some((id, on)) = identity {
+                    self.online_block(&id, on);
                 }
             }
             // Play Race (room host): every room rider races this course
@@ -5891,6 +5887,17 @@ impl ApplicationHandler<Message> for App {
         self.window = Some(window.clone());
         #[cfg(target_arch = "wasm32")]
         context::watch(&window, self.proxy.clone());
+        // Online identity (research/ONLINE_IDENTITY.md) also serves a ride
+        // opened from a room link, which has no menus.
+        {
+            let site = options.site.clone().unwrap_or_else(default_site);
+            let server = options
+                .server
+                .clone()
+                .unwrap_or_else(|| server_for(&site, None));
+            self.online.endpoints = Some((site, server));
+            self.online.name = options.room.as_ref().map(|r| r.name.clone());
+        }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
                 site: options.site.clone().unwrap_or_else(default_site),
@@ -10809,9 +10816,6 @@ impl App {
         tag: bool,
         race: Option<atv_game::ride::race::Settings>,
     ) {
-        if let Some(qp) = &mut self.quick_play {
-            qp.pending = None;
-        }
         let room_game = self.room_game_scene.take();
         let game_scene = if tag {
             self.tag_course(&environment)
@@ -11226,7 +11230,13 @@ pub fn start() {
     let direct = param("venue").or_else(|| direct_room.then(|| "env01".to_string()));
     let venue = direct
         .clone()
-        .filter(|id| atv_game::launch::environments().contains(id))
+        .filter(|id| {
+            if direct_room {
+                atv_game::launch::environments().contains(id)
+            } else {
+                atv_game::launch::course_resource(id, false).is_ok()
+            }
+        })
         .unwrap_or_else(|| "env01".into());
     run(Options {
         front: direct.is_none().then(|| FrontStart {

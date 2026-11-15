@@ -617,6 +617,10 @@ impl FollowCamera {
             self.reset();
         }
     }
+    /// A placed vehicle can wreck during settling, before its first camera tick.
+    pub fn has_wreck_seed(&self) -> bool {
+        self.wreck_seed.is_some()
+    }
     pub fn wreck_camera(&self, actors: [WreckActor; 2]) -> Result<WreckCamera> {
         let (frame, angles) = self
             .wreck_seed

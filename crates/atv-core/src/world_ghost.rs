@@ -419,6 +419,59 @@ pub struct Kept {
     pub kept: bool,
 }
 
+/// A friend ghost upload (`POST /api/ghosts/<board>/friends`;
+/// research/GHOST_CHALLENGES.md "Friend ghosts"): the rider's player id,
+/// from which the Worker derives the tag friends find it by.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FriendUpload<'a> {
+    pub rider: &'a str,
+    pub name: &'a str,
+    /// The ghost's bytes, base64.
+    pub ghost: &'a str,
+}
+
+/// One friend's ghost on a board (`GET /api/ghosts/<board>/friends`).
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FriendGhost {
+    /// The friend's ghost tag (the game server's friend list carries it).
+    pub tag: String,
+    pub name: String,
+    pub value: i64,
+    pub vehicle: u16,
+}
+
+/// `GET /api/ghosts/<board>/friends?tags=…`'s answer, quickest first.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct FriendGhosts {
+    pub board: String,
+    pub ghosts: Vec<FriendGhost>,
+}
+
+/// Friend ghosts are kept per course, on its Normal lap board: Lap Attack
+/// has no CPUs, so its difficulty changes nothing (the personal best ghost
+/// is per course too).
+pub fn friend_board(course: &str) -> String {
+    crate::world_board::lap_board(course, false)
+}
+
+/// Most tags a friend ghost list asks for (the friend cap).
+pub const MAX_FRIEND_TAGS: usize = 100;
+
+/// The list of these friends' ghosts on `board`.
+pub fn friend_list_path(board: &str, tags: &[&str]) -> String {
+    format!(
+        "/api/ghosts/{board}/friends?tags={}",
+        tags[..tags.len().min(MAX_FRIEND_TAGS)].join(",")
+    )
+}
+
+/// One friend's ghost of `value` ms.
+pub fn friend_download_path(board: &str, tag: &str, value: i64) -> String {
+    format!("/api/ghosts/{board}/friends/{tag}/{value}")
+}
+
 /// `GET /api/ghosts/<board>/<name>/<ms>`'s answer.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(default)]
@@ -686,5 +739,40 @@ mod tests {
             download_path("lap:nat01:n", "A B.C!", 61_017),
             "/api/ghosts/lap:nat01:n/A%20B.C!/61017"
         );
+    }
+
+    #[test]
+    fn friend_ghost_paths_and_answers() {
+        assert_eq!(friend_board("nat01"), "lap:nat01:n");
+        let tags = ["a".repeat(32), "b".repeat(32)];
+        let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+        assert_eq!(
+            friend_list_path("lap:nat01:n", &tags),
+            format!(
+                "/api/ghosts/lap:nat01:n/friends?tags={},{}",
+                tags[0], tags[1]
+            )
+        );
+        let many = vec!["c"; MAX_FRIEND_TAGS + 5];
+        assert_eq!(
+            friend_list_path("b", &many).matches('c').count(),
+            MAX_FRIEND_TAGS
+        );
+        assert_eq!(
+            friend_download_path("lap:nat01:n", "ab", 61_000),
+            "/api/ghosts/lap:nat01:n/friends/ab/61000"
+        );
+        let answer: FriendGhosts = serde_json::from_str(
+            r#"{"board":"lap:nat01:n","ghosts":[{"tag":"ab","name":"BOB","value":59000,"vehicle":3}]}"#,
+        )
+        .unwrap();
+        assert_eq!(answer.ghosts[0].value, 59_000);
+        let body = serde_json::to_string(&FriendUpload {
+            rider: "00",
+            name: "ADA",
+            ghost: "AA==",
+        })
+        .unwrap();
+        assert_eq!(body, r#"{"rider":"00","name":"ADA","ghost":"AA=="}"#);
     }
 }

@@ -180,6 +180,8 @@ struct Saved {
 struct Socket {
     pid: String,
     room: atv_net::RoomCode,
+    /// The room slot, once the socket is seated ([`Players::seat`]).
+    peer: Option<u8>,
 }
 
 struct State {
@@ -518,9 +520,54 @@ impl Players {
             Socket {
                 pid: pid.to_string(),
                 room,
+                peer: None,
             },
         );
         s.touch(pid, now);
+    }
+
+    /// The room slot a verified socket holds, for [`Players::room_riders`].
+    pub fn seat(&self, conn: ConnId, peer: u8) {
+        if let Some(socket) = self.lock().sockets.get_mut(&conn) {
+            socket.peer = Some(peer);
+        }
+    }
+
+    /// The verified riders in a room the rider is in, by slot: the
+    /// rider's reference for each and whether the rider blocked them
+    /// (research/QUICK_CHAT.md "Block"), so quick chat keys mute and block
+    /// on the reference rather than the shown name. 404 unless one of the
+    /// rider's own verified sockets is in `room`.
+    pub fn room_riders(
+        &self,
+        pid: &str,
+        room: atv_net::RoomCode,
+        now: u64,
+    ) -> Result<Value, Refusal> {
+        let mut s = self.lock();
+        if !s.sockets.values().any(|o| o.pid == pid && o.room == room) {
+            return Err((404, "Not in that room"));
+        }
+        s.touch(pid, now);
+        let mut riders: Vec<(u8, Value)> = s
+            .sockets
+            .values()
+            .filter(|o| o.room == room && o.pid != pid)
+            .filter_map(|o| {
+                let blocked = s.riders.get(pid)?.blocked.contains(&o.pid);
+                Some((
+                    o.peer?,
+                    json!({
+                        "slot": o.peer?,
+                        "id": codes::reference(&s.key, pid, &o.pid),
+                        "blocked": blocked,
+                    }),
+                ))
+            })
+            .collect();
+        riders.sort_by_key(|r| r.0);
+        riders.dedup_by_key(|r| r.0);
+        Ok(json!({"riders": riders.into_iter().map(|r| r.1).collect::<Vec<_>>()}))
     }
 
     pub fn disconnected(&self, conn: ConnId, now: u64) {
@@ -625,6 +672,8 @@ impl Players {
                 row["name"] = r.name.clone().into();
                 row["online"] = online.into();
                 row["room"] = room.unwrap_or(Value::Null);
+                // Friend ghosts (research/GHOST_CHALLENGES.md).
+                row["ghost"] = codes::ghost_tag(f).into();
                 Some((online, r.name.to_lowercase(), row))
             })
             .collect();

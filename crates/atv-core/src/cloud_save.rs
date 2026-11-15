@@ -8,6 +8,7 @@
 //! share code (`SHARE-…`) names a server snapshot that others copy from.
 use crate::championship::{Championships, Progress};
 use crate::hall_of_fame::{CourseFame, Entry, FreestyleFame, FreestyleRecord, HallOfFame};
+use crate::medals::{MedalBook, WeekResult};
 use crate::profile::{CourseRecord, DEFAULT_NAME, Profile, ProfileBook};
 use crate::store::Unlocks;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,10 @@ pub const KEY_PREFIX: &str = "FURY";
 pub const SHARE_PREFIX: &str = "SHARE";
 /// The payload version this build writes.
 pub const VERSION: u32 = 1;
+/// The version of the save's `medals` block. The block is an addition to
+/// payload [`VERSION`] 1 that older builds ignore, so it has its own
+/// version rather than raising the payload's (which older builds refuse).
+pub const MEDALS_VERSION: u32 = 1;
 /// The server's cap on the serialized save.
 pub const MAX_BYTES: usize = 64 * 1024;
 /// Saves whose JSON is longer travel deflated ([`Save::to_wire`]).
@@ -173,6 +178,95 @@ pub struct Save {
     /// here; older builds keep it out of the merge but never break on it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rider: Option<String>,
+    /// Medals and weekly challenge results (research/GHOST_CHALLENGES.md,
+    /// CLOUD_SAVE.md "Medals"); absent in saves from older builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub medals: Option<Medals>,
+}
+
+/// The rider's medal book as the save carries it: each course's best lap
+/// and each weekly challenge's best time and badge. The personal best
+/// ghosts stay on the device (each is 10 to 45 kB; the save is capped at
+/// 64 KiB), so the book's ghost index does not travel either.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Medals {
+    /// [`MEDALS_VERSION`].
+    pub v: u32,
+    pub laps: BTreeMap<String, u32>,
+    pub weeks: BTreeMap<String, WeekResult>,
+}
+
+impl Default for Medals {
+    fn default() -> Self {
+        Self {
+            v: MEDALS_VERSION,
+            laps: BTreeMap::new(),
+            weeks: BTreeMap::new(),
+        }
+    }
+}
+
+impl Medals {
+    /// The book's travelling part, when it holds anything.
+    pub fn of(book: &MedalBook) -> Option<Self> {
+        (!book.laps.is_empty() || !book.weeks.is_empty()).then(|| Self {
+            v: MEDALS_VERSION,
+            laps: book.laps.clone(),
+            weeks: book.weeks.clone(),
+        })
+    }
+
+    /// Puts the laps and weeks into `book`, keeping its ghost index. False
+    /// (and `book` untouched) for a newer block than this build reads.
+    pub fn apply(&self, book: &mut MedalBook) -> bool {
+        if self.v > MEDALS_VERSION {
+            return false;
+        }
+        book.laps.clone_from(&self.laps);
+        book.weeks.clone_from(&self.weeks);
+        true
+    }
+
+    fn is_empty(&self) -> bool {
+        self.laps.is_empty() && self.weeks.is_empty()
+    }
+}
+
+/// Best wins, both ways (so merging twice changes nothing): each course's
+/// quicker lap, each week's quicker time with the badge it earned (both
+/// sides' better badge on a tie; a quicker time without a badge yet drops
+/// the slower time's badge, and the final board gives it its own). A block
+/// newer than this build's is kept as it is.
+fn merge_medals(local: Option<&Medals>, remote: Option<&Medals>) -> Option<Medals> {
+    let (local, remote) = match (local, remote) {
+        (None, None) => return None,
+        (Some(one), None) | (None, Some(one)) => return Some(one.clone()),
+        (Some(l), Some(r)) => (l, r),
+    };
+    if remote.v > MEDALS_VERSION || local.v > MEDALS_VERSION {
+        return Some(if remote.v >= local.v { remote } else { local }.clone());
+    }
+    let mut merged = local.clone();
+    for (course, ms) in &remote.laps {
+        let best = merged.laps.entry(course.clone()).or_insert(*ms);
+        *best = (*best).min(*ms);
+    }
+    for (week, theirs) in &remote.weeks {
+        let entry = merged.weeks.entry(week.clone()).or_insert(*theirs);
+        *entry = match entry.value.cmp(&theirs.value) {
+            std::cmp::Ordering::Less => *entry,
+            std::cmp::Ordering::Greater => *theirs,
+            std::cmp::Ordering::Equal => WeekResult {
+                value: entry.value,
+                badge: match (entry.badge, theirs.badge) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                },
+            },
+        };
+    }
+    Some(merged)
 }
 
 impl Default for Save {
@@ -182,6 +276,7 @@ impl Default for Save {
             profiles: ProfileBook::default(),
             hall_of_fame: HallOfFame::default(),
             rider: None,
+            medals: None,
         }
     }
 }
@@ -193,6 +288,7 @@ impl Save {
             profiles,
             hall_of_fame,
             rider: None,
+            medals: None,
         }
     }
 
@@ -259,6 +355,7 @@ impl Save {
     pub fn has_progress(&self) -> bool {
         let book = &self.profiles;
         !hall_is_empty(&self.hall_of_fame)
+            || self.medals.as_ref().is_some_and(|m| !m.is_empty())
             || book.profiles.len() != 1
             || book
                 .profiles
@@ -340,6 +437,7 @@ pub fn merge(local: &Save, remote: &Save, base: Option<&Save>) -> Save {
         // The online save's rider wins, so every device on a key rides as
         // one rider.
         rider: remote.rider.clone().or_else(|| local.rider.clone()),
+        medals: merge_medals(local.medals.as_ref(), remote.medals.as_ref()),
     }
 }
 
@@ -819,6 +917,85 @@ mod tests {
             ..Save::default()
         };
         assert_eq!(empty.has_progress(), Save::default().has_progress());
+    }
+
+    #[test]
+    fn medals_travel_additively_and_the_best_wins() {
+        use crate::medals::Badge;
+        let plain = sample();
+        assert!(!plain.to_json().contains("medals"), "absent until set");
+        let week = |value, badge| WeekResult { value, badge };
+        let mut book = MedalBook::default();
+        book.laps.insert("nat01".into(), 51_000);
+        book.laps.insert("nat02".into(), 70_000);
+        book.weeks
+            .insert("2026-W45".into(), week(300_000, Some(Badge::Top50)));
+        book.weeks
+            .insert("2026-W46".into(), week(290_000, Some(Badge::Top25)));
+        book.ghosts.insert("nat01".into(), 51_000);
+        let mut mine = sample();
+        mine.medals = Medals::of(&book);
+        assert_eq!(Medals::of(&MedalBook::default()), None);
+        // The payload stays version 1: older builds read it and ignore the
+        // block.
+        let text = mine.to_json();
+        assert!(text.starts_with("{\"v\":1,") && text.contains("\"medals\":{\"v\":1,"));
+        assert!(!text.contains("ghosts"), "ghosts stay on the device");
+        let back = Save::parse(&text).unwrap();
+        assert_eq!(back.medals, mine.medals);
+        let mut other = MedalBook::default();
+        other.laps.insert("nat01".into(), 49_000);
+        other.laps.insert("sx01".into(), 40_000);
+        // Quicker but not badged yet; a tie with a better badge; a new week.
+        other.weeks.insert("2026-W45".into(), week(280_000, None));
+        other
+            .weeks
+            .insert("2026-W46".into(), week(290_000, Some(Badge::Top10)));
+        other.weeks.insert("2026-W47".into(), week(310_000, None));
+        let mut online = sample();
+        online.medals = Medals::of(&other);
+        for merged in [
+            merge(&mine, &online, None),
+            merge(&mine, &online, Some(&plain)),
+            merge(&online, &mine, None),
+        ] {
+            let m = merged.medals.unwrap();
+            assert_eq!(m.laps["nat01"], 49_000);
+            assert_eq!(m.laps["nat02"], 70_000);
+            assert_eq!(m.laps["sx01"], 40_000);
+            assert_eq!(m.weeks["2026-W45"], week(280_000, None));
+            assert_eq!(m.weeks["2026-W46"], week(290_000, Some(Badge::Top10)));
+            assert_eq!(m.weeks["2026-W47"], week(310_000, None));
+        }
+        // Idempotent; a side without medals (an older build's save) loses
+        // nothing.
+        let once = merge(&mine, &online, None);
+        assert_eq!(merge(&once, &online, None).medals, once.medals);
+        assert_eq!(merge(&plain, &mine, None).medals, mine.medals);
+        assert_eq!(merge(&mine, &plain, Some(&plain)).medals, mine.medals);
+        // A newer block is kept whole and not applied.
+        let mut newer = sample();
+        newer.medals = Some(Medals {
+            v: MEDALS_VERSION + 1,
+            ..Medals::default()
+        });
+        let kept = merge(&mine, &newer, None).medals.unwrap();
+        assert_eq!(kept.v, MEDALS_VERSION + 1);
+        let mut target = book.clone();
+        assert!(!kept.apply(&mut target));
+        assert_eq!(target, book);
+        // Applying keeps the device's ghost index.
+        let mut device = MedalBook::default();
+        device.ghosts.insert("nat01".into(), 51_000);
+        assert!(once.medals.as_ref().unwrap().apply(&mut device));
+        assert_eq!(device.laps["sx01"], 40_000);
+        assert_eq!(device.ghosts["nat01"], 51_000);
+        // Medals alone are progress worth a key.
+        let medals_only = Save {
+            medals: Medals::of(&book),
+            ..Save::default()
+        };
+        assert!(medals_only.has_progress());
     }
 
     #[test]

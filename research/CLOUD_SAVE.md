@@ -274,6 +274,34 @@ server): the app hands it the time and runs the requests it returns.
 - 413 or 400: that save is not sent again until it changes; the status shows why.
 - An answer for a key the player has since replaced is ignored.
 
+## Medals (issue #666)
+
+- **Payload.** An optional `medals` block: `{"v": 1, "laps": {course: ms},
+  "weeks": {"YYYY-Www": {"value": ms, "badge"?: "top1"|"top10"|"top25"|
+  "top50"|"finished"}}}`, the medal book's best lap per course and each
+  weekly challenge's best time and badge (GHOST_CHALLENGES.md). The payload
+  stays `v: 1`, so older builds still load the save: they ignore the block
+  (and a save they write back lacks it until a newer build pushes again,
+  which merges it back, so nothing is lost). The block has its own version
+  (`MEDALS_VERSION`); a build meets a newer block by keeping it whole in
+  merges and not applying it.
+- **Merge** (both modes; best wins, so merging twice changes nothing): each
+  course's quicker lap; each week's quicker time with the badge it earned. On
+  equal times the better badge wins; a quicker time without a badge yet drops
+  the slower time's badge, and the week's final board gives it its own (the
+  final cuts are kept after the rows are deleted).
+- **Not carried.** The personal best ghosts (10-45 kB each against the
+  64 KiB cap) and the book's ghost index stay on the device; applying a save
+  keeps this device's index. A save without the block leaves this device's
+  medals alone. Share codes copy only a profile and the Hall of Fame, as
+  before, so medals never pass to someone else.
+- **Progress.** Medals alone count as progress, so a first medal makes the
+  Pass Key. Size: about 20 bytes a course and 40 a week (a few kB after a
+  year), well inside the cap.
+- Tests: `cargo test -p atv-core cloud_save` (`medals_travel_additively_and_the_best_wins`)
+  and `atv-ui` cloud (`medals_and_weekly_results_follow_the_pass_key`: two
+  devices on one key, merge, push, pull, ghost index kept).
+
 ## UI
 
 - **Badge**: a dark pill like Back with a status dot (green saved, gold saving

@@ -1,0 +1,17 @@
+{
+  "id": "56-mx-venues-pass-freeride-implementation-acceptance-c8e38203992c4146937b159589023f8c",
+  "timestamp": "2026-11-15T00:21:00.872372+00:00",
+  "recorded_at": "2026-11-15T00:25:17.811809+00:00",
+  "kind": "verification",
+  "title": "56 MX venues pass Freeride implementation acceptance",
+  "summary": "All 56 MX vs. ATV Unleashed venues passed native and browser Freeride acceptance. The implementation appends five map groups to the existing selector while preserving its UI and existing online map IDs. This checkpoint precedes public deployment.",
+  "details": [
+    "Browser acceptance used PR #662 head 0f0fb713 and its matching CI merge a6440637 from Actions run 43656216594. All 56 actual venue IDs passed finite simulation, ground contact, movement, scenery upload and visibility checks: 56 scripted runs plus 56 separate live runs, each 360 steps. Page-error assertions and the registered runner passed.",
+    "Native acceptance separately passed 112 ATV/motorcycle runs across all 56 venues, totaling 40,320 simulation steps. All 112 skies and all 56 package audits passed. These checks establish implementation acceptance, not original-game equivalence.",
+    "Screenshots were inspected from the tested artifact. The host was an Apple M4 Mac using headless Chromium, original graphics, weather off and a 720\u00d7405 touch viewport; the fixed Oceanside coastal view uses 960\u00d7540. These are host captures, not physical-phone results. Sequential warm-asset measurements are not cold-network startup.",
+    "Dense arenas still perform poorly: SX04 measured 63.26 ms of engine CPU per rendered frame and a 101 ms p95 frame interval. Engine CPU is distinct from the narrower render_ms metric. JavaScript heap measurements exclude Wasm linear memory, GPU allocations and total process memory."
+  ],
+  "limitation": "Public deployment, content promotion and upload were not complete at capture. Secondary reflection passes remain omitted in NAT04/NAT05 and SM01\u2013SM03, and twelve missing source collider records are disclosed. Original LOD, weather, contact and multiplayer parity remain unfinished; physical-phone performance is unverified. Some glossy/specular effects, dynamic screens and second-UV behavior remain incomplete.",
+  "image": "/devlog-images/56-mx-venues-pass-freeride-implementation-acceptance-c8e38203992c4146937b159589023f8c.png",
+  "caption": "Oceanside: the source pier, shoreline, buildings and sky in the tested browser artifact. Fixed 960\u00d7540 view on the Apple M4 host; implementation acceptance before public deployment."
+}
