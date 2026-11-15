@@ -50,6 +50,23 @@ async function seating(browser, param, turns) {
   assert.deepEqual(s.split.turns, turns, `${param}: each view's turns`);
   const frames = s.split.touch.frames;
   assert.deepEqual(frames.map(f => f[4]), turns, `${param}: touch views turn with the scene`);
+  assert.deepEqual(s.toolbar.hud.viewTags, [1, 1], `${param}: each player can find the other`);
+  const [x, y, w, h] = frames[0];
+  for (const id of [1, 2]) {
+    const hit = s.toolbar.hits.find(hit => hit.id === id);
+    assert.ok(hit, `${param}: action ${id} exists`);
+    assert.ok(hit.x >= x && hit.y >= y && hit.x + hit.width <= x + w && hit.y + hit.height <= y + h,
+      `${param}: action ${id} belongs to player 1`);
+  }
+  const camera = s.toolbar.hits.find(hit => hit.id === 2);
+  const preset = s.camera.preset;
+  await page.touchscreen.tap(camera.x + camera.width / 2, camera.y + camera.height / 2);
+  s = await until(page, s => s.camera.preset !== preset, 'player 1 camera action', 10000);
+  const pause = s.toolbar.hits.find(hit => hit.id === 1);
+  await page.touchscreen.tap(pause.x + pause.width / 2, pause.y + pause.height / 2);
+  await until(page, s => s.paused, 'player 1 pause action', 10000);
+  await page.keyboard.press('Escape');
+  s = await until(page, s => s.active && !s.paused, 'resume split ride', 10000);
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, points = []) =>
     cdp.send('Input.dispatchTouchEvent', {

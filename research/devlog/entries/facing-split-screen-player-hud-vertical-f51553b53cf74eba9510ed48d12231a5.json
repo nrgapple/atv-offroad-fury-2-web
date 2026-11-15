@@ -1,0 +1,15 @@
+{
+  "id": "facing-split-screen-player-hud-vertical-f51553b53cf74eba9510ed48d12231a5",
+  "timestamp": "2026-11-15T02:02:51.399931+00:00",
+  "recorded_at": "2026-11-15T02:06:20.218647+00:00",
+  "kind": "verification",
+  "title": "Facing split-screen player HUD: vertical",
+  "summary": "The vertical facing layout rotates each player's HUD with its viewport.",
+  "details": [
+    "Companion image for PR #683, merged d48c7ca4ff6e45581f78777e5d7a68ef1b44c2e6, implementation head 23b55ad. Both facing orientations passed the parent's focused artifact test in run 43665193152 (1 passed, 0 failed, 27 seconds).",
+    "Independently inspected vertical capture: one player tag in each view and player 1 toolbar. Automated coverage includes camera/pause taps and simultaneous driving/steering touches; web/native/Android CI passed."
+  ],
+  "limitation": "Authored adaptation, not proof of original-game parity. Host Chromium 844x390 only; physical-phone usability and performance remain unverified. Production deployment verification belongs to the implementation parent.",
+  "image": "/devlog-images/facing-split-screen-player-hud-vertical-f51553b53cf74eba9510ed48d12231a5.png",
+  "caption": "Vertical facing split: host Chromium, 844x390, PR #683 artifact at head 23b55ad; not a physical-phone capture."
+}
