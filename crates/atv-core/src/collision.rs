@@ -48,6 +48,56 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     decode_static(data, 1)
 }
 
+/// Type-1 compound containing indexed type-0 sections. FREE06's twister
+/// stores ten sections with one-based model node identifiers. Other compound
+/// variants remain unsupported; each section is validated by the static reader.
+pub fn decode_compound(data: &[u8]) -> Result<Vec<(usize, CollisionMesh)>> {
+    if data.len() > 128 * 1024 * 1024
+        || u32le(data, 0)? != 1234
+        || slice(data, 4, 4)? != b"col\0"
+        || u32le(data, 8)? != 1
+        || u32le(data, 12)? != 1
+        || u32le(data, 20)? != 0
+    {
+        return Err("unsupported compound COL header".into());
+    }
+    let count = u32le(data, 16)? as usize;
+    if count == 0 || count > 32 {
+        return Err("compound part count out of bounds".into());
+    }
+    let mut at = 24;
+    let mut parts = Vec::new();
+    for _ in 0..count {
+        let node = u32le(data, at)? as usize;
+        if node == 0 || node > 32 {
+            return Err("compound node out of bounds".into());
+        }
+        let start = at + 4;
+        let vertices = u32le(data, start + 52)? as usize;
+        let nodes = u32le(data, start + 56)? as usize;
+        let triangles = u32le(data, start + 60)? as usize;
+        let flags = u32le(data, start + 64)?;
+        if vertices > 65536 || nodes > 32768 || triangles > 32768 || flags > 1 {
+            return Err("compound mesh counts out of bounds".into());
+        }
+        let stride = if flags == 0 { 12 } else { 6 };
+        let normals = u32le(data, start + 68 + vertices * stride)? as usize;
+        if normals > 1 {
+            return Err("invalid compound normals marker".into());
+        }
+        let length = 72 + vertices * stride * (1 + normals) + nodes * 32 + triangles * 22;
+        let mut section = Vec::from(&data[..16]);
+        section[12..16].copy_from_slice(&0u32.to_le_bytes());
+        section.extend_from_slice(slice(data, start, length)?);
+        parts.push((node - 1, decode_col(&section)?));
+        at = start + length;
+    }
+    if at != data.len() {
+        return Err("compound COL extent mismatch".into());
+    }
+    Ok(parts)
+}
+
 /// The extra MX v2 header word is preserved without assigning it unsupported
 /// semantics. Original v1 static meshes also occur on the MX disc.
 pub struct MxCollisionMesh {
@@ -221,6 +271,34 @@ fn decode_static(data: &[u8], version: u32) -> Result<CollisionMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compound_sections_bind_nodes_and_reject_malformed_extents() {
+        let mesh = triangle();
+        let mut data = Vec::from(&mesh[..16]);
+        data[12..16].copy_from_slice(&1u32.to_le_bytes());
+        data.extend(2u32.to_le_bytes());
+        data.extend(0u32.to_le_bytes());
+        for node in [1u32, 3] {
+            data.extend(node.to_le_bytes());
+            data.extend_from_slice(&mesh[16..]);
+        }
+        let parts = decode_compound(&data).unwrap();
+        assert_eq!(parts.iter().map(|p| p.0).collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(parts[1].1.vertices, decode_col(&mesh).unwrap().vertices);
+        for end in 0..data.len() {
+            assert!(decode_compound(&data[..end]).is_err());
+        }
+        let mut bad = data.clone();
+        bad.push(0);
+        assert!(decode_compound(&bad).is_err());
+        bad = data.clone();
+        bad[24..28].copy_from_slice(&0u32.to_le_bytes());
+        assert!(decode_compound(&bad).is_err());
+        bad = data;
+        bad[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode_compound(&bad).is_err());
+    }
+
     #[test]
     fn mx_v2_header_preserves_geometry_metadata_and_v1_rejection() {
         let original = triangle();
