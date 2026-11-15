@@ -3432,6 +3432,15 @@ impl App {
                     overlay.view.height,
                 )
             }));
+            // The votes show the front end's track photos (loaded behind
+            // the title).
+            if let Some(front) = &self.front {
+                for venue in overlay.wanted_photos(hub.as_ref().map(|(view, _)| view)) {
+                    if let Some(photo) = front.borrow().art.photos.get(&venue) {
+                        overlay.add_photo(&gpu.device, &gpu.queue, &venue, photo);
+                    }
+                }
+            }
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,

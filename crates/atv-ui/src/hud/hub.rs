@@ -80,6 +80,8 @@ pub struct Toast {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VoteOption {
     pub name: String,
+    /// The venue's environment id ("env08"), for its photo.
+    pub venue: String,
     pub votes: u8,
     /// This player's choice.
     pub mine: bool,
@@ -152,9 +154,16 @@ fn timer(clock: &str, low: bool) -> El {
 }
 
 /// The hub HUD over the whole view; `top` clears the toolbar. Built from
-/// the race HUD's lettering, the Race Results panel and the race-over
-/// buttons (hud::classic); no cards of its own.
-pub fn element(view: &Viewport, state: &View, top: f32) -> El {
+/// the original front end's pieces (hud::classic): race HUD lettering for
+/// the status line, gold and silver buttons, and silver sheets under a
+/// white title strip for the prompt, the map vote (Select Track's framed
+/// photos) and the results. `photo` finds a venue's photo.
+pub fn element(
+    view: &Viewport,
+    state: &View,
+    top: f32,
+    photo: &dyn Fn(&str) -> Option<classic::Photo>,
+) -> El {
     let width = 340f32.min(view.width - 24.);
     let left = (view.width - width) / 2.;
     let mut root = El::new(Style {
@@ -177,26 +186,28 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
         y += 42.;
     }
     if let Some(offer) = &state.offer {
-        let panel = classic::panel(width)
-            .child(classic::heading(
-                "Race?",
-                Some(classic::hud_text(
-                    offer.seconds.to_string(),
-                    30.,
-                    classic::GOLD,
-                )),
-            ))
-            .child(classic::hud_text(
-                short(&offer.name, 16),
-                20.,
-                classic::CELL,
-            ))
-            .child(classic::buttons(vec![
-                classic::button(ACCEPT, "Accept", true, false),
-                classic::button(DECLINE, "Decline", false, false),
-            ]));
-        root = root.child(El::new(absolute(left, y, width)).child(panel));
-        y += 170.;
+        let sheet = classic::sheet(
+            "Race?",
+            Some(classic::hud_text(
+                offer.seconds.to_string(),
+                30.,
+                classic::GOLD,
+            )),
+            width,
+            vec![
+                classic::text(
+                    short(&offer.name, 18),
+                    classic::ink(20., 800, classic::INK),
+                    24.,
+                ),
+                classic::buttons(vec![
+                    classic::button(ACCEPT, "Accept", true, false),
+                    classic::button(DECLINE, "Decline", false, false),
+                ]),
+            ],
+        );
+        root = root.child(El::new(absolute(left, y, width)).child(sheet));
+        y += 190.;
     } else if let Some(name) = &state.challenge {
         root = root.child(El::new(absolute(left, y, width)).child(classic::button(
             CHALLENGE,
@@ -207,62 +218,68 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
         y += 60.;
     }
     if let Some((options, clock)) = &state.vote {
-        let mut panel =
-            classic::panel(width).child(classic::heading("Next Map", Some(timer(clock, false))));
-        for (i, option) in options.iter().enumerate() {
-            let votes = (option.votes > 0).then(|| {
-                classic::hud_text(
-                    option.votes.to_string(),
-                    22.,
-                    if option.mine {
-                        classic::INK
-                    } else {
-                        classic::GOLD
-                    },
+        let per = options.len().clamp(1, 3);
+        let card_w = classic::card_width(width, per);
+        let cards = options
+            .iter()
+            .enumerate()
+            .map(|(i, option)| {
+                classic::card(
+                    Some(VOTE + i as u32),
+                    &option.name,
+                    "",
+                    option.votes,
+                    option.mine,
+                    false,
+                    photo(&option.venue),
+                    card_w,
                 )
-            });
-            panel = panel.child(classic::course(
-                Some(VOTE + i as u32),
-                &option.name,
-                "",
-                votes,
-                option.mine,
-                false,
-            ));
-        }
-        root = root.child(El::new(absolute(left, y, width)).child(panel));
-        y += 90. + 56. * options.len() as f32;
+            })
+            .collect();
+        let sheet = classic::sheet(
+            "Next Map",
+            Some(timer(clock, false)),
+            width,
+            vec![classic::grid(cards)],
+        );
+        root = root.child(El::new(absolute(left, y, width)).child(sheet));
+        y += 100. + card_w * 0.67 + 40.;
     }
     if let Some(toast) = &state.toast {
         let at = y.max(view.height * 0.3);
         let color = if toast.win {
-            classic::GOLD
+            classic::VALUE
         } else {
-            Color::WHITE
+            Color::hex("#f6f6f6")
         };
         let el = if toast.rows.is_empty() {
             // A one-word answer reads as a race HUD sign.
-            classic::hud_text(&toast.title, 30., color)
+            classic::hud_text(
+                &toast.title,
+                30.,
+                if toast.win {
+                    classic::GOLD
+                } else {
+                    Color::WHITE
+                },
+            )
         } else {
             let lines: Vec<classic::Line> = toast
                 .rows
                 .iter()
                 .map(|(place, name, points)| classic::Line {
-                    cells: vec![
-                        if place.is_empty() {
-                            name.clone()
-                        } else {
-                            format!("{place}. {name}")
-                        },
-                        format!("+{points}"),
-                    ],
+                    cells: vec![name.clone(), format!("+{points}")],
+                    place: place.parse().ok(),
                     me: false,
                     dim: false,
                 })
                 .collect();
-            classic::panel(width)
-                .child(classic::heading_in(&toast.title, color, None))
-                .child(classic::standings(
+            classic::sheet_in(
+                &toast.title,
+                color,
+                None,
+                width,
+                vec![classic::table(
                     &[
                         classic::Column {
                             label: "RIDER",
@@ -274,7 +291,8 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
                         },
                     ],
                     &lines,
-                ))
+                )],
+            )
         };
         root = root.child(El::new(absolute(left, at, width)).child(el));
     }
@@ -342,7 +360,7 @@ mod tests {
     }
 
     fn hits(view: &Viewport, state: &View) -> Vec<(Rect, u32)> {
-        let el = element(view, state, 60.);
+        let el = element(view, state, 60., &|_| None);
         let (mut list, mut hits) = (DisplayList::default(), Vec::new());
         crate::layout::render(
             &el,
@@ -360,6 +378,7 @@ mod tests {
     fn buttons_are_touch_sized_and_fit_a_portrait_phone() {
         let vote = VoteOption {
             name: "Prospect Springs Long Name".into(),
+            venue: "env08".into(),
             votes: 2,
             mine: false,
         };

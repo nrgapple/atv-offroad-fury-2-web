@@ -23,6 +23,7 @@ use atv_ui::{
     taffy,
     touch::{Controls, Feedback, TouchControls},
 };
+use std::collections::HashMap;
 
 /// Toolbar actions the ride applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,6 +255,8 @@ pub struct Overlay {
     pub room_race_pending: bool,
     /// The Quick Play panel over a server-run room (research/QUICK_PLAY.md).
     pub quickplay: Option<atv_ui::hud::quickplay::View>,
+    /// Track photos for the vote cards and the hub's Next Map, by venue.
+    photos: HashMap<String, atv_ui::hud::classic::Photo>,
     /// Between Quick Play rounds: the round's own results panel stays
     /// hidden under the vote and podium.
     pub quickplay_hides_results: bool,
@@ -384,6 +387,7 @@ impl Overlay {
             game: false,
             room_race_pending: false,
             quickplay: None,
+            photos: HashMap::new(),
             quickplay_hides_results: false,
             race_entry: None,
             medal_shown: None,
@@ -530,6 +534,8 @@ impl Overlay {
         self.help_cache = None;
         self.results_cache = None;
         self.glyphs.clear();
+        // Track photos return at the next vote.
+        self.photos.clear();
         self.jukebox_art = None;
         self.jukebox_art_wanted = self.jukebox_open();
         if let Some(meter) = &mut self.meter {
@@ -1750,7 +1756,7 @@ impl Overlay {
             let mut list = DisplayList::default();
             let mut hits = Vec::new();
             layout::render(
-                &atv_ui::hud::hub::element(&view, hub, top),
+                &atv_ui::hud::hub::element(&view, hub, top, &|v| self.photos.get(v).copied()),
                 &mut self.fonts,
                 view.width,
                 view.height,
@@ -1965,7 +1971,8 @@ impl Overlay {
         let view = self.view;
         let mut bottom = 0f32;
         if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
-            && let Some(element) = atv_ui::hud::quickplay::element(&view, state)
+            && let Some(element) =
+                atv_ui::hud::quickplay::element(&view, state, &|v| self.photos.get(v).copied())
         {
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             layout::render(
@@ -1990,6 +1997,45 @@ impl Overlay {
             self.hits.extend_from_slice(&hits);
         }
         bottom
+    }
+
+    /// Venues whose photo a vote shows (Quick Play's cards, the hub's
+    /// Next Map) and the overlay has not registered yet.
+    pub fn wanted_photos(&self, hub: Option<&atv_ui::hud::hub::View>) -> Vec<String> {
+        let cards = self
+            .quickplay
+            .iter()
+            .flat_map(|q| q.cards.iter().chain(&q.picked));
+        let options = hub
+            .and_then(|h| h.vote.as_ref())
+            .into_iter()
+            .flat_map(|(options, _)| options.iter().map(|o| &o.venue));
+        cards
+            .map(|c| &c.venue)
+            .chain(options)
+            .filter(|v| !v.is_empty() && !self.photos.contains_key(*v))
+            .cloned()
+            .collect()
+    }
+
+    /// Registers a venue's track photo for the votes.
+    pub fn add_photo(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        venue: &str,
+        photo: &atv_ui::front::pixels::Rgba,
+    ) {
+        let image = self
+            .renderer
+            .add_image(device, queue, photo.width, photo.height, &photo.data);
+        self.photos.insert(
+            venue.into(),
+            atv_ui::hud::classic::Photo {
+                image,
+                size: [photo.width as f32, photo.height as f32],
+            },
+        );
     }
 
     /// A portrait phone: the Quick Play panel's narrow layout.

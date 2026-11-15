@@ -600,6 +600,9 @@ impl Hub {
                     .enumerate()
                     .map(|(i, (map, votes))| VoteOption {
                         name: venue(*map),
+                        venue: atv_game::multiplayer::map_environment(*map)
+                            .unwrap_or_default()
+                            .into(),
                         votes: *votes,
                         mine: self.voted == Some(i as u8),
                     })

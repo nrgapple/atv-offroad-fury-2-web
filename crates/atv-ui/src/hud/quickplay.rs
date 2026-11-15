@@ -10,6 +10,7 @@ use super::{Viewport, classic};
 use crate::{
     color::Color,
     layout::{El, Paint, sides},
+    text::{Font, TextStyle},
 };
 use taffy::prelude::*;
 
@@ -58,6 +59,9 @@ pub struct CardView {
     /// The mode word ("Race", "Hills", "Treasure", "Stunts", "Random").
     pub mode: String,
     pub track: String,
+    /// The venue's environment id ("nat01"), for its photo; empty for
+    /// Random.
+    pub venue: String,
     pub votes: u8,
     /// This rider's choice.
     pub chosen: bool,
@@ -185,70 +189,85 @@ fn short(name: &str, max: usize) -> String {
     out
 }
 
-/// The seats as Race Results rows: the rider, a HOST or CPU mark, the
-/// ping and a tick once ready (or voted); open seats dimmed.
-fn seats(view: &View) -> El {
-    let tick = if view.phase == Phase::Vote {
-        "VOTED"
-    } else {
-        "READY"
-    };
-    let mut lines: Vec<classic::Line> = view
+/// The seats as MultiATVRiderSelect's player plates, in the player colours
+/// by seat (repeating past four): the name, a HOST or CPU marker, ping bars
+/// and a tick once ready (or voted); open seats are plain silver.
+fn seats(view: &View, width: f32) -> El {
+    let per = if view.narrow { 2 } else { 4 };
+    let plate_w = classic::card_width(width, per);
+    let plates = view
         .seats
         .iter()
-        .map(|s| classic::Line {
-            cells: vec![
-                s.name.clone(),
-                if s.host {
-                    "HOST".into()
-                } else if s.cpu {
-                    "CPU".into()
-                } else {
-                    String::new()
-                },
-                s.ping.map_or("-".into(), |p| p.to_string()),
-                if s.ready || s.voted { "✓" } else { "" }.into(),
-            ],
-            me: s.me,
-            dim: false,
+        .enumerate()
+        .map(|(i, s)| {
+            let marker = if s.host {
+                Some("HOST")
+            } else if s.cpu {
+                Some("CPU")
+            } else {
+                None
+            };
+            classic::plate(
+                i,
+                &s.name,
+                marker,
+                s.ping,
+                s.ready || s.voted,
+                s.me,
+                false,
+                plate_w,
+            )
         })
+        .chain((0..view.open).map(|i| {
+            classic::plate(
+                view.seats.len() + i,
+                "",
+                None,
+                None,
+                false,
+                false,
+                true,
+                plate_w,
+            )
+        }))
         .collect();
-    lines.extend((0..view.open).map(|_| classic::Line {
-        cells: vec!["Open".into()],
-        me: false,
-        dim: true,
-    }));
-    let column = |label, right| classic::Column { label, right };
-    classic::standings(
-        &[
-            column("RIDER", false),
-            column("", false),
-            column("PING", true),
-            column(tick, true),
-        ],
-        &lines,
+    classic::grid(plates)
+}
+
+/// A vote card as Select Track shows a track: its photo in the gold frame,
+/// the votes in gold, the track and its mode.
+fn card(
+    id: Option<u32>,
+    card: &CardView,
+    focused: bool,
+    width: f32,
+    photo: &dyn Fn(&str) -> Option<classic::Photo>,
+) -> El {
+    let kind = if card.venue.is_empty() {
+        ""
+    } else {
+        &card.mode
+    };
+    let name = if card.venue.is_empty() {
+        card.mode.as_str()
+    } else {
+        card.track.as_str()
+    };
+    classic::card(
+        id,
+        name,
+        kind,
+        card.votes,
+        card.chosen,
+        focused,
+        photo(&card.venue),
+        width,
     )
 }
 
-/// A vote card as a Select Track entry: the track, its mode in small gold
-/// capitals and the votes in the HUD gold.
-fn card(id: Option<u32>, card: &CardView, focused: bool) -> El {
-    let votes = (card.votes > 0).then(|| {
-        classic::hud_text(
-            card.votes.to_string(),
-            22.,
-            if card.chosen {
-                classic::INK
-            } else {
-                classic::GOLD
-            },
-        )
-    });
-    classic::course(id, &card.track, &card.mode, votes, card.chosen, focused)
-}
-
-/// The round's standings: place and rider, the time or points, and the
-/// league points earned (Race Results' Profile Points column) when any are.
+/// The round's standings on the silver sheet: place (gold, silver and
+/// bronze for the podium), rider, the time or points, and the league points
+/// earned when any are; the player's row on the gold pill.
 fn standings(view: &View) -> El {
     let league = view.rows.iter().any(|r| r.points.is_some());
     let lines: Vec<classic::Line> = view
@@ -256,12 +275,13 @@ fn standings(view: &View) -> El {
         .iter()
         .enumerate()
         .map(|(i, r)| {
-            let mut cells = vec![format!("{}. {}", i + 1, r.name), r.value.clone()];
+            let mut cells = vec![r.name.clone(), r.value.clone()];
             if league {
                 cells.push(r.points.clone().unwrap_or_else(|| "-".into()));
             }
             classic::Line {
                 cells,
+                place: Some(i + 1),
                 me: r.me,
                 dim: r.dnf,
             }
@@ -287,19 +307,20 @@ fn standings(view: &View) -> El {
             right: true,
         });
     }
-    classic::standings(&columns, &lines)
+    classic::table(&columns, &lines)
 }
 
-/// Level n in the HUD gold, its bar filling (the menu sliders' track), the
-/// XP gained and the league tier in small gold capitals.
+/// Level n, its bar filling (the menu sliders' track), the XP gained and
+/// the league tier in small dark-gold capitals, lettered dark on the silver.
 fn level_strip(level: &LevelView, width: f32) -> El {
-    let bar = 150f32.min(width - 200.).max(60.);
+    let bar = 150f32.min(width - 220.).max(60.);
     let pulse = 1. + 0.25 * (level.beat * std::f32::consts::PI).sin().max(0.);
     let tier = format!("{}{}", level.tier, if level.tier_up { " ▲" } else { "" });
     El::new(Style {
         display: Display::Flex,
         flex_wrap: FlexWrap::Wrap,
         align_items: AlignItems::CENTER,
+        justify_content: JustifyContent::CENTER,
         gap: Size {
             width: length(10.),
             height: length(4.),
@@ -307,29 +328,22 @@ fn level_strip(level: &LevelView, width: f32) -> El {
         padding: sides(2., 6., 2., 6.),
         ..Default::default()
     })
-    .child(classic::hud_text(
+    .child(classic::text(
         format!("Lv {}", level.level),
-        22. * pulse,
-        if level.level_up {
-            classic::PLAYER
-        } else {
-            classic::GOLD
-        },
+        TextStyle::new(Font::display(22. * pulse, 800, true), classic::INK),
+        24. * pulse,
     ))
     .child(classic::meter(level.fill, bar))
-    .child(classic::hud_text(&level.gain, 17., classic::SILVER))
-    .child(classic::caps(
-        tier,
-        if level.tier_up {
-            classic::PLAYER
-        } else {
-            Color::hex("#e3c74a")
-        },
+    .child(classic::text(
+        &level.gain,
+        classic::ink(16., 800, classic::BODY),
+        18.,
     ))
+    .child(classic::caps(tier, classic::DARK_GOLD))
     .children(
         level
             .level_up
-            .then(|| classic::hud_text("LEVEL UP!", 20. * pulse, classic::PLAYER)),
+            .then(|| classic::hud_text("LEVEL UP!", 20. * pulse, classic::VALUE)),
     )
 }
 
@@ -375,9 +389,15 @@ fn confetti(viewport: &Viewport, t: f32) -> El {
 }
 
 /// The panel, or None when nothing shows (a round in play). Built from the
-/// Race Results panel, its standings and race-over buttons, Select Track
-/// entries and the race HUD lettering (hud::classic).
-pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
+/// original front end's pieces (hud::classic): a silver sheet under a white
+/// title strip with the phase's clock in race HUD lettering, the player
+/// plates, Select Track's framed photos, the Hall of Fame style table and
+/// the gold and silver buttons. `photo` finds a venue's photo.
+pub fn element(
+    viewport: &Viewport,
+    view: &View,
+    photo: &dyn Fn(&str) -> Option<classic::Photo>,
+) -> Option<El> {
     let focused = |id: u32| view.focus_visible && buttons(view).get(view.focus) == Some(&id);
     let button =
         |id: u32, label: &str, primary: bool| classic::button(id, label, primary, focused(id));
@@ -389,8 +409,8 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
     } else {
         56f32.max(viewport.safe[0] + 52.)
     };
-    let panel =
-        |title: &str| classic::panel(width).child(classic::heading(title, timer(view.seconds)));
+    let sheet =
+        |title: &str, body: Vec<El>| classic::sheet(title, timer(view.seconds), width, body);
     let content = match view.phase {
         Phase::Play => {
             if !view.spectating {
@@ -433,33 +453,49 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
                 };
                 vec![button(READY, label, !view.ready)]
             };
-            panel(&format!("{} {title}", view.playlist))
-                .child(seats(view))
-                .child(classic::buttons(buttons))
+            sheet(
+                &format!("{} {title}", view.playlist),
+                vec![seats(view, width), classic::buttons(buttons)],
+            )
         }
         Phase::Vote => {
-            let mut el = panel("Vote").children(view.cards.iter().enumerate().map(|(i, c)| {
-                let id = CARD + i as u32;
-                card(Some(id), c, focused(id))
-            }));
+            let per = if view.narrow { 2 } else { 4 };
+            let card_w = classic::card_width(width, per);
+            let cards = view
+                .cards
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let id = CARD + i as u32;
+                    card(Some(id), c, focused(id), card_w, photo)
+                })
+                .collect();
+            let mut body = vec![classic::grid(cards)];
             // A phone shows who voted on the cards' counts alone.
             if !view.narrow {
-                el = el.child(seats(view));
+                body.push(seats(view, width));
             }
             if view.host {
-                el = el.child(classic::buttons(vec![button(SKIP, "Skip ▸", false)]));
+                body.push(classic::buttons(vec![button(SKIP, "Skip ▸", false)]));
             }
-            el
+            sheet("Vote", body)
         }
         Phase::Countdown => {
-            panel("Next").children(view.picked.as_ref().map(|p| card(None, p, false)))
+            let card_w = classic::card_width(width, 1).min(300.);
+            sheet(
+                "Next",
+                view.picked
+                    .iter()
+                    .map(|p| classic::grid(vec![card(None, p, false, card_w, photo)]))
+                    .collect(),
+            )
         }
-        Phase::Results => panel("Results")
-            .child(standings(view))
-            .children(view.level.as_ref().map(|l| level_strip(l, width)))
-            .child(classic::buttons(vec![
-                // A choice made shows: ticked, on the gold pill with the
-                // course list's ring (the podium also ends on its timer).
+        Phase::Results => {
+            let mut body = vec![standings(view)];
+            body.extend(view.level.as_ref().map(|l| level_strip(l, width)));
+            body.push(classic::buttons(vec![
+                // A choice made shows: ticked, with the course list's ring
+                // (the podium also ends on its timer).
                 classic::chosen(
                     button(
                         REMATCH,
@@ -476,7 +512,9 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
                     ),
                     view.leaving,
                 ),
-            ])),
+            ]));
+            sheet("Results", body)
+        }
     };
     let mut placed = content;
     placed.style.position = Position::Absolute;
@@ -623,6 +661,7 @@ mod tests {
                 .map(|m| CardView {
                     mode: m.to_string(),
                     track: "Prospect Springs".into(),
+                    venue: if *m == "Random" { "" } else { "nat01" }.into(),
                     votes: 1,
                     chosen: *m == "Hills",
                 })
@@ -656,7 +695,7 @@ mod tests {
         let view = viewport(360., 740.);
         for phase in [Phase::Lobby, Phase::Vote, Phase::Countdown, Phase::Results] {
             let state = sample(phase);
-            let el = element(&view, &state).unwrap();
+            let el = element(&view, &state, &|_| None).unwrap();
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             let mut fonts = Fonts::new();
             crate::layout::render(
@@ -686,7 +725,7 @@ mod tests {
                     watching: Some("Mud Hawk".into()),
                     ..sample(phase)
                 };
-                let el = element(&view, &state).unwrap();
+                let el = element(&view, &state, &|_| None).unwrap();
                 let (mut list, mut hits) = (DisplayList::default(), Vec::new());
                 let mut fonts = Fonts::new();
                 crate::layout::render(
@@ -724,12 +763,12 @@ mod tests {
             Some(&SKIP)
         );
         // Nothing shows while a round runs, unless spectating.
-        assert!(element(&view, &sample(Phase::Play)).is_none());
+        assert!(element(&view, &sample(Phase::Play), &|_| None).is_none());
         let watching = View {
             spectating: true,
             ..sample(Phase::Play)
         };
-        assert!(element(&view, &watching).is_some());
+        assert!(element(&view, &watching, &|_| None).is_some());
     }
 
     /// Rematch shows the rider's choice once pressed.
@@ -737,7 +776,7 @@ mod tests {
     fn the_rematch_choice_shows() {
         let view = viewport(360., 740.);
         let labels = |state: &View| {
-            let el = element(&view, state).unwrap();
+            let el = element(&view, state, &|_| None).unwrap();
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             crate::layout::render(
                 &el,

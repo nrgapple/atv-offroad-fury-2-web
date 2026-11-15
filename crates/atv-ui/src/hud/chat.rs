@@ -2,12 +2,11 @@
 //! senders' riders, a short feed, horn rings and the pick wheel. Authored
 //! port presentation; the PS2 game had no chat of this kind. Bubbles and
 //! the feed are lettered like the name tags; the wheel's targets are the
-//! race-over buttons (research/UI_AUDIT_HUD.md).
+//! front end's silver plates and gold pill (research/UI_AUDIT_HUD.md).
 use super::{Viewport, classic, peers};
 use crate::{
     color::Color,
-    menu::gold_pill,
-    paint::{BoxPaint, BoxShadow, DisplayList, Item, Rect},
+    paint::{BoxPaint, DisplayList, Item, Rect},
     text::{Font, Fonts, Join, Shape, Stroke, TextStyle},
 };
 
@@ -258,7 +257,7 @@ pub fn paint_feed(
             Font::display(15., 800, true),
             match f.slot {
                 Some(slot) => peers::color(slot),
-                None => classic::PLAYER,
+                None => classic::VALUE,
             },
         )
         .stroke(2., Color::BLACK, Join::Round);
@@ -331,8 +330,8 @@ pub fn paint_wheel(
     hovered: Option<u32>,
 ) {
     let full = Rect::new(0., 0., view.width, view.height);
-    // The pause menu's darkening behind the targets.
-    list.rect(full, Color::hex("#00000073"));
+    // A light dim only: the ride stays in view.
+    list.rect(full, Color::hex("#00000026"));
     hits.push((full, CLOSE_HIT));
     for (index, (rect, id)) in wheel_targets(view, emotes).into_iter().enumerate() {
         let ready = match id {
@@ -344,26 +343,20 @@ pub fn paint_wheel(
         let lit = focus == Some(index) || hovered == Some(id);
         let (x, y) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
         list.opacity(if ready { 1. } else { 0.4 });
-        // Race Results' Show Results button; the menu's gold pill when lit.
+        // The front end's silver plate; the glossy gold pill when lit.
+        let paint = if lit {
+            classic::gold_paint(5.)
+        } else {
+            classic::silver_paint(5.)
+        };
         list.push(Item::Box(BoxPaint {
             rect,
             radii: [5.; 4],
-            fill: Some(if lit {
-                gold_pill()
-            } else {
-                Color::hex("#0c0c0cdb").into()
-            }),
-            shadows: if lit {
-                vec![
-                    BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")),
-                    BoxShadow::outer(0., 2., 0., Color::hex("#0009")),
-                ]
-            } else {
-                vec![BoxShadow::outer(0., 4., 0., Color::hex("#0009"))]
-            },
+            fill: paint.fill,
+            shadows: paint.shadows,
             ..Default::default()
         }));
-        let ink = if lit { classic::INK } else { Color::WHITE };
+        let ink = classic::INK;
         match id {
             HORN_HIT => icon(list, HORN_ICON, ink, x, y, 26.),
             // The other page's look: a face for emotes, a bubble for lines.
