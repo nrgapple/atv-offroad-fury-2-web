@@ -932,7 +932,7 @@ fn a_rider_watching_a_loop_round_is_never_relayed_to_the_racers() {
     };
     grid.race.laps = 1;
     grid.race.grid = [1, 2, 0, 0];
-    f.send(1, &Packet::Game(grid));
+    f.send(1, &Packet::Game(Box::new(grid)));
     f.now += 50;
     f.tick();
     assert_eq!(
