@@ -102,13 +102,15 @@ pub fn load(
     gate: Option<usize>,
     enduro: &[EnduroDress],
 ) -> Result<Scenery> {
-    let mut scenery = Scenery::default();
-    scenery.hidden_models = scene
-        .models
-        .iter()
-        .enumerate()
-        .filter_map(|(index, model)| model.hidden.then_some(index))
-        .collect();
+    let mut scenery = Scenery {
+        hidden_models: scene
+            .models
+            .iter()
+            .enumerate()
+            .filter_map(|(index, model)| model.hidden.then_some(index))
+            .collect(),
+        ..Scenery::default()
+    };
     let mut materials = Materials::default();
     let mut geometry: Vec<(String, Vec<usize>, Option<ModelLod>)> = Vec::new();
     for model in &scene.models {
