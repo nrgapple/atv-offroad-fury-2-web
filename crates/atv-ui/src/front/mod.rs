@@ -1502,15 +1502,16 @@ fn hero(m: &Metrics, s: &Screen) -> El {
         style.display = Display::Flex;
         style.align_items = AlignItems::CENTER;
         style.justify_content = JustifyContent::CENTER;
-        photo = photo.child(
-            El::new(style)
-                .paint(
-                    Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                        .radius(5.),
-                )
-                .id(id)
-                .child(arrow(left, 20., Color::WHITE, false)),
-        );
+        // Small gold pills with dark arrows (the original steps courses
+        // from its gold row; nothing dark sits on its photo).
+        let mut button = El::new(style)
+            .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
+            .id(id)
+            .child(arrow(left, 20., Color::hex("#1b1500"), false));
+        if hovered {
+            button = button.child(gold_wash());
+        }
+        photo = photo.child(button);
     }
     let name_size = if m.portrait {
         24.
@@ -1665,8 +1666,14 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     El::new(hero).child(photo).child(caption)
 }
 
+/// `filter: brightness(1.08)` on a hovered gold pill: a faint white wash.
+fn gold_wash() -> El {
+    El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
+        .paint(Paint::fill(Color::hex("#ffffff12")).radius(5.))
+}
+
 /// Single Race's "All courses" button over the photo's foot: a list
-/// glyph and the label, on the arrows' dark glass.
+/// glyph and the label on a small gold pill, as the arrows.
 fn all_courses(hovered: bool) -> El {
     let bar = || {
         El::new(Style {
@@ -1677,7 +1684,7 @@ fn all_courses(hovered: bool) -> El {
             flex_shrink: 0.,
             ..Default::default()
         })
-        .paint(Paint::fill(Color::WHITE).radius(1.))
+        .paint(Paint::fill(Color::hex("#1b1500")).radius(1.))
     };
     let glyph = El::new(column(3.)).child(bar()).child(bar()).child(bar());
     let mut style = absolute(None, None, Some(8.), Some(0.));
@@ -1690,20 +1697,20 @@ fn all_courses(hovered: bool) -> El {
         width: auto(),
         height: length(32.),
     };
-    El::new(style).child(
-        El::new(pill)
-            .paint(
-                Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                    .radius(16.),
-            )
-            .id(COURSES)
-            .child(glyph)
-            .child(text(
-                "ALL COURSES",
-                TextStyle::new(display(13., 800, false), Color::WHITE).spacing(13. * 0.08),
-                16.,
-            )),
-    )
+    pill.position = Position::Relative;
+    let mut button = El::new(pill)
+        .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
+        .id(COURSES)
+        .child(glyph)
+        .child(text(
+            "ALL COURSES",
+            TextStyle::new(display(13., 800, false), Color::hex("#0d0b00")).spacing(13. * 0.08),
+            16.,
+        ));
+    if hovered {
+        button = button.child(gold_wash());
+    }
+    El::new(style).child(button)
 }
 
 /// `.ms-pill`: Ride, Done and Press Start.
@@ -1747,11 +1754,7 @@ fn gold_button(
         size,
     ));
     if hovered {
-        // `filter: brightness(1.08)`: a faint white wash.
-        el = el.child(
-            El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
-                .paint(Paint::fill(Color::hex("#ffffff12")).radius(5.)),
-        );
+        el = el.child(gold_wash());
     }
     el
 }
@@ -2601,14 +2604,15 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         flex_shrink: 0.,
         ..Default::default()
     })
-    .paint(
-        Paint::fill(Color::hex(if rider_selected {
-            "#1b150026"
-        } else {
-            "#0000005c"
-        }))
-        .radius(5.),
-    );
+    .paint(if rider_selected {
+        Paint::fill(Color::hex("#1b150026")).radius(5.)
+    } else {
+        // A gold hairline track on the backdrop, not a dark well.
+        Paint::default().radius(5.).shadow(BoxShadow {
+            spread: 1.,
+            ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e80"))
+        })
+    });
     // Motorcycles carry the MX rider: the switch dims and shows no choice.
     let mx = s.quad_id >= 27;
     for (value, name) in [(0u16, "Male"), (1, "Female")] {
@@ -2701,8 +2705,13 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
             let hovered = s.hovered == Some(VEHICLE + u32::from(id)) && !selected;
             let mut paint = Paint::default().radius(5.);
             if selected {
-                paint.fill = Some(Color::hex("#0000006b").into());
-                paint = paint.shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")));
+                // The current vehicle: a gold edge and hairline, no dark well.
+                paint = paint
+                    .shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")))
+                    .shadow(BoxShadow {
+                        spread: 1.,
+                        ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e80"))
+                    });
             } else if hovered {
                 paint.fill = Some(Color::hex("#ffffff14").into());
             }

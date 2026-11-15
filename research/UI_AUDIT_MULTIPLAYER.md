@@ -36,6 +36,21 @@ The before set is the deployed main build 6ea3dfd5.
 | Host/Join Game name dice | White die on a dark `#0000008c` square | Dark die on a small gold pill (as Ride and Done) |
 | Text fields (Host/Join Game, Profile Name entry, Add Code, Enter Pass Key, Enter Cheats, waypoint course name) | Dark translucent `#0000008c` box, 8px corners, white text, gold hairline when focused | The stage's silver well with dark ink; the field being typed in takes the gold pill with the focused white ring. The web build's real input takes the same dark ink and caret (`atv-app/src/text_inputs.rs`) |
 
+## Older dark elements
+
+Dark fills from before the online work, checked against the original
+screens (approximate private composites of the exact build's page layouts,
+`TrackSelect`, `ATVRiderSelect`, `Main`):
+
+| Element | Original evidence | Result |
+| --- | --- | --- |
+| Course photo previous/next arrows | Not in the original: `TrackSelect` frames its 384×256 photo with thin gold rules and steps courses from the focused gold row, whose `menuarrow_*` arrowheads sit on the row | Small gold pills with dark arrows |
+| Single Race "All Courses" button | A port addition (the course picker), no original counterpart | A small gold pill, dark list glyph and label |
+| Garage list: the current vehicle | No vehicle list in the original (ATV is one row stepped with arrows) | The gold edge plus a gold hairline; the dark well is gone. Other rows were already clear |
+| Garage Male/Female switch, unfocused | No switch in the original (Rider is one row) | A gold hairline track; the dark well is gone |
+| Back, Copy ride link and the title's Pass Key link | Every original page draws its hints in a black pill with a white rim across the lower right (`✕ Next △ Back`, `✕ Edit Stats △ Back`) | Kept dark: these are that hint pill |
+| ATV stats box (portrait) | The original's stats box is the dark translucent `atvoverlay` panel | Already light on the port; unchanged |
+
 ## Original entry screens
 
 - The exact build's Lobby chat page (`Lobby`, approximate private
@@ -52,7 +67,5 @@ The before set is the deployed main build 6ea3dfd5.
 
 - The Author medal stays green (`atv_core::medals::Medal::color`); no
   original evidence gives it another colour.
-- Dark glass that predates the online work stays: the course photo's
-  arrows and All Courses button, the garage list's unselected rows and the
-  Back/hint pill (the original's black hint pill).
+- See "Older dark elements" for what stays dark and why.
 - Host Chromium only; physical phones were not checked.
