@@ -1290,7 +1290,7 @@ fn details(m: &Metrics, s: &Screen) -> El {
         let lit = value.chars().take_while(|c| *c == '▰').count();
         let unlit = value.chars().skip(lit).take_while(|c| *c == '▱').count();
         let value = if lit + unlit == 10 {
-            line.style.align_items = Some(AlignItems::CENTER);
+            line.style.align_items = AlignItems::CENTER;
             line = line.child(
                 El::new(Style {
                     flex_shrink: 0.,
