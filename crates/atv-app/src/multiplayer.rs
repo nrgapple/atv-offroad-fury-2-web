@@ -223,6 +223,11 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
         .sqrt()
 }
 
+/// A Quick Play claim waits at most this many steps of this long for the
+/// rider's registration.
+const REGISTER_WAITS: u32 = 20;
+const REGISTER_WAIT_MS: u32 = 200;
+
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
@@ -270,6 +275,16 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
         return Err(RESERVED_CODE.into());
     }
     if let Some((list, avoid, room)) = &start.quickplay {
+        // The rider's registration (asked for with this ride) gives the
+        // claim and the socket its token; a socket without one plays
+        // unverified and earns no podium rewards, stats or rating. Wait for
+        // it briefly (a first-time rider or a ride opened from a link).
+        for _ in 0..REGISTER_WAITS {
+            if crate::online::token().is_some() {
+                break;
+            }
+            net::sleep(REGISTER_WAIT_MS).await;
+        }
         let url = format!("{server}/multiplayer/quickplay");
         let body = serde_json::json!({
             "playlist": atv_game::multiplayer::quickplay::playlist::name(*list).unwrap_or("race"),

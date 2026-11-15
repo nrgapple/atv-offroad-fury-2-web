@@ -102,7 +102,9 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
   (`Players::rewards` is a preview of `Players::ingest`, unit-tested
   against it). Two matches of one rider within 15 s would show the second
   from slightly old XP. Unverified rounds, CPUs and riders without a
-  verified id get none.
+  verified id get none. A Quick Play claim waits up to 4 s for the rider's
+  registration first, so a first-time rider (or a ride opened from a
+  `?quickplay=` link) still connects with its token.
 - **Seats.** Four human seats (peer ids 0–3), because room races and games
   carry four rider slots (`RACE_RIDERS`); CPUs take ids 4–7. A Race room
   is therefore at most 8 riders: 4 humans and 4 CPUs. More humans per room

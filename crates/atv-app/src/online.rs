@@ -66,7 +66,7 @@ pub struct Online {
     token: Option<String>,
     registering: bool,
     /// The rider has used something online on this device.
-    wanted: Option<bool>,
+    pub(crate) wanted: Option<bool>,
     lists_at: Option<Instant>,
     secret_at: Option<Instant>,
     /// The launch's site and game server, for rides without the menus.

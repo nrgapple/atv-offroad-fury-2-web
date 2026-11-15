@@ -153,15 +153,18 @@ try {
   assert.deepEqual((await loop(two)).results, l.results, 'one podium');
   // Each verified rider's league points count up beside the name, with
   // the level bar and tier (research/ONLINE_IDENTITY.md).
-  for (const p of [one, two]) {
-    const shown = await until(p, panel, s => s.level && s.rows.filter(row => !row.cpu).every(row => row.points && row.points !== '+0'), 30000, 'podium points');
-    assert.ok(shown.level.level >= 1 && /^\+\d+ XP$/.test(shown.level.gain), `level strip: ${JSON.stringify(shown.level)}`);
-    assert.ok(shown.rows.filter(row => row.cpu).every(row => row.points == null), 'CPUs earn nothing');
+  // Both registered before queuing (the claim waits for it), so both earn.
+  // The podium lasts 8 s: both pages are read at once.
+  const counted = s => s.level && s.rows.filter(row => !row.cpu).every(row => row.points && row.points !== '+0');
+  const shown = await Promise.all([one, two].map(p => until(p, panel, counted, 8000, 'podium points')));
+  await Promise.all([shot(one, 'qp-podium'), shot(two, 'qp-podium-phone')]);
+  for (const [i, p] of [one, two].entries()) {
+    const level = shown[i].level;
+    assert.ok(level.level >= 1 && /^\+\d+ XP$/.test(level.gain), `level strip: ${JSON.stringify(level)}`);
+    assert.ok(shown[i].rows.filter(row => row.cpu).every(row => row.points == null), 'CPUs earn nothing');
     const rewards = (await mp(p)).rewards;
     assert.equal(rewards.round, l.setup.number, 'rewards for this round');
   }
-  await shot(one, 'qp-podium');
-  await shot(two, 'qp-podium-phone');
 
   // 6. Rematch from both: the next vote, same room.
   await tap(one, REMATCH);

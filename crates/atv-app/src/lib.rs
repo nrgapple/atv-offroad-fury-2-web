@@ -5943,6 +5943,11 @@ impl ApplicationHandler<Message> for App {
                 .unwrap_or_else(|| server_for(&site, None));
             self.online.endpoints = Some((site, server));
             self.online.name = options.room.as_ref().map(|r| r.name.clone());
+            // Joining a room is using something online: a first-time rider
+            // registers (a Quick Play claim waits for it).
+            if options.room.is_some() {
+                self.online.wanted = Some(true);
+            }
         }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
