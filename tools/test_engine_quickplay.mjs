@@ -98,6 +98,7 @@ try {
   assert.ok(q.seconds > 0 && q.seconds <= 20, `a live countdown: ${q.seconds}`);
   assert.equal(q.seats.filter(s => s.cpu).length, 4, 'CPU tags');
   await shot(two, 'qp-lobby-phone');
+  await shot(one, 'qp-lobby');
 
   // 3. GO from both skips the wait; the vote deals 3 cards and Random.
   await tap(one, READY);
@@ -118,6 +119,7 @@ try {
   assert.equal(l.pick, race, 'every ticket on the race card');
   assert.equal(l.setup.round.mode, 3);
   await shot(one, 'qp-countdown');
+  await shot(two, 'qp-countdown-phone');
 
   // 4. The server's driver starts the CPU-filled race; both race it.
   const roomRace = async p => (await ui(p)).ride?.roomRace;
@@ -174,6 +176,7 @@ try {
     const chose = await panel(p);
     assert.equal(chose.stay, true, `Rematch recorded: ${JSON.stringify({ phase: chose.phase, stay: chose.stay })}`);
     assert.equal(chose.leaving, false);
+    await shot(p, p === one ? 'qp-rematch-pressed' : 'qp-rematch-pressed-phone');
   }
   for (const p of [one, two]) {
     await until(p, loop, x => x.phase === 1 && x.setup.number === 1, 30000, 'next vote');

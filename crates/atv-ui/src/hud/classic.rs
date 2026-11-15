@@ -499,13 +499,18 @@ pub fn card(
     });
     if let Some(photo) = photo {
         frame = frame.child(
+            // Inside the 2 px frame, cropped to it (Cover).
             El::new(Style {
                 position: Position::Absolute,
                 inset: taffy::Rect {
                     left: LengthPercentageAuto::length(0.),
                     top: LengthPercentageAuto::length(0.),
-                    right: LengthPercentageAuto::length(0.),
-                    bottom: LengthPercentageAuto::length(0.),
+                    right: LengthPercentageAuto::auto(),
+                    bottom: LengthPercentageAuto::auto(),
+                },
+                size: Size {
+                    width: length(inner - 4.),
+                    height: length(photo_h - 4.),
                 },
                 ..Default::default()
             })

@@ -64,7 +64,11 @@ uses it. No overlay in this change draws a black or near-black panel.
 ## Limits
 
 - The track photos come from the front end's art, which loads behind the
-  title. A vote that opens before that load finishes shows the silver photo
-  well until the photo arrives.
+  title. A rider who starts from a link (`?quickplay=`, a room link) skips
+  the front end, so their votes show the silver photo well with the name and
+  mode only; so does a vote that opens before the art has loaded.
+- The medal reveal sits inside the port's Race Results panel, the
+  single-player race-over screen. That panel is still the dark box the owner
+  objected to, but it predates epic #631 and is left for its own restyle.
 - Peer name tags draw under the panels (unchanged from before).
 - The Random card has no photo; it shows "Random" in the silver well.
