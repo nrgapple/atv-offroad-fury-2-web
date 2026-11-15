@@ -52,6 +52,7 @@ const REMATCH = 85;
 const START = 90;
 const MODE = 91;
 const CPUS = 92;
+const SKIP = 93;
 const WATCH = 94;
 const SPECTATING = 8;
 const flags = 'uiDiagnostics=1&weather=off&autopilot=1&raceLaps=1';
@@ -68,7 +69,7 @@ try {
   // 1. The host's room and a phone guest: the loop's lobby on both.
   const host = await open({ width: 1280, height: 720 });
   await host.goto(`${base}/play.html?host=1&venue=sx01&room=${code}&name=PLHost&${flags}`);
-  await until(host, mp, m => m.code === code && m.roomloop, 180000, 'host room');
+  await until(host, mp, m => m.code === code && m.serves?.roomloop, 180000, 'host room');
   const guest = await open({ width: 360, height: 740 });
   await guest.goto(`${base}/play.html?room=${code}&dropAfter=9999&name=PLGuest&${flags}`);
   for (const p of [host, guest]) {
@@ -124,11 +125,19 @@ try {
   const watching = await until(late, panel, s => s.phase === 'Play' && s.spectating && s.watching, 240000, 'spectating');
   assert.ok(['PLHost', 'PLGuest'].includes(watching.watching), `follows a racer: ${watching.watching}`);
   // Parked meanwhile: no steps, and no racer draws (or touches) it.
-  const parked = await until(late, ui, s => s.ride?.parked, 10000, 'parked');
-  await late.waitForTimeout(1500);
-  const still = await ui(late);
-  assert.equal(still.ride.step, parked.ride.step, 'a parked ride takes no steps');
-  assert.deepEqual(still.ride.origin, parked.ride.origin, 'nor moves');
+  const parked = await until(late, ui, s => s.parked === true, 10000, 'parked');
+  // The room's arrival placement may still set it beside a rider once
+  // (a placement, not a step); then it holds still.
+  let before = parked;
+  let still = parked;
+  for (let i = 0; i < 10; i++) {
+    await late.waitForTimeout(1500);
+    still = await ui(late);
+    if (JSON.stringify(still.origin) === JSON.stringify(before.origin)) break;
+    before = still;
+  }
+  assert.equal(still.step, parked.step, 'a parked ride takes no steps');
+  assert.deepEqual(still.origin, before.origin, 'nor moves');
   for (const p of [host, guest]) {
     const m = await mp(p);
     assert.ok(m.drawn <= 1, `racers draw only each other: ${m.drawn}`);
@@ -155,13 +164,15 @@ try {
   const seated = next.seats.filter(s => !(s.flags & 1));
   assert.equal(seated.length, 3, `three riders: ${JSON.stringify(next.seats)}`);
   assert.ok(seated.every(s => !(s.flags & SPECTATING)), 'nobody watching');
-  await until(late, ui, s => s.ride && !s.ride.parked, 10000, 'unparked for the next round');
+  await until(late, ui, s => s.parked === false, 10000, 'unparked for the next round');
   assert.equal((await mp(late)).code, code, 'the room stays together');
   await until(late, panel, s => s.phase === 'Vote' && s.cards.length === 4, 15000, 'late joiner votes');
   await shot(late, 'pl-rematch-vote-late');
-  // The host's mode button deals the next round's cards in that mode.
-  await tap(host, MODE);
-  await until(late, panel, s => s.phase === 'Vote' && s.cards[0]?.mode === 'Hills', 10000, 'mode switch');
+  // The host's Skip ends the vote at once: its own card wins.
+  await tap(host, CARD + 1);
+  await tap(host, SKIP);
+  const skipped = await until(host, loop, x => x.phase >= 2, 10000, 'skipped');
+  assert.equal(skipped.setup.round.map, next.options[1].map, 'the host\'s card');
   assertNoErrors(errors);
   console.log(`Private room loop: host lobby, ready tick and 10 s start, vote on the room track, host-driven race, late joiner follow camera, host podium (${l.results.map(x => x.value).join(', ')} ms) and rematch with the late joiner seated verified`);
 } finally {
