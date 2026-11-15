@@ -37,15 +37,22 @@ fn write_layers(gpu: &Gpu, texture: &wgpu::Texture, sky: &Sky, smooth: bool) {
     }
 }
 
+fn tile_uv(mx_raster_tiles: bool) -> [[f32; 2]; 4] {
+    let inset = if mx_raster_tiles { 0.0 } else { 0.03125 };
+    [
+        [inset, inset],
+        [1.0 - inset, inset],
+        [inset, 1.0 - inset],
+        [1.0 - inset, 1.0 - inset],
+    ]
+}
+
 impl SkyPass {
     pub fn new(gpu: &Gpu, world: &World, sky: &Sky, smooth: bool) -> Self {
-        // 00125960 and 00125570 emit local UVs spanning .03125...96875.
-        let uv = [
-            [0.03125, 0.03125],
-            [0.96875, 0.03125],
-            [0.03125, 0.96875],
-            [0.96875, 0.96875],
-        ];
+        // ATV2 IPUM tiles have a four-pixel gutter (00125960/00125570).
+        // MX CUB43 colors cover the complete 0..128 tile. Cropping four
+        // pixels from each side breaks authored cloud bands at face joins.
+        let uv = tile_uv(sky.mx_raster_tiles);
         let mut vertices = Vec::with_capacity(sky.tiles.len() * 20);
         let mut indices: Vec<u32> = Vec::with_capacity(sky.tiles.len() * 6);
         for (index, tile) in sky.tiles.iter().enumerate() {
@@ -185,5 +192,17 @@ impl SkyPass {
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_bind_group(1, &self.group, &[]);
         pass.draw_indexed(0..self.tiles * 6, 0, 0..1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tile_uv;
+
+    #[test]
+    fn mx_tiles_reach_authored_borders_while_atv2_keeps_ipum_gutter() {
+        assert_eq!(tile_uv(true), [[0., 0.], [1., 0.], [0., 1.], [1., 1.]]);
+        assert_eq!(tile_uv(false)[0], [0.03125, 0.03125]);
+        assert_eq!(tile_uv(false)[3], [0.96875, 0.96875]);
     }
 }
