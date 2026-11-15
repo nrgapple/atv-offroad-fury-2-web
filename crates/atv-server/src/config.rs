@@ -61,6 +61,20 @@ pub struct Config {
     pub commit: String,
     /// Clients left out of the public rider and room counts.
     pub uncounted: Networks,
+    /// Free Ride hub timers (`FURY_HUB_EVENT_SECS`, `FURY_HUB_JOIN_SECS`,
+    /// `FURY_HUB_ROTATION_SECS`; research/FREERIDE_HUB.md "Settings").
+    pub hub: crate::engine::hub::HubConfig,
+}
+
+/// `MIN-MAX` or `N` seconds as a millisecond range; `0` or `off` is None.
+fn seconds_range(text: &str) -> Option<Option<(u64, u64)>> {
+    if text == "0" || text == "off" {
+        return Some(None);
+    }
+    let (low, high) = text.split_once('-').unwrap_or((text, text));
+    let low: u64 = low.trim().parse().ok()?;
+    let high: u64 = high.trim().parse().ok()?;
+    (low > 0 && low <= high && high <= 24 * 3600).then_some(Some((low * 1000, high * 1000)))
 }
 
 impl Config {
@@ -126,6 +140,24 @@ impl Config {
                     "FURY_UNCOUNTED_IPS must be comma-separated addresses or address/prefix blocks",
                 )?,
                 None => Networks::default(),
+            },
+            hub: {
+                let mut hub = crate::engine::hub::HubConfig::default();
+                if let Some(text) = get("FURY_HUB_EVENT_SECS") {
+                    hub.events = seconds_range(&text)
+                        .ok_or("FURY_HUB_EVENT_SECS must be seconds, MIN-MAX seconds or off")?;
+                }
+                if let Some(text) = get("FURY_HUB_JOIN_SECS") {
+                    hub.join_ms = match seconds_range(&text) {
+                        Some(Some((low, high))) if low == high && low <= 600_000 => low,
+                        _ => return Err("FURY_HUB_JOIN_SECS must be 1-600 seconds".into()),
+                    };
+                }
+                if let Some(text) = get("FURY_HUB_ROTATION_SECS") {
+                    hub.rotation = seconds_range(&text)
+                        .ok_or("FURY_HUB_ROTATION_SECS must be seconds, MIN-MAX seconds or off")?;
+                }
+                hub
             },
         })
     }
