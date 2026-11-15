@@ -2248,7 +2248,14 @@ impl Front {
                 .get(self.state.track)
                 .filter(|track| track.id.starts_with("mx_"))
                 .and_then(|track| self.art.photos.get(&track.id))
-                .map(|photo| photo.data.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0))
+                .map(|photo| photo
+                    .data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| p[3])
+                    .max()
+                    .unwrap_or(0))
         );
         out["photoTextures"] = serde_json::json!(
             self.images

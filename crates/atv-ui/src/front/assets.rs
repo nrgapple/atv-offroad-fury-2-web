@@ -135,7 +135,7 @@ const MX_PREVIEWS: &str = "/MX/PREVIEWS.RES";
 /// MX preview PST palettes use PS2 GS alpha (0..128), while the UI renderer
 /// expects straight RGBA8 alpha (0..255). Keep the shared PST decoder raw.
 fn mx_preview_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Rgba {
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel[3] = (u16::from(pixel[3]) * 255 / 128).min(255) as u8;
     }
     Rgba::new(width, height, rgba)
