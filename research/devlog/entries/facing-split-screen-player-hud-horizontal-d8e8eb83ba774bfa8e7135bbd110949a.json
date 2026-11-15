@@ -1,0 +1,16 @@
+{
+  "id": "facing-split-screen-player-hud-horizontal-d8e8eb83ba774bfa8e7135bbd110949a",
+  "timestamp": "2026-11-15T02:02:40.765389+00:00",
+  "recorded_at": "2026-11-15T02:06:19.608324+00:00",
+  "kind": "verification",
+  "title": "Facing split-screen player HUD: horizontal",
+  "summary": "Player HUDs follow each facing viewport, with pause and camera controls contained in player 1's view.",
+  "details": [
+    "PR #683 merged as d48c7ca4ff6e45581f78777e5d7a68ef1b44c2e6 (implementation head 23b55ad). Web, native and Android CI checks passed.",
+    "Parent ran test_engine_split_facing.mjs against successful PR artifact run 43665193152: 1 passed, 0 failed in 27 seconds; fh and fv both had player tag counts [1,1], player 1 toolbar containment, camera and pause taps, and simultaneous steering/driving touches.",
+    "Screenshot independently inspected before publication; horizontal facing layout shown. Production deployment verification belongs to the implementation parent."
+  ],
+  "limitation": "Authored split-screen/touch adaptation; this does not establish original PS2 behavior or physical-device usability. Automated input and screenshots used host Chromium at 844x390, not physical phones.",
+  "image": "/devlog-images/facing-split-screen-player-hud-horizontal-d8e8eb83ba774bfa8e7135bbd110949a.png",
+  "caption": "Horizontal facing split: host Chromium, 844x390, PR #683 artifact at head 23b55ad; not a physical-phone capture."
+}
