@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 pub mod chat;
 mod codec;
 mod compact;
+pub mod hub;
+pub use hub::{
+    Challenge, Hub, HubRow, challenge_end, challenge_op, event_kind, event_phase, hub_op,
+};
 mod names;
 pub mod quickplay;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
@@ -695,6 +699,11 @@ pub mod signal {
     /// instead of each rider's pose separately. Never forwarded in other
     /// riders' flags.
     pub const FRAMES: u8 = 16;
+    /// Hello flags bit: the build takes Free Ride hub packets
+    /// ([`super::Packet::Hub`], [`super::Packet::Challenge`];
+    /// research/FREERIDE_HUB.md). Sent only to a server whose room claim
+    /// says `"hub": true`; never forwarded in other riders' flags.
+    pub const HUB: u8 = 128;
     /// Hello flags bit: the build decodes motorcycle poses (vehicles 27-46,
     /// whose compact pose carries the bike's linkage and the MX rider's
     /// bones; research/MULTIPLAYER.md "Motorcycles"). Sent only to a server
@@ -819,17 +828,11 @@ impl Signal {
     pub fn validate(&self) -> Result<()> {
         let valid = valid_peer(self.peer)
             && match self.kind {
+                // Every bit of the first flags byte is allocated (DIRECT,
+                // CARRIES, CPU_SOUNDS, BATCHES, FRAMES, MOTORCYCLES, CHAT,
+                // HUB), so any value is valid; the second byte holds LOOP.
                 signal::HELLO => {
-                    (self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP))
-                        && self.data[0]
-                            & !(signal::DIRECT
-                                | signal::CARRIES
-                                | signal::CPU_SOUNDS
-                                | signal::BATCHES
-                                | signal::FRAMES
-                                | signal::MOTORCYCLES
-                                | signal::CHAT)
-                            == 0
+                    self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP)
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
@@ -933,6 +936,12 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
+    /// Free Ride hub events and the map vote (research/FREERIDE_HUB.md);
+    /// only to and from builds that said [`signal::HUB`].
+    Hub(Box<Hub>),
+    /// A challenge between two Free Ride riders (research/FREERIDE_HUB.md);
+    /// only to and from builds that said [`signal::HUB`].
+    Challenge(Challenge),
     /// Game server to every rider in a Quick Play room: the server-run room
     /// loop (research/QUICK_PLAY.md).
     RoomLoop(Box<quickplay::RoomLoop>),
