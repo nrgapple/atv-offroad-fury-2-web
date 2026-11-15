@@ -59,6 +59,8 @@ pub struct Online {
     wanted: Option<bool>,
     lists_at: Option<Instant>,
     secret_at: Option<Instant>,
+    /// The launch's site and game server, for rides without the menus.
+    pub endpoints: Option<(String, String)>,
     /// Consecutive failed registrations (backs off).
     failures: u32,
     retry_at: Option<Instant>,
@@ -104,12 +106,17 @@ fn state_line(state: &str) -> &'static str {
 }
 
 impl App {
-    fn online_send(&mut self, purpose: Purpose, path: &str, mut body: Value) {
-        let Some((site, server)) = self
-            .defaults
+    /// The site and game server: the menus' defaults, else the launch's
+    /// (a ride opened from a room link has no menus).
+    fn online_endpoints(&self) -> Option<(String, String)> {
+        self.defaults
             .as_ref()
             .map(|d| (d.site.clone(), d.server.clone()))
-        else {
+            .or_else(|| self.online.endpoints.clone())
+    }
+
+    fn online_send(&mut self, purpose: Purpose, path: &str, mut body: Value) {
+        let Some((site, server)) = self.online_endpoints() else {
             return;
         };
         if purpose != Purpose::Register {
@@ -139,7 +146,7 @@ impl App {
     }
 
     fn online_register(&mut self) {
-        if self.defaults.is_none() {
+        if self.online_endpoints().is_none() {
             return;
         }
         let secret = self.online_secret();
@@ -276,7 +283,7 @@ impl App {
     /// secret a Pass Key brought, and keep an open Online page's presence
     /// fresh.
     pub(crate) fn online_poll(&mut self) {
-        if self.defaults.is_none() {
+        if self.online_endpoints().is_none() {
             return;
         }
         let now = Instant::now();

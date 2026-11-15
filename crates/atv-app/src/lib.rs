@@ -5747,6 +5747,16 @@ impl ApplicationHandler<Message> for App {
         self.window = Some(window.clone());
         #[cfg(target_arch = "wasm32")]
         context::watch(&window, self.proxy.clone());
+        // Online identity (research/ONLINE_IDENTITY.md) also serves a ride
+        // opened from a room link, which has no menus.
+        {
+            let site = options.site.clone().unwrap_or_else(default_site);
+            let server = options
+                .server
+                .clone()
+                .unwrap_or_else(|| server_for(&site, None));
+            self.online.endpoints = Some((site, server));
+        }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
                 site: options.site.clone().unwrap_or_else(default_site),
