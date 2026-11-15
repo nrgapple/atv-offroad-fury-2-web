@@ -1,0 +1,18 @@
+{
+  "id": "multiplayer-screens-rebuilt-in-the-original-menu-and-h-9d54ac32906b430c8b834c1958d4f114",
+  "timestamp": "2026-11-15T05:44:55+00:00",
+  "recorded_at": "2026-11-15T05:44:55.629250+00:00",
+  "kind": "build",
+  "title": "Multiplayer screens rebuilt in the original menu and HUD style",
+  "summary": "The online and multiplayer screens added in the last few days were redrawn from the game's own menus and race HUD. The dark translucent panels are gone. The screenshots on the earlier multiplayer entries now show this look.",
+  "details": [
+    "Menu pages (#682): Quick Play, Friends, Recent, Profile > Online, Weekly Challenge, the Free Ride row and the name dice now use the classic menu rows with a gold bullet, gold values, the details table, the garage stat meter for level bars, and the gold pill. Friend rows read Name: Value (Join, Online, Offline, Request, Sent, Blocked) instead of symbol prefixes.",
+    "In-ride overlays (#684): the Free Ride hub status line uses race HUD lettering; Challenge is a gold race-over button; the offer prompt, Next Map vote and event results are Race Results panels, and the vote's venues are Select Track entries. The quick chat wheel is made of race-over tiles. Bubbles use name-tag lettering.",
+    "The Quick Play and private-room panel (lobby seats, vote cards with track photos, podium with level and league progress) follow the same pieces. The follow camera hides the watched rider's tag.",
+    "Tracked in #679 (owner feedback: use the classic menus and HUD, no black AI-style panels). Audit tables: research/UI_AUDIT_MULTIPLAYER.md and research/UI_AUDIT_HUD.md. Screenshot: the Friends list.",
+    "Verification: before/after captures inspected by hand. Host-only evidence: host Chromium, nothing checked on physical phones."
+  ],
+  "limitation": "A rider who starts from a link skips the front end, so vote cards show a plain silver photo well (name and mode only) until the art loads. The medal reveal still sits in the single-player Race Results panel, which is the older dark box and is left for its own restyle, so it is not shown here. The Author medal stays green (no original evidence gives it another colour). Peer name tags still draw under the panels.",
+  "image": "/devlog-images/multiplayer-screens-rebuilt-in-the-original-menu-and-h-9d54ac32906b430c8b834c1958d4f114.png",
+  "caption": "Friends list in the classic menu style: Add Code, Recent, then each friend with a status value"
+}
