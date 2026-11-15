@@ -38,6 +38,7 @@ try {
     }, f.track, { timeout: 30000 });
     if (f.track.startsWith('mx_')) {
       seen.add(f.track);
+      assert.equal(f.mxPreviewAlpha, 255, `${f.track}: source hero and thumbnail reach the UI fully opaque`);
       if (directory) await page.screenshot({ path: `${directory}/${f.track}.png` });
     }
     await key(page, 'ArrowRight');

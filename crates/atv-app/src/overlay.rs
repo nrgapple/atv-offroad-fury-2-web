@@ -1202,6 +1202,19 @@ impl Overlay {
             bar_right,
             (map_visible && !self.minimap.settings.bottom_left).then_some(map),
         );
+        // Shared actions belong to player 1, including their hit rectangles.
+        let toolbar_frame = frames[0];
+        let toolbar_view = atv_ui::hud::Viewport {
+            width: hw,
+            height: hh,
+            // Conservatively keep clear of every device inset after rotation.
+            safe: if second.is_some() {
+                [view.safe.into_iter().fold(14., f32::max); 4]
+            } else {
+                view.safe
+            },
+            ..view
+        };
         let state = toolbar::State {
             paused,
             hovered: self.hovered.and_then(toolbar::Button::from_id),
@@ -1212,7 +1225,7 @@ impl Overlay {
             camera_enabled,
             keys_enabled: active,
             keys_visible,
-            compact,
+            compact: compact || (second.is_some() && hw < 500.),
             editor: self.editor,
             chat: chat.is_some(),
         };
@@ -1229,22 +1242,41 @@ impl Overlay {
         if !self
             .toolbar_cache
             .as_ref()
-            .is_some_and(|(v, s, ..)| *v == view && *s == state)
+            .is_some_and(|(v, s, ..)| *v == toolbar_view && *s == state)
         {
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             layout::render(
-                &full(toolbar::element(&view, &state)),
+                &layout::El::new(taffy::Style {
+                    size: taffy::Size {
+                        width: taffy::Dimension::length(hw),
+                        height: taffy::Dimension::length(hh),
+                    },
+                    ..Default::default()
+                })
+                .child(toolbar::element(&toolbar_view, &state)),
                 &mut self.fonts,
-                view.width,
-                view.height,
+                hw,
+                hh,
                 &mut list,
                 &mut hits,
             );
-            self.toolbar_cache = Some((view, state, list, hits));
+            self.toolbar_cache = Some((toolbar_view, state, list, hits));
         }
         if let Some((_, _, list, hits)) = &self.toolbar_cache {
-            self.list.items.extend_from_slice(&list.items);
-            self.hits.extend_from_slice(hits);
+            self.list.items.extend(place(list.clone(), toolbar_frame));
+            self.hits.extend(hits.iter().map(|(r, id)| {
+                let a = toolbar_frame.to_screen(r.x, r.y);
+                let b = toolbar_frame.to_screen(r.right(), r.bottom());
+                (
+                    Rect::new(
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        (b[0] - a[0]).abs(),
+                        (b[1] - a[1]).abs(),
+                    ),
+                    *id,
+                )
+            }));
         }
         self.split_hud.clear();
         self.split_radar = None;
@@ -1253,14 +1285,13 @@ impl Overlay {
             && let Some(layout) = meter.split_layout(set, name)
         {
             use atv_ui::hud::split::{Seat, SeatFrame};
-            // The toolbar sits over the top-right view's upper right items.
+            // Reserve room for shared actions in player 1's local view.
             let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                 hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
             });
-            // An upright view on the top row reaching the right edge.
+            // Insets are measured before the view rotates.
             let inset = |frame: atv_ui::Frame| {
-                if frame.turns == 0 && frame.rect.y <= 0. && frame.rect.right() >= view.width - 0.5
-                {
+                if frame == toolbar_frame {
                     toolbar_bottom
                 } else {
                     0.

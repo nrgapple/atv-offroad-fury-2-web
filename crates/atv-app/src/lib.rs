@@ -3168,6 +3168,55 @@ impl App {
                 peers.extend(ready.cpus.iter().enumerate().map(|(i, c)| c.tag(i)));
                 Some(peers)
             };
+            // Local riders use the same per-camera directional tags as room riders.
+            // Labels include distance in world feet; never include the viewer itself.
+            let local_positions: Vec<_> = std::iter::once((1u8, frame.origin))
+                .filter(|_| !ready.split.is_empty())
+                .chain(
+                    ready
+                        .split
+                        .iter()
+                        .map(|s| (s.player, s.riding.ride.frame().origin)),
+                )
+                .collect();
+            let local_tags = |player: u8, origin: [f32; 3]| {
+                local_positions
+                    .iter()
+                    .filter(|(id, _)| *id != player)
+                    .map(|(id, position)| {
+                        let distance = position
+                            .iter()
+                            .zip(origin)
+                            .map(|(a, b)| (a - b) * (a - b))
+                            .sum::<f32>()
+                            .sqrt();
+                        atv_ui::hud::peers::Peer {
+                            slot: id - 1,
+                            name: format!("P{id} · {distance:.0} ft"),
+                            position: *position,
+                            stale: false,
+                            pill: None,
+                            map_only: false,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let hud_peers = if ready.split.is_empty() {
+                hud_peers
+            } else {
+                let mut peers = local_tags(1, frame.origin);
+                peers.extend(hud_peers.unwrap_or_default());
+                Some(peers)
+            };
+            let split_peers: Vec<Vec<_>> = ready
+                .split
+                .iter()
+                .map(|s| {
+                    let mut peers = local_tags(s.player, s.riding.ride.frame().origin);
+                    peers.extend(game_peers.clone().unwrap_or_default());
+                    peers
+                })
+                .collect();
             // Split screen: each view projects at its own rectangle's aspect
             // (transposed when turned toward a player at a side edge).
             let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
@@ -3273,9 +3322,9 @@ impl App {
                                     .filter(|t| t.local)
                                     .map(|t| t.view_for(index))
                             }),
-                        peers: game_peers.as_deref().map(|peers| {
+                        peers: split_peers.get(index - 1).map(|peers| {
                             (
-                                peers,
+                                peers.as_slice(),
                                 ride.frame().origin,
                                 s.camera.view_projection(
                                     rects
