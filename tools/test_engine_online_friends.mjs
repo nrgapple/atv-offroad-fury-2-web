@@ -122,7 +122,7 @@ try {
   await onPage(ann, 'friends');
   await until(ann, () => window.testFront().online?.requests === 1, null, 40000);
   await shot(ann, 'friends-request');
-  await chooseLabel(ann, '+ Bo');
+  await chooseLabel(ann, 'Bo: Request');
   await onPage(ann, 'friend');
   await choose(ann, 'rideraccept');
   await until(ann, () => window.testFront().online?.friends?.[0]?.name === 'Bo', null, 30000);
@@ -144,9 +144,9 @@ try {
   await until(bo, room => window.testFront().online?.friends?.[0]?.room === room, annRoom, 60000);
   f = await ui(bo);
   assert.equal(f.online.friends[0].online, true);
-  assert.ok(f.labels.some(l => l === '● Ann · Join'), `${f.labels}`);
+  assert.ok(f.labels.some(l => l === 'Ann: Join'), `${f.labels}`);
   await shot(bo, 'friends-online');
-  await chooseLabel(bo, '● Ann');
+  await chooseLabel(bo, 'Ann: Join');
   await onPage(bo, 'friend');
   assert.equal((await ui(bo)).choices[0], 'riderjoin');
   await shot(bo, 'friend-join');

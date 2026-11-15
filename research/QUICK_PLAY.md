@@ -9,7 +9,8 @@ used (MULTIPLAYER_ORIGINAL.md). Everything below is authored for the port.
 - **Main Menu → Quick Play** leads the main menu, only once the game server
   says it runs Quick Play (`"quickplay": true` beside the rider count on
   `/multiplayer/freeride/riders`, polled on the main menu and Multiplayer).
-- **Two tiles: Race / Stunts.** One tap queues. Race rotates races and King
+- **Two rows: Race / Stunts.** Classic menu rows (gold bullet and pill),
+  each with its playlist as a gold value on the right. One tap queues. Race rotates races and King
   of the Hills; Stunts rotates Freestyle and Treasure Hunt.
 - **Lobby.** Seats fill with names, CPU tags (Race) and ping bars for the
   others (green under 80 ms, yellow 80–150, red above). A big countdown
@@ -135,7 +136,7 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
   records) and `http.rs` (route, reserved prefix, `pid`, the advertised
   flag).
 - `crates/atv-ui/src/hud/quickplay.rs`: the panel; Main Menu row and the
-  Quick Play tiles in `front/controller.rs` and `front/mod.rs`.
+  Quick Play rows in `front/controller.rs` and `front/mod.rs`.
 - `crates/atv-app/src/quick_play.rs`: loop → panel, votes, driver starts;
   hooks in `lib.rs`, `overlay.rs`, `multiplayer.rs` and `atv-game`'s
   `Session`/`Serves`.

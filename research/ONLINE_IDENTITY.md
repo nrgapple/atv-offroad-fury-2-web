@@ -156,12 +156,14 @@ only riders whose `pid` is a registered rider and who are not CPUs.
 ## In the game
 
 - **Profile Editor → Online**: the card (Friend Code, `Level n` with a
-  `▰▱` bar and XP, League `◆ Tier · points`, Next Tier bar, Week Ends, Races,
-  Wins, Podiums) and rows Friends (`· ● n` online, `· +n` requests), League,
-  Copy Code, New Code, Appear Offline: On/Off.
+  ten-step meter and XP, League `Tier · points`, Next Tier meter, Week Ends,
+  Races, Wins, Podiums) and rows Friends (`+n New` requests, else `n Online`),
+  League, Copy Code, New Code, Appear Offline: On/Off.
 - **Multiplayer → Friends** (and the card's Friends row): Add Code,
-  `Recent · n`, requests `+ Name`, friends `● Name · Join` / `○ Name`, sent
-  `… Name`, blocked `⊘ Name`. A rider's page has one obvious first action
+  `Recent: n`, requests `Name: Request`, friends `Name: Join` / `Online` /
+  `Offline`, sent `Name: Sent`, blocked `Name: Blocked`. Rows are
+  `Name: Value`; the value stands right in the classic stepper's gold value
+  face, without arrows (research/UI_AUDIT_MULTIPLAYER.md). A rider's page has one obvious first action
   (Join, Accept or Add Friend), then Remove/Decline/Block.
 - **Add Code**: a text field plus the controller's symbol row (Left/Right),
   Delete Symbol and Send. **League**: the weekly top 10 and "You #n · Top n%".
@@ -254,8 +256,8 @@ are kept (new ones are refused with 503 past it).
   shared presence.
 - The weekly board sorts every rider with points this week on each request
   (fine at today's numbers; cache it if the board gets hot).
-- The level bar and league badge are text glyphs (`▰▱`, `◆`) in the existing
-  details table, not new art; a podium/XP count-up on results belongs to the
+- The level and tier bars travel as `▰▱` text in the details table and draw
+  as the garage's stat meter; the league is its tier name, not new art; a podium/XP count-up on results belongs to the
   Quick Play results screen (wave 2).
 - Physical phones were not checked; the phone layout was checked in a
   390×844 browser context only.

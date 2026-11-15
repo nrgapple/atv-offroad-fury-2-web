@@ -178,7 +178,8 @@ pub struct OnlineUi {
     pub rider: Option<(String, From)>,
 }
 
-const TIER_ICON: &str = "◆";
+/// A rider who is not online (a friend row's value and the offline line).
+pub const OFFLINE: &str = "Offline";
 
 fn tier_name(tier: &str) -> String {
     let mut chars = tier.chars();
@@ -272,13 +273,15 @@ impl Frontend {
                 let requests =
                     lists.map_or(me.map_or(0, |m| m.requests) as usize, |l| l.requests.len());
                 let online = lists.map_or(0, |l| l.friends.iter().filter(|f| f.online).count());
-                let mut friends = "Friends".to_string();
-                if online > 0 {
-                    friends.push_str(&format!(" · ● {online}"));
-                }
-                if requests > 0 {
-                    friends.push_str(&format!(" · +{requests}"));
-                }
+                // Rows read "Name: Value"; the value stands right, as the
+                // classic menus' values do.
+                let friends = if requests > 0 {
+                    format!("Friends: +{requests} New")
+                } else if online > 0 {
+                    format!("Friends: {online} Online")
+                } else {
+                    "Friends".to_string()
+                };
                 vec![
                     ("friends".into(), friends),
                     row("league", "League"),
@@ -303,28 +306,26 @@ impl Frontend {
                 if let Some(lists) = lists {
                     rows.push((
                         "friend-recent".into(),
-                        format!("Recent · {}", lists.recent.len()),
+                        format!("Recent: {}", lists.recent.len()),
                     ));
                     for r in &lists.requests {
-                        rows.push((format!("request:{}", r.id), format!("+ {}", r.name)));
+                        rows.push((format!("request:{}", r.id), format!("{}: Request", r.name)));
                     }
                     for f in &lists.friends {
-                        let dot = if f.online { "●" } else { "○" };
-                        let join = if f.room.as_ref().is_some_and(|r| r.code.is_some()) {
-                            " · Join"
+                        let status = if f.room.as_ref().is_some_and(|r| r.code.is_some()) {
+                            "Join"
+                        } else if f.online {
+                            "Online"
                         } else {
-                            ""
+                            OFFLINE
                         };
-                        rows.push((
-                            format!("friend:{}", f.id),
-                            format!("{dot} {}{join}", f.name),
-                        ));
+                        rows.push((format!("friend:{}", f.id), format!("{}: {status}", f.name)));
                     }
                     for s in &lists.sent {
-                        rows.push((format!("sent:{}", s.id), format!("… {}", s.name)));
+                        rows.push((format!("sent:{}", s.id), format!("{}: Sent", s.name)));
                     }
                     for b in &lists.blocked {
-                        rows.push((format!("blocked:{}", b.id), format!("⊘ {}", b.name)));
+                        rows.push((format!("blocked:{}", b.id), format!("{}: Blocked", b.name)));
                     }
                 }
                 rows
@@ -370,16 +371,13 @@ impl Frontend {
                 l.recent
                     .iter()
                     .map(|r| {
-                        let mark = match r.state.as_str() {
-                            "friend" => "✓ ",
-                            "sent" => "… ",
-                            "asked" => "+ ",
-                            _ => "",
+                        let state = match r.state.as_str() {
+                            "friend" => "Friend".to_string(),
+                            "sent" => "Sent".to_string(),
+                            "asked" => "Request".to_string(),
+                            _ => span(r.ago * 1000),
                         };
-                        (
-                            format!("recent:{}", r.id),
-                            format!("{mark}{} · {}", r.name, span(r.ago * 1000)),
-                        )
+                        (format!("recent:{}", r.id), format!("{}: {state}", r.name))
                     })
                     .collect()
             }),
@@ -416,7 +414,7 @@ impl Frontend {
             Reach::Loading if self.online.me.is_none() => {
                 return vec![line("Loading…", String::new())];
             }
-            Reach::Offline => return vec![line("● Offline", String::new())],
+            Reach::Offline => return vec![line(OFFLINE, String::new())],
             _ => {}
         }
         let now = self.online.now_ms;
@@ -435,11 +433,7 @@ impl Frontend {
                     ),
                     line(
                         "League",
-                        format!(
-                            "{TIER_ICON} {} · {}",
-                            tier_name(&me.league.tier),
-                            me.league.points
-                        ),
+                        format!("{} · {}", tier_name(&me.league.tier), me.league.points),
                     ),
                 ];
                 if let Some(next) = me.league.next {
@@ -470,10 +464,10 @@ impl Frontend {
                         "Friends",
                         format!("{}/{}", lists.friends.len(), lists.max.max(1)),
                     ),
-                    line("● Online", online.to_string()),
+                    line("Online", online.to_string()),
                 ];
                 if !lists.requests.is_empty() {
-                    lines.push(line("+ Requests", lists.requests.len().to_string()));
+                    lines.push(line("Requests", lists.requests.len().to_string()));
                 }
                 if let Some(me) = &self.online.me {
                     lines.push(line("Your Code", me.code.clone()));
@@ -485,18 +479,11 @@ impl Frontend {
                     let mut lines = Vec::new();
                     if r.level > 0 {
                         lines.push(line("Level", r.level.to_string()));
-                        lines.push(line(
-                            "League",
-                            format!("{TIER_ICON} {}", tier_name(&r.tier)),
-                        ));
+                        lines.push(line("League", tier_name(&r.tier)));
                     }
                     match from {
                         From::Friend => lines.push(line(
-                            if r.online {
-                                "● Online"
-                            } else {
-                                "○ Offline"
-                            },
+                            if r.online { "Online" } else { OFFLINE },
                             r.room.as_ref().map_or(String::new(), |room| {
                                 String::from(match room.kind.as_str() {
                                     "freeride" => "Free Ride",
@@ -506,8 +493,8 @@ impl Frontend {
                             }),
                         )),
                         From::Recent => lines.push(line("Met", span(r.ago * 1000))),
-                        From::Request => lines.push(line("+ Wants to be friends", String::new())),
-                        From::Sent => lines.push(line("… Sent", String::new())),
+                        From::Request => lines.push(line("Friend Request", String::new())),
+                        From::Sent => lines.push(line("Request Sent", String::new())),
                         From::Blocked => lines.push(line("Blocked", String::new())),
                     }
                     lines
@@ -529,9 +516,8 @@ impl Frontend {
                     .iter()
                     .take(10)
                     .map(|r| {
-                        let mark = if r.me { "▶ " } else { "" };
                         (
-                            format!("{mark}{}. {} · Lv {}", r.rank, r.name, r.level),
+                            format!("{}. {} · Lv {}", r.rank, r.name, r.level),
                             r.points.to_string(),
                         )
                     })
@@ -541,8 +527,8 @@ impl Frontend {
                 }
                 if let Some(me) = &board.me {
                     lines.push(line(
-                        &format!("▶ You #{}", me.rank),
-                        format!("Top {}%", me.top.max(1)),
+                        "Your Rank",
+                        format!("#{} · Top {}%", me.rank, me.top.max(1)),
                     ));
                 }
                 if board.ends_ms > now && now > 0 {
@@ -781,8 +767,8 @@ mod tests {
         let details = front.profile_details();
         assert_eq!(details[0], ("Friend Code".into(), "KQ7M-3XPZ".into()));
         assert_eq!(details[1], ("Level 2".into(), "▰▰▱▱▱▱▱▱▱▱ 50/200".into()));
-        assert_eq!(details[2], ("League".into(), "◆ Silver · 140".into()));
-        assert_eq!(labels(&front)[0], "Friends · ● 1 · +1");
+        assert_eq!(details[2], ("League".into(), "Silver · 140".into()));
+        assert_eq!(labels(&front)[0], "Friends: +1 New");
         // Rows are 1-3 words (icons and numbers aside).
         for label in labels(&front) {
             let words = label
@@ -796,10 +782,10 @@ mod tests {
             labels(&front),
             [
                 "Add Code",
-                "Recent · 0",
-                "+ Cy",
-                "● Ann · Join",
-                "○ Bo",
+                "Recent: 0",
+                "Cy: Request",
+                "Ann: Join",
+                "Bo: Offline",
                 "Back"
             ]
         );
@@ -847,10 +833,7 @@ mod tests {
         let (mut front, view, mut settings) = front();
         front.online.reach = Reach::Offline;
         front.run("online", &view, &mut settings);
-        assert_eq!(
-            front.profile_details(),
-            [("● Offline".into(), String::new())]
-        );
+        assert_eq!(front.profile_details(), [("Offline".into(), String::new())]);
         assert_eq!(front.choices()[0].0, "onlineretry");
     }
 
