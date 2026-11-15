@@ -67,15 +67,24 @@ try {
   await page.mouse.click(100, 100);
   await page.keyboard.down('ArrowUp');
   let tornadoContacts = 0;
+  let upwardSpeed = 0;
+  let spinSpeed = 0;
   for (let i = 0; i < 160; i++) {
     await page.waitForTimeout(50);
     s = await state(page);
     tornadoContacts += Number(s.actors.dynamicContacts > 0);
+    if (tornadoContacts > 0) {
+      upwardSpeed = Math.max(upwardSpeed, s.actors.velocity[1]);
+      spinSpeed = Math.max(spinSpeed, Math.hypot(...s.actors.angularVelocity));
+    }
   }
   await page.keyboard.up('ArrowUp');
   assert.ok(s.actors.collision.some((b, i) =>
     Math.hypot(...b.position.map((v, k) => v - before[i].position[k])) > 1), 'funnel collision moves');
   assert.ok(tornadoContacts > 0, 'ATV contacts the animated funnel');
+  console.log(JSON.stringify({ tornadoContacts, upwardSpeed, spinSpeed }));
+  assert.ok(upwardSpeed > 8, `funnel must lift the ATV, observed ${upwardSpeed} ft/s`);
+  assert.ok(spinSpeed > 1, `funnel must disturb the ATV orientation, observed ${spinSpeed} rad/s`);
   await optionalScreenshot(page, 'ATV_ACTOR_COLLISION_SCREENSHOT', 'tornado');
   assertNoErrors(errors);
   console.log(`actor collision: windmill and tornado ok (${tornadoContacts} tornado contact samples)`);

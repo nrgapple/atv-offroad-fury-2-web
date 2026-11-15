@@ -8,7 +8,9 @@
   "details": [
     "The actor shader now applies the three distinct UV-scroll rates declared by the FREE06 twister materials.",
     "A bounded decoder reads ten type-0 sections of each twister3 compound placement, creating thirty collision bodies across the three placements. Moving-body contacts follow current and prior MOT node transforms.",
+    "Exact-build evidence: function 0032d330 builds the node table with engine root at index 0, then reads each section node ID and type-0 mesh. Function 0032c490 preserves each section previous transform and computes its current transform from the animated attached node.",
+    "Focused FREE06 browser acceptance must demonstrate an upward ATV velocity above 8 ft/s and angular disturbance above 1 rad/s after tornado contact. This check has not yet executed; no passing result is claimed.",
     "Checkpoint awaiting verification and publication: precheck is in progress; CI, focused FREE06 browser contact checks and visual inspection remain pending. No screenshot has been captured for this entry."
   ],
-  "limitation": "The collision node binding is inferred from the exact resource structure, rather than recovered instructions. Original PS2 impulse equivalence and scripted suction remain unverified."
+  "limitation": "Exact original PS2 player-response parity, including impulse equivalence and any scripted suction, remains unverified. Browser acceptance and visual inspection are pending; this checkpoint has not been published."
 }

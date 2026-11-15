@@ -390,11 +390,15 @@ three placements registers ten sections. Their current and previous transforms
 follow the corresponding MOT node and feed the existing moving-body contacts for
 ATVs and motorcycles (and CPU scene copies).
 
-The node association is inferred from the exact resource structure, not a newly
-recovered executable routine. This repairs the missing physical interaction but
+The exact-build compound reader `0032d330` confirms the node association: it
+builds a table with the engine root at zero and reads each section's node index
+before its type-0 mesh. `0032c490` retains each section's prior transform, reads
+its attached node's world transform and composes its local mesh transform. The
+port now follows those animated section transforms. This repairs the missing
+physical interaction but
 does not establish original PS2 impulse equivalence or a scripted suction/lift
 force. No extra wind force has been invented. Bounds, per-part transforms and
 counts are validated; nonidentity compound local transforms remain unsupported.
 Focused verification uses `test_engine_actor_collision.mjs` (FREE06 contacts and
-moving bodies, plus the existing windmill regression). Physical-phone performance
+moving bodies, upward velocity and angular disturbance, plus the existing windmill regression). Physical-phone performance
 and original-hardware visual parity remain unmeasured.
