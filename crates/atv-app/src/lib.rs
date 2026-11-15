@@ -1186,7 +1186,13 @@ struct World {
     /// A Waypoint Editor ride (no race): the long Enduro scene with the
     /// editor's gate models.
     editor: bool,
+    /// A multiplayer room's ride: the start lamps' beeps load even off a
+    /// race (Quick Play's countdown, research/QUICK_PLAY.md).
+    lamps: bool,
 }
+
+/// The start lamps' beep and GO (`002e79a0`), for a room ride's countdowns.
+const LAMP_SAMPLES: [&str; 2] = ["beep01.vag", "go.vag"];
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
 static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -1323,6 +1329,7 @@ async fn prepare_inner(
         cpus: cpu_request,
         user_course,
         editor,
+        lamps,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1524,11 +1531,13 @@ async fn prepare_inner(
                     mode,
                     music,
                     selection,
-                    race_samples: riding
-                        .ride
-                        .race()
-                        .map(|r| r.samples())
-                        .unwrap_or_else(|| hockey::samples(&venue.environment)),
+                    race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_else(|| {
+                        let mut samples = hockey::samples(&venue.environment);
+                        if lamps {
+                            samples.extend(LAMP_SAMPLES.map(String::from));
+                        }
+                        samples
+                    }),
                     train_sounds: venue.train_sounds.clone(),
                     actor_sounds: venue.actor_sounds.clone(),
                     // loadWeather: active Rain weather loops rain.vag.
@@ -1545,27 +1554,43 @@ async fn prepare_inner(
         // `?actorPlace=windmill` (tools/test_engine_actor_collision.mjs): the
         // quad 40 ft south of that UseCollision actor's body, heading at it.
         if let Some(actors) = &venue.actors
-            && let Some(m) = ["windmill", "litehous", "bigwindmill", "waterwheel", "snake"]
-                .iter()
-                .find(|name| url_flag(&format!("actorPlace={name}")))
-                .and_then(|name| {
-                    let actors = actors.borrow();
-                    let mcf = format!("{name}.mcf");
-                    actors
-                        .collision
-                        .iter()
-                        .find(|b| {
-                            actors.actors[b.actor]
-                                .definition
-                                .mcf
-                                .eq_ignore_ascii_case(&mcf)
-                        })
-                        .map(|b| b.world_matrix)
-                })
-            && let Err(error) =
+            && let Some(m) = [
+                "windmill",
+                "litehous",
+                "bigwindmill",
+                "waterwheel",
+                "snake",
+                "twister3",
+            ]
+            .iter()
+            .find(|name| url_flag(&format!("actorPlace={name}")))
+            .and_then(|name| {
+                let actors = actors.borrow();
+                let mcf = format!("{name}.mcf");
+                actors
+                    .collision
+                    .iter()
+                    .find(|b| {
+                        actors.actors[b.actor]
+                            .definition
+                            .mcf
+                            .eq_ignore_ascii_case(&mcf)
+                    })
+                    .map(|b| b.world_matrix)
+            })
+            && let Err(error) = if url_flag("actorPlace=twister3") {
+                // The funnel initially travels west at about 150 ft/s. Wait
+                // in its path instead of chasing it from the south.
+                riding.ride.place_beside(
+                    [m[12] - 100., m[13] + 6., m[14]],
+                    std::f32::consts::FRAC_PI_2,
+                    [0.; 3],
+                )
+            } else {
                 riding
                     .ride
                     .place_beside([m[12], m[13] + 6., m[14] - 40.], 0., [0., 0., 30.])
+            }
         {
             status(&format!("Unable to place beside the actor: {error}"));
         }
@@ -2420,6 +2445,7 @@ impl App {
                 let narrow = self.overlay.as_ref().is_some_and(|o| o.narrow());
                 let (vote, start) = qp.frame(
                     &state,
+                    net.rewards(),
                     me,
                     net.session_now() as f64,
                     net.server_ms(),
@@ -2435,6 +2461,11 @@ impl App {
                 }
                 quick_start = start;
                 quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
+                if let Some(sound) = &mut riding.sound {
+                    for name in qp.sounds.drain(..) {
+                        sound.one_shot(name);
+                    }
+                }
                 // Watching a round it joined late, the rider is parked (the
                 // server relays its pose to nobody meanwhile).
                 if riding.parked != qp.view.spectating {
@@ -3168,6 +3199,55 @@ impl App {
                 peers.extend(ready.cpus.iter().enumerate().map(|(i, c)| c.tag(i)));
                 Some(peers)
             };
+            // Local riders use the same per-camera directional tags as room riders.
+            // Labels include distance in world feet; never include the viewer itself.
+            let local_positions: Vec<_> = std::iter::once((1u8, frame.origin))
+                .filter(|_| !ready.split.is_empty())
+                .chain(
+                    ready
+                        .split
+                        .iter()
+                        .map(|s| (s.player, s.riding.ride.frame().origin)),
+                )
+                .collect();
+            let local_tags = |player: u8, origin: [f32; 3]| {
+                local_positions
+                    .iter()
+                    .filter(|(id, _)| *id != player)
+                    .map(|(id, position)| {
+                        let distance = position
+                            .iter()
+                            .zip(origin)
+                            .map(|(a, b)| (a - b) * (a - b))
+                            .sum::<f32>()
+                            .sqrt();
+                        atv_ui::hud::peers::Peer {
+                            slot: id - 1,
+                            name: format!("P{id} · {distance:.0} ft"),
+                            position: *position,
+                            stale: false,
+                            pill: None,
+                            map_only: false,
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let hud_peers = if ready.split.is_empty() {
+                hud_peers
+            } else {
+                let mut peers = local_tags(1, frame.origin);
+                peers.extend(hud_peers.unwrap_or_default());
+                Some(peers)
+            };
+            let split_peers: Vec<Vec<_>> = ready
+                .split
+                .iter()
+                .map(|s| {
+                    let mut peers = local_tags(s.player, s.riding.ride.frame().origin);
+                    peers.extend(game_peers.clone().unwrap_or_default());
+                    peers
+                })
+                .collect();
             // Split screen: each view projects at its own rectangle's aspect
             // (transposed when turned toward a player at a side edge).
             let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
@@ -3273,9 +3353,9 @@ impl App {
                                     .filter(|t| t.local)
                                     .map(|t| t.view_for(index))
                             }),
-                        peers: game_peers.as_deref().map(|peers| {
+                        peers: split_peers.get(index - 1).map(|peers| {
                             (
-                                peers,
+                                peers.as_slice(),
                                 ride.frame().origin,
                                 s.camera.view_projection(
                                     rects
@@ -3667,7 +3747,10 @@ impl App {
                         serde_json::json!({"count": actors.actors.len(),
                         "collision": collision,
                         "collisionUnresolved": actors.collision_unresolved.len(),
-                        "dynamicContacts": riding.ride.frame().dynamic_contact_count,
+                        "dynamicContacts": riding.ride.frame().dynamic_contact_count + riding.ride.frame().dynamic_secondary_contacts,
+                        "velocity": riding.ride.frame().linear_velocity,
+                        "angularVelocity": riding.ride.frame().local_angular_velocity,
+                        "grounded": riding.ride.frame().grounded,
                         "vehicle": riding.ride.frame().origin,
                         "models": actors.models.len(), "clips": actors.clips.len(),
                         "steps": actors.steps(), "visible": visible, "culled": culled,
@@ -5928,6 +6011,11 @@ impl ApplicationHandler<Message> for App {
                 .unwrap_or_else(|| server_for(&site, None));
             self.online.endpoints = Some((site, server));
             self.online.name = options.room.as_ref().map(|r| r.name.clone());
+            // Joining a room is using something online: a first-time rider
+            // registers (a Quick Play claim waits for it).
+            if options.room.is_some() {
+                self.online.wanted = Some(true);
+            }
         }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
@@ -6021,6 +6109,7 @@ impl ApplicationHandler<Message> for App {
             cpus: game_cpu::Request::default(),
             user_course: None,
             editor: false,
+            lamps: false,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -8297,7 +8386,8 @@ impl App {
                 quad,
                 rider,
                 name,
-            } => self.start_quick_play(playlist, None, quad, rider, name),
+                room,
+            } => self.start_quick_play(playlist, None, room, quad, rider, name),
             Event::RoomRide {
                 quad,
                 rider,
@@ -8909,6 +8999,7 @@ impl App {
                 .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
                 .and(self.user_course.clone()),
             editor: race.is_none() && self.editor.is_some(),
+            lamps: false,
             // Only a local game or a plain free ride takes CPU riders
             // (never a room, a race, an objective, Training or the editor).
             cpus: if self.cpu_request.roam {
@@ -9050,7 +9141,8 @@ impl App {
                     r.difficulty == 2,
                 )
             });
-        let (world, ride) = self.ride_setup(&front, quad, rider, race);
+        let (mut world, ride) = self.ride_setup(&front, quad, rider, race);
+        world.lamps = room.is_some();
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
@@ -10632,6 +10724,7 @@ impl App {
         &mut self,
         playlist: u8,
         avoid: Option<String>,
+        room: Option<String>,
         quad: u16,
         rider: u16,
         name: String,
@@ -10663,7 +10756,7 @@ impl App {
             code: None,
             host: false,
             freeride: false,
-            quickplay: Some((playlist, avoid)),
+            quickplay: Some((playlist, avoid, room)),
             name,
             drop_after: None,
             train_place: None,
@@ -10695,7 +10788,14 @@ impl App {
         if !self.quit_to(Some("quickplay")) {
             return;
         }
-        self.start_quick_play(playlist, Some(code), quad, rider, name.unwrap_or_default());
+        self.start_quick_play(
+            playlist,
+            Some(code),
+            None,
+            quad,
+            rider,
+            name.unwrap_or_default(),
+        );
     }
 
     /// The server made this rider the round's driver: start the round as
@@ -10893,6 +10993,7 @@ impl App {
             cpus: game_cpu::Request::default(),
             user_course: None,
             editor: false,
+            lamps: true,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -11381,7 +11482,8 @@ pub fn start() {
             drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
             train_place: param("trainPlace").and_then(|v| v.parse().ok()),
             freeride: false,
-            quickplay: quickplay.map(|p| (p, None)),
+            // `quickplayRoom=QPR00001`: a friend's room first (tests).
+            quickplay: quickplay.map(|p| (p, None, param("quickplayRoom"))),
         }),
         // `script=storage` reads a long parity script from localStorage
         // `furyScript` (URLs are bounded).

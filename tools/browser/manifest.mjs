@@ -31,6 +31,10 @@ export const TESTS = {
     group: 'manual', timeout: 3600,
     reason: 'Full MX import acceptance; requires private staged MX packages and a supported runtime, or ATV_MX_MAPS for a focused subset'
   },
+  'test_engine_mx_foliage.mjs': {
+    group: 'manual', timeout: 900,
+    reason: 'The Glades host pixel regression uses a fixed GPU crop and private MX content; it is not a physical-phone or native-render comparison'
+  },
   'test_engine_classic_freestyle.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },

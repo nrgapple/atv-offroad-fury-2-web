@@ -37,6 +37,8 @@ pub struct Vegetation {
     /// Shared with the renderer, which selects every frame.
     pub selection: Rc<RefCell<Selection>>,
     pub lighting: ecosystem::Lighting,
+    /// MX v2 foliage needs a one-byte alpha-test margin at full coverage.
+    pub mx_alpha_margin: bool,
 }
 
 pub fn load(
@@ -136,6 +138,10 @@ pub fn load(
     };
     let selection = Selection::new(data, ground, &config)?;
     Ok(Some(Vegetation {
+        mx_alpha_margin: archive
+            .members
+            .iter()
+            .any(|m| m.name.to_ascii_lowercase().ends_with(".ps2.trn")),
         groups,
         billboard: billboard.map(|(b, _)| b),
         selection: Rc::new(RefCell::new(selection)),

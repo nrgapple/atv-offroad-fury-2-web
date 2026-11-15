@@ -1,0 +1,19 @@
+{
+  "id": "ventura-county-tornado-motion-and-contacts-915c7e19823f4bb293c8a6b89c5341c2",
+  "timestamp": "2026-11-15T01:35:23.418309+00:00",
+  "recorded_at": "2026-11-15T01:35:23.418309+00:00",
+  "kind": "build",
+  "title": "Ventura County tornado motion and contacts",
+  "summary": "Restore the recovered tornado material scrolling and decode the twister compound collision sections in the shared Rust engine.",
+  "details": [
+    "The actor shader now applies the three distinct UV-scroll rates declared by the FREE06 twister materials.",
+    "A bounded decoder reads ten type-0 sections of each twister3 compound placement, creating thirty collision bodies across the three placements. Moving-body contacts follow current and prior MOT node transforms.",
+    "Exact-build evidence: function 0032d330 builds the node table with engine root at index 0, then reads each section node ID and type-0 mesh. Function 0032c490 preserves each section previous transform and computes its current transform from the animated attached node.",
+    "Host-only native debug fixture of the current code: a stationary quad at tornado-relative offset [-100, 6, 0] received 17 contact steps, peak upward velocity 76.600716 ft/s (about 52 mph), and peak angular velocity 26.073776 rad/s. Offset [-100, 6, -40] received seven contact steps, 29.401508 ft/s upward velocity and 6.081401 rad/s angular velocity; offset [-100, 6, 40] missed with zero contacts. Assertions for the native test are being finalized.",
+    "The original focused browser windmill check passed with 24 contacts. The first tornado approach missed because the rider drove north while the funnel moved west. The browser hook now parks the ATV in the funnel path without throttle; the updated browser run awaits its CI artifact. Upward velocity above 8 ft/s and angular disturbance above 1 rad/s remain the browser acceptance thresholds, with no passing browser tornado result claimed.",
+    "Inspected fixed-camera screenshots from checked artifact 8409c9f7 show a fully framed funnel at actor times 0.267 s and 2.083 s, with visible position and texture-pattern changes. Node motion also changes, so the images do not isolate UV scrolling. The attached first frame is awaiting R2 gallery publication."
+  ],
+  "limitation": "Native contact evidence is host-only. Updated browser tornado acceptance, exact original PS2 player-response and impulse parity, and physical-device checks remain unverified. Screenshot gallery publication is pending.",
+  "image": "/devlog-images/ventura-county-tornado-motion-and-contacts-915c7e19823f4bb293c8a6b89c5341c2.png",
+  "caption": "FREE06 tornado from checked artifact 8409c9f7 at actor time 0.267 s; fixed-camera frame inspected before pending gallery publication."
+}

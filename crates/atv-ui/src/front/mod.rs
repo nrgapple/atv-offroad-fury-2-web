@@ -1687,7 +1687,7 @@ fn all_courses(hovered: bool) -> El {
         .paint(Paint::fill(Color::hex("#1b1500")).radius(1.))
     };
     let glyph = El::new(column(3.)).child(bar()).child(bar()).child(bar());
-    let mut style = absolute(None, None, Some(8.), Some(0.));
+    let mut style = absolute(None, None, Some(0.), Some(0.));
     style.inset.right = LengthPercentageAuto::length(0.);
     style.display = Display::Flex;
     style.justify_content = JustifyContent::CENTER;
@@ -1700,7 +1700,6 @@ fn all_courses(hovered: bool) -> El {
     pill.position = Position::Relative;
     let mut button = El::new(pill)
         .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
-        .id(COURSES)
         .child(glyph)
         .child(text(
             "ALL COURSES",
@@ -1710,7 +1709,12 @@ fn all_courses(hovered: bool) -> El {
     if hovered {
         button = button.child(gold_wash());
     }
-    El::new(style).child(button)
+    // The 32px pill sits in a 48px touch target (8px clear above and below,
+    // where the pill stood before).
+    let mut target = row(0.);
+    target.min_size.height = length(48.);
+    target.padding = sides(0., 8., 0., 8.);
+    El::new(style).child(El::new(target).id(COURSES).child(button))
 }
 
 /// `.ms-pill`: Ride, Done and Press Start.

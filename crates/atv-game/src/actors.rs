@@ -116,19 +116,21 @@ pub struct Actors {
     cache: std::cell::RefCell<Vec<(PoseKey, NodePose)>>,
 }
 
-/// A `UseCollision` actor's original COL body. `0011e1d0` attaches it to the
-/// model's engine root, so its world transform is the placement and never
-/// follows the MOT; `0011e520` registers it in the scene's dynamic list.
+/// An original COL body in the scene's dynamic list. Type-0 actors attach
+/// to the engine root; compound sections attach to their indexed PSG node
+/// (`0032d330`) and retain its previous/current animated pose (`0032c490`).
 #[derive(Clone)]
 pub struct ActorCollision {
     pub actor: usize,
     pub mesh: Rc<atv_core::collision::CollisionMesh>,
     pub world_matrix: [f32; 16],
+    pub previous_matrix: [f32; 16],
+    /// Compound section's PSG node; None for a placement-fixed type-0 body.
+    pub node: Option<usize>,
 }
 
 impl ActorCollision {
-    /// The dynamic scene body: a placement-fixed transform whose prior and
-    /// current poses agree, so the moving-target velocity is zero.
+    /// Moving-target contact, with zero velocity for placement-fixed bodies.
     pub fn obstacle(&self) -> atv_core::scene_collision::DynamicObstacle {
         atv_core::scene_collision::DynamicObstacle {
             obstacle: atv_core::obstacle::StaticObstacle {
@@ -137,7 +139,7 @@ impl ActorCollision {
             },
             motion: atv_core::train::MotionState {
                 current: self.world_matrix,
-                previous: self.world_matrix,
+                previous: self.previous_matrix,
                 reciprocal_dt: 60.,
             },
         }
@@ -174,6 +176,21 @@ impl Actors {
     pub fn step(&mut self) {
         self.steps += 1;
         self.cache.get_mut().clear();
+        self.update_collision(false);
+    }
+
+    fn update_collision(&mut self, initial: bool) {
+        for i in 0..self.collision.len() {
+            let body = &self.collision[i];
+            let Some(node) = body.node else { continue };
+            let Some(pose) = self.pose(body.actor) else {
+                continue;
+            };
+            let world = multiply(&pose.placement, &pose.nodes[node]);
+            let body = &mut self.collision[i];
+            body.previous_matrix = if initial { world } else { body.world_matrix };
+            body.world_matrix = world;
+        }
     }
 
     /// The motion time of `actor` at the current step.
@@ -415,7 +432,37 @@ pub fn load(
                     },
                 });
             }
-            if let Some(path) = definition.collision_path() {
+            if definition.mcf.eq_ignore_ascii_case("twister3.mcf") && definition.use_collision {
+                let compound = find_member(archive, "twister3.col")
+                    .ok_or_else(|| "missing twister compound".to_string())
+                    .and_then(|i| archive.extract(i).map_err(|e| e.to_string()))
+                    .and_then(|b| atv_core::collision::decode_compound(&b))
+                    .and_then(|parts| {
+                        if parts.iter().any(|(node, mesh)| {
+                            *node >= actors.models[model].nodes.len()
+                                || mesh.transform
+                                    != [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.]
+                        }) {
+                            Err("unsupported twister compound binding".into())
+                        } else {
+                            Ok(parts)
+                        }
+                    });
+                match compound {
+                    Ok(parts) => {
+                        for (node, mesh) in parts {
+                            actors.collision.push(ActorCollision {
+                                actor: actors.actors.len(),
+                                mesh: Rc::new(mesh),
+                                world_matrix: placement,
+                                previous_matrix: placement,
+                                node: Some(node),
+                            });
+                        }
+                    }
+                    Err(reason) => actors.collision_unresolved.push((label.clone(), reason)),
+                }
+            } else if let Some(path) = definition.collision_path() {
                 let mesh = match cols.iter().find(|(p, _)| *p == path) {
                     Some((_, mesh)) => mesh.clone(),
                     None => {
@@ -446,6 +493,8 @@ pub fn load(
                         actor: actors.actors.len(),
                         mesh,
                         world_matrix,
+                        previous_matrix: world_matrix,
+                        node: None,
                     })
                 }) {
                     Ok(body) => actors.collision.push(body),
@@ -486,6 +535,7 @@ pub fn load(
             }
         }
     }
+    actors.update_collision(true);
     Ok(actors)
 }
 
