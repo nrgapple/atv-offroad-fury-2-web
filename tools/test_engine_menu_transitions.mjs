@@ -119,8 +119,12 @@ try {
   // Opening Pause over the ride: nothing to slide out.
   assertSlide(await record(page, 'pause', () => page.keyboard.press('Escape')), 'pause', 1, false);
   assert.equal((await read(page)).toolbar.menu.page, 'pause');
-  const pause = (await read(page)).toolbar.menu;
-  for (let i = 0; i < pause.choices.indexOf('settings'); i++) await key(page, 'ArrowDown');
+  // Down follows the rows as drawn, not ui_menu's choice order.
+  for (let i = 0; i < 12; i++) {
+    const m = (await read(page)).toolbar.menu;
+    if (m.choices[m.selection] === 'settings') break;
+    await key(page, 'ArrowDown');
+  }
   assertSlide(await record(page, 'pause', () => page.keyboard.press('Enter')), 'pause settings');
   assert.equal((await read(page)).toolbar.menu.page, 'settings');
   assertSlide(await record(page, 'pause', () => page.keyboard.press('Escape')), 'pause back', -1);

@@ -1,10 +1,14 @@
 //! Pause and its settings screens. atv_core::ui_menu owns the rows, labels,
 //! values and choice order exactly as for the browser; this module lays them
-//! out the way the frontend lays out the main menu (crate::front): a column
-//! of gold-bulleted rows with the gold selection pill, the page's name on
-//! its title band and Back bottom right. Over a ride the column sits on the
-//! left and the paused ride stays in view beside it; over the main menu the
-//! frontend's stage takes that side. One page shows at a time.
+//! out. Over a ride every page is the original in-game overlay
+//! (`Overlays.pb [Main Menu]`, research/MENU_SCREENS.md): a near-black
+//! rounded panel centred over the paused ride, the page's name on a faint
+//! strip, plain rows with the olive-gold capsule on the selected one, the
+//! left/right markers before value rows and the outlined black navigation
+//! pill across the panel's lower edge. Opened from the main menu, Options
+//! is a frontend page instead (crate::front): a column of gold-bulleted rows
+//! with the gold selection pill, the title band and Back bottom right,
+//! beside the frontend's stage. One page shows at a time.
 pub mod access;
 pub mod controller;
 pub mod credits;
@@ -203,6 +207,10 @@ const GOLD: Color = Color::hex("#f1d84e");
 /// Lettering on the gold pill that is not the label.
 const ON_GOLD: Color = Color::hex("#3a2e00");
 const SHADOW: Color = Color::hex("#000c");
+/// The overlay's unselected lettering (`UnselectedColor = 200,200,200`).
+const CLASSIC_TEXT: Color = Color::hex("#c8c8c8");
+/// `overlay_bkg01` tinted 10,10,10: its interior is alpha 122 of 255.
+const PANEL_FILL: Color = Color::hex("#0a0a0a7a");
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
     Font::display(size, weight, italic)
@@ -258,6 +266,21 @@ struct Look<'a> {
     column: f32,
     row: f32,
     font: f32,
+    /// Over a ride: the original overlay panel ([`Classic`]).
+    classic: Option<Classic>,
+}
+
+/// The original pause overlay's geometry, in CSS px. The source lays it out
+/// on a 640x448 screen; `s` scales those numbers.
+#[derive(Clone, Copy)]
+struct Classic {
+    s: f32,
+    /// The panel's width.
+    panel: f32,
+    /// Where a row's lettering starts inside the panel (source x 134 - 59).
+    text: f32,
+    /// The navigation pill's height (32 at source scale, a touch target).
+    nav: f32,
 }
 
 impl<'a> Look<'a> {
@@ -276,6 +299,23 @@ impl<'a> Look<'a> {
             (_, _, true) => ((h * 0.064).clamp(48., 60.), (w * 0.023).clamp(19., 27.)),
             (_, _, false) => ((h * 0.06).clamp(44., 52.), (w * 0.0155).clamp(17., 21.)),
         };
+        let gutter = (w * 0.032).clamp(16., 44.);
+        let classic = (!state.from_menu).then(|| {
+            let s = (w / 640.).min(h / 448.).clamp(0.8, 1.6);
+            let room = w - view.safe[1] - view.safe[3];
+            // The source panel is 522 wide on 448 lines: about 4:3.
+            let panel = if narrow {
+                room - 20.
+            } else {
+                (522. * (h / 448.).clamp(0.8, 1.6)).min(room - 2. * gutter)
+            };
+            Classic {
+                s,
+                panel,
+                text: 75. * s,
+                nav: (32. * s).max(44.),
+            }
+        });
         Self {
             state,
             images,
@@ -292,6 +332,7 @@ impl<'a> Look<'a> {
             },
             row,
             font,
+            classic,
         }
     }
 
@@ -329,6 +370,9 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             .children(notice(view, state));
     }
     let look = Look::new(view, state, images);
+    if let Some(c) = look.classic {
+        return overlay(&look, c).children(notice(view, state));
+    }
     let (w, h) = (look.w, look.h);
     let mut layer = El::new(Style {
         size: Size {
@@ -506,8 +550,29 @@ fn scroller(state: &State, mut content: El) -> El {
     .child(content.id(CONTENT))
 }
 
-/// `.ms-row::before`: the glossy gold pill running off the left edge.
-fn pill(look: &Look) -> El {
+/// `.ms-row::before`: the glossy gold pill running off the left edge. Over a
+/// ride, the original's capsule (`menuhighlight`) from just inside the
+/// panel's left edge to just inside its right (source x -42 to +415 of the
+/// lettering), centred in a row `row` tall.
+fn pill(look: &Look, row: f32) -> El {
+    if let Some(c) = look.classic {
+        let height = (look.font * 1.55).min(row - 2.);
+        return El::new(Style {
+            position: Position::Absolute,
+            inset: taffy::Rect {
+                left: LengthPercentageAuto::length(33. * c.s),
+                top: LengthPercentageAuto::length((row - height) / 2.),
+                right: LengthPercentageAuto::length(32. * c.s),
+                bottom: LengthPercentageAuto::auto(),
+            },
+            size: Size {
+                width: auto(),
+                height: length(height),
+            },
+            ..Default::default()
+        })
+        .paint(Paint::fill(capsule()).radius(height / 2.));
+    }
     El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
@@ -523,8 +588,25 @@ fn pill(look: &Look) -> El {
     ))
 }
 
-/// A row's label style: the frontend's `.ms-row` lettering.
-fn row_text(size: f32, selected: bool, hovered: bool) -> TextStyle {
+/// A row's label style: the frontend's `.ms-row` lettering, or over a ride
+/// the overlay's (`tradegothic_boldcondensed_22s`: 200 grey with its drop
+/// shadow; black on the capsule).
+fn row_text(look: &Look, size: f32, selected: bool, hovered: bool) -> TextStyle {
+    if look.classic.is_some() {
+        let color = if selected {
+            Color::BLACK
+        } else if hovered {
+            Color::WHITE
+        } else {
+            CLASSIC_TEXT
+        };
+        let style = TextStyle::new(display(size, 700, false), color).spacing(size * 0.06);
+        return if selected {
+            style
+        } else {
+            style.shadow(1., 2., 0., SHADOW)
+        };
+    }
     let color = if selected {
         INK
     } else if hovered {
@@ -543,6 +625,21 @@ fn row_text(size: f32, selected: bool, hovered: bool) -> TextStyle {
 /// A row's box: bullet, then what `fill` adds, the pill behind it when
 /// selected.
 fn row_box(look: &Look, height: f32, selected: bool) -> El {
+    if let Some(c) = look.classic {
+        // No bullet: the lettering starts at the source's column.
+        let mut el = line(0.);
+        el.style.position = Position::Relative;
+        el.style.min_size = Size {
+            width: length(0.),
+            height: length(height),
+        };
+        el.style.padding = sides(0., 32. * c.s + 14., 0., c.text);
+        el.style.flex_shrink = 0.;
+        if selected {
+            el = el.child(pill(look, height));
+        }
+        return el;
+    }
     let mut el = line(14.);
     el.style.position = Position::Relative;
     el.style.min_size = Size {
@@ -552,7 +649,7 @@ fn row_box(look: &Look, height: f32, selected: bool) -> El {
     el.style.padding = sides(0., 6., 0., 6.);
     el.style.flex_shrink = 0.;
     if selected {
-        el = el.child(pill(look));
+        el = el.child(pill(look, height));
     }
     el.child(crate::front::bullet_slot(selected))
 }
@@ -578,6 +675,18 @@ fn ellipsis(text: String, style: TextStyle, line_height: f32, grow: f32) -> El {
 
 /// A row's value between the arrows that step it (`.ms-stepper`).
 fn value(look: &Look, value: String, selected: bool) -> El {
+    if look.classic.is_some() {
+        // The source draws the value as a second text in the label's
+        // lettering, a little after it.
+        let mut el = ellipsis(
+            value,
+            row_text(look, look.font, selected, false),
+            look.font * 1.1,
+            0.,
+        );
+        el.style.margin = margins(0., 0., 0., look.font * 0.45);
+        return el;
+    }
     let size = look.font * 0.9;
     let mut style = TextStyle::new(
         display(size, 700, false),
@@ -621,11 +730,15 @@ fn row(look: &Look, rows: &Rows, id: u32, action: &str, selected: bool, hovered:
         None => (label.to_string(), String::new()),
     };
     let size = look.font;
-    let style = row_text(size, selected, hovered);
+    let style = row_text(look, size, selected, hovered);
     if action.starts_with("bind:") || action.starts_with("song:") {
         let detail = TextStyle::new(
             display(size * 0.72, 700, false),
-            if selected { ON_GOLD } else { MUTED },
+            match (selected, look.classic.is_some()) {
+                (true, true) => Color::hex("#1a1400"),
+                (true, false) => ON_GOLD,
+                _ => MUTED,
+            },
         );
         let glyph_row = look
             .state
@@ -647,6 +760,14 @@ fn row(look: &Look, rows: &Rows, id: u32, action: &str, selected: bool, hovered:
                 .child(glyph_row.unwrap_or_else(|| text(setting, detail, size * 0.9, true))),
         );
     }
+    if let Some(c) = look.classic.filter(|_| !setting.is_empty()) {
+        // "Music Volume: 70%", the markers before it (`ShowLeftRight`).
+        return row_box(look, look.row, selected)
+            .id(id)
+            .child(markers(look, c, selected))
+            .child(ellipsis(format!("{name}:"), style, size * 1.1, 0.))
+            .child(value(look, setting, selected));
+    }
     let mut el =
         row_box(look, look.row, selected)
             .id(id)
@@ -655,6 +776,30 @@ fn row(look: &Look, rows: &Rows, id: u32, action: &str, selected: bool, hovered:
         el = el.child(value(look, setting, selected));
     }
     el
+}
+
+/// `overlay_bulletoff` twice, left then right, before a row whose value
+/// steps (source x -34 and -16 of the lettering, 16 square).
+fn markers(look: &Look, c: Classic, selected: bool) -> El {
+    let size = (16. * c.s).max(14.);
+    let color = Color::hex(if selected { "#000" } else { "#5c5c5c" });
+    El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(c.text - 34. * c.s),
+            top: LengthPercentageAuto::length((look.row - size) / 2.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        display: Display::Flex,
+        gap: Size {
+            width: px(0.),
+            height: px(0.),
+        },
+        ..Default::default()
+    })
+    .child(crate::front::arrow(true, size, color, false))
+    .child(crate::front::arrow(false, size, color, false))
 }
 
 /// A slider: its name and value as a row, the track under them.
@@ -673,28 +818,32 @@ fn slider(look: &Look, id: u32, s: &Slider, selected: bool, hovered: bool) -> El
     if !selected {
         amount = amount.shadow(1., 2., 0., SHADOW);
     }
-    let head = row_box(look, (look.row - 8.).max(36.), selected)
-        .child(ellipsis(
-            s.label.clone(),
-            row_text(size, selected, hovered),
-            size * 1.1,
-            1.,
-        ))
-        .child(text(
-            format!("{}{units}", s.value.round() as i32),
-            amount,
-            size,
-            false,
-        ));
+    let label = row_text(look, size, selected, hovered);
+    let amount_text = format!("{}{units}", s.value.round() as i32);
+    let head = row_box(look, (look.row - 8.).max(36.), selected);
+    let head = if look.classic.is_some() {
+        head.child(ellipsis(format!("{}:", s.label), label, size * 1.1, 0.))
+            .child(value(look, amount_text, selected))
+    } else {
+        head.child(ellipsis(s.label.clone(), label, size * 1.1, 1.))
+            .child(text(amount_text, amount, size, false))
+    };
     let mut track = range(fill).id(id);
-    // Under the label, past the bullet.
-    track.style.margin = margins(0., 6., 0., 34.);
+    // Under the label, past the bullet (over a ride, under the lettering).
+    track.style.margin = match look.classic {
+        Some(c) => margins(0., 32. * c.s + 14., 0., c.text),
+        None => margins(0., 6., 0., 34.),
+    };
     col(0.).child(head).child(track)
 }
 
 /// A small dark chip with a short label: a list's actions, the pager, and
-/// Pause's sharing rows (`.ms-hint-back`). Gold while selected.
+/// Pause's sharing rows (`.ms-hint-back`). Gold while selected. Over a ride,
+/// an entry in the overlay's navigation pill's lettering.
 fn chip(look: &Look, label: &str, id: u32, selected: bool, hovered: bool) -> El {
+    if look.classic.is_some() {
+        return nav_item(look, label, id, selected, hovered, false);
+    }
     let size = if look.short { 15. } else { 16. };
     let color = if selected {
         INK
@@ -731,6 +880,9 @@ fn back(look: &Look, index: usize) -> El {
     let selected = state.selection == index;
     let hovered = state.hovered == Some(index) && !selected;
     let label = state.rows.label(action).unwrap_or("Back");
+    if look.classic.is_some() {
+        return nav_item(look, label, ROW + index as u32, selected, hovered, true);
+    }
     let size = if look.short { 15. } else { 17. };
     let color = if selected {
         INK
@@ -780,7 +932,11 @@ fn corner(look: &Look, mut el: El) -> El {
 /// The rows' column inside the scroller: clear of the gutter on the left.
 fn content(look: &Look, gap: f32) -> El {
     let mut el = col(gap);
-    el.style.padding = sides(2., look.right(), 12., look.left());
+    el.style.padding = if look.classic.is_some() {
+        sides(2., 0., 8., 0.)
+    } else {
+        sides(2., look.right(), 12., look.left())
+    };
     el
 }
 
@@ -839,6 +995,10 @@ fn pause(look: &Look) -> El {
             main = main.child(entry(i));
         }
     }
+    if look.classic.is_some() {
+        // The source lists Quit straight after the rest.
+        return content(look, 0.).child(main.children(leave.children));
+    }
     let mut el = content(look, if look.short { 6. } else { 12. }).child(main);
     if !leave.children.is_empty() {
         el = el.child(leave);
@@ -857,15 +1017,21 @@ fn body(look: &Look) -> (El, Option<El>) {
     let page = state.page.as_str();
     let selected = |i: usize| state.selection == i;
     let hovered = |i: usize| state.hovered == Some(i) && state.selection != i;
-    let mut content = content(look, 14.);
+    let mut content = content(look, if look.classic.is_some() { 8. } else { 14. });
     let mut list = col(2.);
     let mut audio = col(2.);
     let mut pager = line(8.);
-    pager.style.padding = sides(0., 0., 0., 6.);
+    pager.style.padding = match look.classic {
+        Some(c) => sides(0., 0., 0., c.text),
+        None => sides(0., 0., 0., 6.),
+    };
     let mut footer = line(8.);
     footer.style.flex_wrap = FlexWrap::Wrap;
     footer.style.flex_shrink = 0.;
-    footer.style.padding = sides(10., look.right(), 0., look.left() + 6.);
+    footer.style.padding = match look.classic {
+        Some(c) => sides(8., 14., 0., c.text),
+        None => sides(10., look.right(), 0., look.left() + 6.),
+    };
     for (i, action) in rows.choices.iter().enumerate() {
         let (id, action) = (ROW + i as u32, action.as_str());
         let label = rows.label(action).unwrap_or(action);
@@ -903,13 +1069,16 @@ fn body(look: &Look) -> (El, Option<El>) {
         for (label, status) in &state.roster {
             let mut rider = line(12.);
             rider.style.justify_content = JustifyContent::SPACE_BETWEEN;
-            rider.style.padding = sides(0., 6., 0., 34.);
+            rider.style.padding = match look.classic {
+                Some(c) => sides(0., 32. * c.s + 14., 0., c.text),
+                None => sides(0., 6., 0., 34.),
+            };
             rider.style.min_size.height = length(look.row);
             roster = roster.child(
                 rider
                     .child(text(
                         label.clone(),
-                        row_text(look.font, false, false),
+                        row_text(look, look.font, false, false),
                         look.font * 1.1,
                         true,
                     ))
@@ -972,7 +1141,10 @@ fn body(look: &Look) -> (El, Option<El>) {
 /// optional heading over it.
 fn aside(look: &Look, heading: Option<String>, lines: &[&str]) -> El {
     let mut el = col(8.);
-    el.style.margin = margins(0., 6., 0., 6.);
+    el.style.margin = match look.classic {
+        Some(c) => margins(0., 32. * c.s + 14., 0., c.text),
+        None => margins(0., 6., 0., 6.),
+    };
     el.style.padding = sides(4., 0., 4., 16.);
     el.style.border = sides(0., 0., 0., 3.);
     el.paint.border = [0., 0., 0., 3.];
@@ -980,7 +1152,7 @@ fn aside(look: &Look, heading: Option<String>, lines: &[&str]) -> El {
     if let Some(heading) = heading {
         el = el.child(text(
             heading,
-            row_text(look.font * 1.1, false, false),
+            row_text(look, look.font * 1.1, false, false),
             look.font * 1.4,
             true,
         ));
@@ -995,6 +1167,278 @@ fn aside(look: &Look, heading: Option<String>, lines: &[&str]) -> El {
         ));
     }
     el
+}
+
+/// Over a ride: the original overlay (`Overlays.pb [Main Menu]`), a panel
+/// centred over the paused ride (source 59..581 x 68..381 on 640x448) with
+/// the navigation pill across its lower edge. The page's own rows scroll
+/// inside it when a short screen cannot hold them.
+fn overlay(look: &Look, c: Classic) -> El {
+    let state = look.state;
+    let s = c.s;
+    let half = c.nav / 2.;
+    // A phone on its side cannot spare the pill's line under the rows: it
+    // moves up beside the title, inside the panel.
+    let low = !look.short;
+    let top = look.safe[0] + if low { 8. } else { 4. };
+    let bottom = look.safe[2] + if low { half + 6. } else { 4. };
+    let (content, footer) = if state.page == "pause" {
+        (pause(look), None)
+    } else {
+        body(look)
+    };
+    // Pause's sharing rows, or Back, in the navigation pill.
+    let mut items = Vec::new();
+    for (i, action) in state.rows.choices.iter().enumerate() {
+        let action = action.as_str();
+        if state.page == "pause" && PAUSE_CHIPS.contains(&action) {
+            items.push(chip(
+                look,
+                state.rows.label(action).unwrap_or(action),
+                ROW + i as u32,
+                state.selection == i,
+                state.hovered == Some(i) && state.selection != i,
+            ));
+        }
+    }
+    if let Some(i) = state
+        .rows
+        .choices
+        .iter()
+        .position(|c| BACK.contains(&c.as_str()))
+    {
+        items.push(back(look, i));
+    }
+    let status = state
+        .status
+        .as_ref()
+        .filter(|s| !s.is_empty())
+        .map(|status| {
+            let mut el = text(
+                status.clone(),
+                TextStyle::new(display(14., 600, false), Color::hex("#dcdcdc"))
+                    .shadow(1., 2., 0., SHADOW),
+                19.,
+                true,
+            );
+            el.style.flex_shrink = 0.;
+            el.style.padding = sides(0., 14., 8., c.text);
+            el
+        });
+    let mut panel = El::new(Style {
+        position: Position::Relative,
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        flex_shrink: 1.,
+        size: Size {
+            width: length(c.panel),
+            height: auto(),
+        },
+        max_size: Size {
+            width: auto(),
+            height: length(look.h - top - bottom),
+        },
+        padding: sides(
+            if low { 12. * s } else { 4. },
+            0.,
+            if items.is_empty() || !low {
+                10. * s
+            } else {
+                half + 6.
+            },
+            0.,
+        ),
+        border: sides(2., 2., 2., 2.),
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [10. * s; 4],
+        fill: Some(PANEL_FILL.into()),
+        border: [2.; 4],
+        border_color: Color::BLACK,
+        ..Default::default()
+    })
+    .child(if low || items.is_empty() {
+        classic_heading(look, c)
+    } else {
+        let mut head = line(8.).child(classic_heading(look, c)).child(nav(
+            look,
+            c,
+            std::mem::take(&mut items),
+        ));
+        head.style.justify_content = JustifyContent::SPACE_BETWEEN;
+        head.style.padding = sides(0., 10. * s, 0., 0.);
+        head.style.flex_shrink = 0.;
+        head
+    })
+    .children(status)
+    .child(scroller(state, content))
+    .children(footer);
+    if !items.is_empty() {
+        // Source 276..610 on a panel ending at 581: the pill runs past the
+        // panel's right edge where the screen has room.
+        let room = (look.w - look.safe[1] - look.safe[3] - c.panel) / 2.;
+        let past = (29. * s).min(room - 6.).max(-14.);
+        let mut nav = nav(look, c, items);
+        nav.style.position = Position::Absolute;
+        nav.style.inset = taffy::Rect {
+            left: LengthPercentageAuto::auto(),
+            top: LengthPercentageAuto::auto(),
+            right: LengthPercentageAuto::length(-past - 2.),
+            bottom: LengthPercentageAuto::length(-half - 4.),
+        };
+        panel = panel.child(nav);
+    }
+    let stage = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::length(0.),
+            bottom: LengthPercentageAuto::length(0.),
+        },
+        display: Display::Flex,
+        justify_content: JustifyContent::CENTER,
+        align_items: AlignItems::CENTER,
+        padding: sides(top, look.safe[1], bottom, look.safe[3]),
+        ..Default::default()
+    })
+    .child(panel);
+    // The source dims nothing; a light veil keeps the panel's lettering
+    // clear over bright snow.
+    El::new(Style {
+        size: Size {
+            width: length(look.w),
+            height: length(look.h),
+        },
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#00000033")))
+    .child(slide(stage, state))
+}
+
+/// The navigation pill (`overlay_navbar`): black, a grey outline, round ends.
+fn nav(look: &Look, c: Classic, items: Vec<El>) -> El {
+    let mut nav = line(4.).children(items);
+    nav.style.flex_shrink = 0.;
+    nav.style.padding = sides(0., 12. * c.s, 0., 12. * c.s);
+    nav.style.border = sides(2., 2., 2., 2.);
+    nav.style.max_size.width = length(look.w - look.safe[1] - look.safe[3] - 8.);
+    nav.paint(Paint {
+        radii: [c.nav / 2. + 2.; 4],
+        fill: Some(Color::hex("#000000f2").into()),
+        border: [2.; 4],
+        border_color: Color::hex("#a6a6a6"),
+        ..Default::default()
+    })
+}
+
+/// The overlay's title (`tradegothic_bci_neg1fs_32ds`, "Pause") on its faint
+/// strip (`overlay_titlebkg`: 200 grey at alpha 64, fading out to the right
+/// over half the panel).
+fn classic_heading(look: &Look, c: Classic) -> El {
+    let state = look.state;
+    let size = (32. * c.s).clamp(24., 46.) * if look.short { 0.85 } else { 1. };
+    let name = if state.page == "pause" {
+        "Pause"
+    } else {
+        heading_text(state, &state.page)
+    };
+    let style = TextStyle::new(display(size, 800, true), Color::hex("#e0e0e0"))
+        .spacing(size * 0.01)
+        .shadow(2., 2., 0., Color::hex("#000d"));
+    El::new(Style {
+        align_self: Some(AlignSelf::START),
+        flex_shrink: 0.,
+        // Half the panel (256 of 522), longer for a longer name.
+        size: Size {
+            width: percent(0.49),
+            height: auto(),
+        },
+        min_size: Size {
+            width: auto(),
+            height: auto(),
+        },
+        margin: margins(
+            0.,
+            0.,
+            if look.short { 4. } else { 10. * c.s },
+            2. * c.s - 2.,
+        ),
+        padding: sides(size * 0.06, 28. * c.s, size * 0.04, 14. * c.s),
+        ..Default::default()
+    })
+    .paint(Paint::fill(Fill::Linear(Gradient::new(
+        90.,
+        &[
+            (0., Color::hex("#c8c8c840")),
+            (0.37, Color::hex("#c8c8c840")),
+            (0.75, Color::hex("#c8c8c816")),
+            (1., Color::hex("#c8c8c800")),
+        ],
+    ))))
+    .content(Content::Text {
+        text: name.into(),
+        style,
+        line_height: size * 1.05,
+        wrap: false,
+    })
+}
+
+/// An entry in the overlay's navigation pill (where the source shows its
+/// X Select hint): the 200 grey lettering, on the capsule while selected.
+fn nav_item(look: &Look, label: &str, id: u32, selected: bool, hovered: bool, back: bool) -> El {
+    let c = look.classic.expect("over a ride");
+    let size = (22. * c.s * 0.8).clamp(15., 21.);
+    let color = if selected {
+        Color::BLACK
+    } else if hovered {
+        Color::WHITE
+    } else {
+        CLASSIC_TEXT
+    };
+    let mut style = TextStyle::new(display(size, 700, false), color).spacing(size * 0.05);
+    if !selected {
+        style = style.shadow(1., 2., 0., SHADOW);
+    }
+    let mut el = line(6.);
+    el.style.min_size = Size {
+        width: length(44.),
+        height: length(c.nav),
+    };
+    el.style.padding = sides(0., 12. * c.s.max(1.), 0., 12. * c.s.max(1.));
+    el.style.justify_content = JustifyContent::CENTER;
+    el.style.flex_shrink = 0.;
+    if selected {
+        el = el.paint(Paint::fill(capsule()).radius(c.nav / 2.));
+    }
+    if back {
+        el = el.child(crate::front::arrow(true, 14., color, false));
+    }
+    el.id(id).child(text(label, style, size, false))
+}
+
+/// `menuhighlight`: the overlay's olive-gold capsule, shaded top to bottom
+/// as the source texture is (a dark rim, a bright gloss line, a darker
+/// middle that lightens again, then a black lower edge).
+fn capsule() -> Fill {
+    Fill::Linear(Gradient::new(
+        180.,
+        &[
+            (0., Color::hex("#4f4009")),
+            (0.07, Color::hex("#b9992b")),
+            (0.14, Color::hex("#c3bf7f")),
+            (0.21, Color::hex("#b9aa2c")),
+            (0.28, Color::hex("#988a11")),
+            (0.36, Color::hex("#826a0e")),
+            (0.5, Color::hex("#91750f")),
+            (0.64, Color::hex("#9f7f11")),
+            (0.78, Color::hex("#aa8c13")),
+            (0.86, Color::hex("#a48612")),
+            (0.93, Color::hex("#473a08")),
+            (1., Color::hex("#000000")),
+        ],
+    ))
 }
 
 /// The moving part of a menu page alone: its panel, without the dim

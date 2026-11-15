@@ -7,6 +7,16 @@ checkpoint ports the existing authored mobile controls and Pause/Camera toolbar;
 it does not claim original PS2 menu, HUD, or whole-game parity. The existing
 JavaScript game remains available while the Rust preview catches up.
 
+### Toolbar look (2026-11-14)
+
+The original game draws no on-screen buttons over a ride. The port still
+needs Pause and Camera for touch, but they are now bare icons in the race
+HUD's style: the overlay silver (190 grey) with the overlays' dark
+`#080808bb` outline, gold (218,192,31) while pressed, with no labels or
+boxes. Chat (rooms) and Gate/Undo (Waypoint Editor) follow the same way.
+The KEYS button is gone; H toggles the keyboard card, which lists it.
+Each icon keeps a 44 CSS px target.
+
 ## Ownership and behavior
 
 `atv-app::overlay` routes winit touch, mouse and resize/focus events. `atv-ui`
