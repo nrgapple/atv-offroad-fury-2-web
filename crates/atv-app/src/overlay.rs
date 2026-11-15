@@ -788,10 +788,6 @@ impl Overlay {
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
                     Some(toolbar::Button::Camera) => Some(Action::Camera),
-                    Some(toolbar::Button::Keys) => {
-                        self.toggle_help();
-                        None
-                    }
                     Some(toolbar::Button::Gate) => {
                         Some(Action::Gate(crate::waypoint_editor::Command::Drop))
                     }
@@ -1167,41 +1163,11 @@ impl Overlay {
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
         let map_visible = self.minimap.visible() && !paused && race.is_none();
-        let keys_visible = !touch_driving;
         let chat = shown.and_then(|h| h.chat).filter(|c| c.available);
         self.chat_shown = chat.is_some();
         if chat.is_none() {
             self.chat.open = false;
         }
-        // A large top-right map can meet the labelled toolbar: icon-only buttons.
-        let labels: f32 = ["PAUSE", "CAMERA", "KEYS"]
-            .iter()
-            .take(if keys_visible { 3 } else { 2 })
-            .chain(chat.map(|_| &"CHAT"))
-            .map(|label| {
-                let style = toolbar::label_style(atv_ui::Color::WHITE);
-                12. + 20.
-                    + 8.
-                    + self
-                        .fonts
-                        .measure(label, &style.font, style.letter_spacing)
-                        .width
-                    + 12.
-            })
-            .sum();
-        let count = if keys_visible { 3. } else { 2. } + if chat.is_some() { 1. } else { 0. };
-        let bar_right = view.safe[3].max(14.) + labels + 8. * (count - 1.);
-        let bar_top = view.safe[0].max(14.);
-        let map = self.minimap.rect(&view);
-        let compact = map_visible
-            && !self.minimap.settings.bottom_left
-            && bar_right + 8. > map.x
-            && bar_top < map.bottom();
-        // Show FPS keeps clear of the toolbar and a top-right map.
-        self.fps_clear = (
-            bar_right,
-            (map_visible && !self.minimap.settings.bottom_left).then_some(map),
-        );
         // Shared actions belong to player 1, including their hit rectangles.
         let toolbar_frame = frames[0];
         let toolbar_view = atv_ui::hud::Viewport {
@@ -1223,12 +1189,15 @@ impl Overlay {
                 .as_ref()
                 .and_then(|p| toolbar::Button::from_id(p.button)),
             camera_enabled,
-            keys_enabled: active,
-            keys_visible,
-            compact: compact || (second.is_some() && hw < 500.),
             editor: self.editor,
             chat: chat.is_some(),
         };
+        // Show FPS keeps clear of the toolbar and a top-right map.
+        let map = self.minimap.rect(&view);
+        self.fps_clear = (
+            view.safe[3].max(14.) + toolbar::width(&state),
+            (map_visible && !self.minimap.settings.bottom_left).then_some(map),
+        );
         let full = |child: layout::El| {
             layout::El::new(taffy::Style {
                 size: taffy::Size {
@@ -2570,7 +2539,6 @@ impl Overlay {
                 })),
                 "pillArt": self.meter.as_ref().is_some_and(|m| m.pills.is_some()),
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
-                "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
                 "minimap": {
                     "visible": self.minimap.visible(),
                     "headingUp": self.minimap.settings.heading_up,
