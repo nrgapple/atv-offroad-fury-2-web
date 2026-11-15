@@ -194,7 +194,12 @@ fn medal_row(medal: atv_core::medals::Medal, new: bool, reveal: f32) -> El {
                 padding: sides(2., 8., 2., 8.),
                 ..Default::default()
             })
-            .paint(Paint::fill(Color::hex("#f6e061")).radius(4.))
+            .paint(
+                Paint::fill(gold_pill())
+                    .radius(5.)
+                    .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")))
+                    .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009"))),
+            )
             .child(text(
                 "NEW",
                 TextStyle::new(display(13., 800, false), Color::hex("#0d0b00")).spacing(0.8),

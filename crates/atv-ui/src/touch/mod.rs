@@ -192,6 +192,11 @@ impl TouchControls {
         self.kid
     }
 
+    /// A finger is driving.
+    pub fn held(&self) -> bool {
+        self.held
+    }
+
     /// Kid Mode: a finger is down (GO).
     pub fn kid_go(&self) -> bool {
         self.kid && self.kid_fingers.iter().any(Option::is_some)

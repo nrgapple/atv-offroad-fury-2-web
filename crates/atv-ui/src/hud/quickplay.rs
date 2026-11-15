@@ -4,13 +4,12 @@
 //! uses the same panel: ready ticks, and for its host Start, the mode, CPU
 //! fill and Skip; a rider watching the round cycles the riders it follows. A port addition; no text
 //! walls (research/MULTIPLAYER_EXPERIENCE.md "UI rules"): short labels,
-//! numbers, colors and timers. Touch targets are at least 48 px.
-use super::Viewport;
+//! numbers, colors and timers. Touch targets are at least 48 px. Drawn with
+//! the classic HUD pieces (research/UI_AUDIT_HUD.md).
+use super::{Viewport, classic};
 use crate::{
     color::Color,
-    layout::{Content, El, Paint, margins, sides},
-    menu::gold_pill,
-    paint::BoxShadow,
+    layout::{El, Paint, sides},
     text::{Font, TextStyle},
 };
 use taffy::prelude::*;
@@ -60,6 +59,9 @@ pub struct CardView {
     /// The mode word ("Race", "Hills", "Treasure", "Stunts", "Random").
     pub mode: String,
     pub track: String,
+    /// The venue's environment id ("nat01"), for its photo; empty for
+    /// Random.
+    pub venue: String,
     pub votes: u8,
     /// This rider's choice.
     pub chosen: bool,
@@ -161,54 +163,6 @@ pub fn buttons(view: &View) -> Vec<u32> {
     }
 }
 
-fn font(size: f32, weight: u16) -> Font {
-    Font::display(size, weight, false)
-}
-
-fn text(value: &str, size: f32, weight: u16, color: Color) -> El {
-    El::new(Style::default()).content(Content::Text {
-        text: value.into(),
-        style: TextStyle::new(font(size, weight), color),
-        line_height: size * 1.2,
-        wrap: false,
-    })
-}
-
-fn wrapped(value: &str, size: f32, weight: u16, color: Color) -> El {
-    El::new(Style {
-        max_size: Size {
-            width: percent(1.),
-            height: auto(),
-        },
-        ..Default::default()
-    })
-    .content(Content::Text {
-        text: value.into(),
-        style: TextStyle::new(font(size, weight), color),
-        line_height: size * 1.15,
-        wrap: true,
-    })
-}
-
-fn row(gap: f32, wrap: bool) -> Style {
-    Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Row,
-        flex_wrap: if wrap {
-            FlexWrap::Wrap
-        } else {
-            FlexWrap::NoWrap
-        },
-        align_items: AlignItems::CENTER,
-        justify_content: JustifyContent::CENTER,
-        gap: Size {
-            width: length(gap),
-            height: length(gap),
-        },
-        ..Default::default()
-    }
-}
-
 fn column(gap: f32) -> Style {
     Style {
         display: Display::Flex,
@@ -222,269 +176,184 @@ fn column(gap: f32) -> Style {
     }
 }
 
-fn focus_ring(paint: Paint) -> Paint {
-    paint.shadow(BoxShadow {
-        spread: 3.,
-        ..BoxShadow::outer(0., 0., 0., Color::hex("#f6e061d9"))
-    })
+/// The phase's seconds as the race HUD letters its clock.
+fn timer(seconds: Option<u32>) -> Option<El> {
+    seconds.map(|s| classic::hud_text(s.to_string(), 30., classic::GOLD))
 }
 
-fn button(id: u32, label: &str, primary: bool, focused: bool) -> El {
-    let mut paint = if primary {
-        Paint::fill(gold_pill()).shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009")))
+fn short(name: &str, max: usize) -> String {
+    let mut out: String = name.chars().take(max).collect();
+    if name.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+/// The seats as MultiATVRiderSelect's player plates, in the player colours
+/// by seat (repeating past four): the name, a HOST or CPU marker, ping bars
+/// and a tick once ready (or voted); open seats are plain silver.
+fn seats(view: &View, width: f32) -> El {
+    let per = if view.narrow { 2 } else { 4 };
+    let plate_w = classic::card_width(width, per);
+    let plates = view
+        .seats
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let marker = if s.host {
+                Some("HOST")
+            } else if s.cpu {
+                Some("CPU")
+            } else {
+                None
+            };
+            classic::plate(
+                i,
+                &s.name,
+                marker,
+                s.ping,
+                s.ready || s.voted,
+                s.me,
+                false,
+                plate_w,
+            )
+        })
+        .chain((0..view.open).map(|i| {
+            classic::plate(
+                view.seats.len() + i,
+                "",
+                None,
+                None,
+                false,
+                false,
+                true,
+                plate_w,
+            )
+        }))
+        .collect();
+    classic::grid(plates)
+}
+
+/// A vote card as Select Track shows a track: its photo in the gold frame,
+/// the votes in gold, the track and its mode.
+fn card(
+    id: Option<u32>,
+    card: &CardView,
+    focused: bool,
+    width: f32,
+    photo: &dyn Fn(&str) -> Option<classic::Photo>,
+) -> El {
+    let kind = if card.venue.is_empty() {
+        ""
     } else {
-        Paint::fill(Color::hex("#ffffff1f"))
+        &card.mode
+    };
+    let name = if card.venue.is_empty() {
+        card.mode.as_str()
+    } else {
+        card.track.as_str()
+    };
+    classic::card(
+        id,
+        name,
+        kind,
+        card.votes,
+        card.chosen,
+        focused,
+        photo(&card.venue),
+        card.venue.is_empty().then_some("?"),
+        width,
+    )
+}
+
+/// The round's standings on the silver sheet: place (gold, silver and
+/// bronze for the podium), rider, the time or points, and the league points
+/// earned when any are; the player's row on the gold pill.
+fn standings(view: &View) -> El {
+    let league = view.rows.iter().any(|r| r.points.is_some());
+    let lines: Vec<classic::Line> = view
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut cells = vec![r.name.clone(), r.value.clone()];
+            if league {
+                cells.push(r.points.clone().unwrap_or_else(|| "-".into()));
+            }
+            classic::Line {
+                cells,
+                place: Some(i + 1),
+                me: r.me,
+                dim: r.dnf,
+            }
+        })
+        .collect();
+    let mut columns = vec![
+        classic::Column {
+            label: "RIDER",
+            right: false,
+        },
+        classic::Column {
+            label: if view.playlist == "Race" {
+                "TIME"
+            } else {
+                "POINTS"
+            },
+            right: true,
+        },
+    ];
+    if league {
+        columns.push(classic::Column {
+            label: "LEAGUE",
+            right: true,
+        });
     }
-    .radius(8.);
-    if focused {
-        paint = focus_ring(paint);
-    }
+    classic::table(&columns, &lines)
+}
+
+/// Level n, its bar filling (the menu sliders' track), the XP gained and
+/// the league tier in small dark-gold capitals, lettered dark on the silver.
+fn level_strip(level: &LevelView, width: f32) -> El {
+    let bar = 150f32.min(width - 220.).max(60.);
+    let pulse = 1. + 0.25 * (level.beat * std::f32::consts::PI).sin().max(0.);
+    let tier = format!("{}{}", level.tier, if level.tier_up { " ▲" } else { "" });
     El::new(Style {
         display: Display::Flex,
+        flex_wrap: FlexWrap::Wrap,
         align_items: AlignItems::CENTER,
         justify_content: JustifyContent::CENTER,
-        min_size: Size {
-            width: length(132.),
-            height: length(52.),
-        },
-        padding: sides(0., 24., 0., 24.),
-        ..Default::default()
-    })
-    .id(id)
-    .paint(paint)
-    .child(text(
-        label,
-        20.,
-        800,
-        if primary {
-            Color::hex("#0d0b00")
-        } else {
-            Color::hex("#f2f2f2")
-        },
-    ))
-}
-
-/// Ping bars: green under 80 ms, yellow to 150, red above.
-fn ping_bars(ping: u16) -> El {
-    let (lit, color) = match ping {
-        0..80 => (3, "#55d66b"),
-        80..=150 => (2, "#f2c84b"),
-        _ => (1, "#ef5b50"),
-    };
-    El::new(Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Row,
-        align_items: AlignItems::END,
         gap: Size {
-            width: length(2.),
-            height: length(0.),
+            width: length(10.),
+            height: length(4.),
         },
-        margin: margins(0., 0., 0., 6.),
+        padding: sides(2., 6., 2., 6.),
         ..Default::default()
     })
-    .children((0..3).map(move |i| {
-        El::new(Style {
-            size: Size {
-                width: length(4.),
-                height: length(5. + i as f32 * 4.),
-            },
-            ..Default::default()
-        })
-        .paint(Paint::fill(Color::hex(if i < lit { color } else { "#ffffff33" })).radius(1.))
-    }))
-}
-
-fn chip(seat: Option<&SeatView>, narrow: bool) -> El {
-    let width = if narrow { 150. } else { 136. };
-    let style = Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Row,
-        align_items: AlignItems::CENTER,
-        size: Size {
-            width: length(width),
-            height: length(36.),
-        },
-        padding: sides(0., 10., 0., 10.),
-        ..Default::default()
-    };
-    let Some(seat) = seat else {
-        return El::new(style)
-            .paint(Paint::fill(Color::hex("#ffffff0f")).radius(18.))
-            .child(text("• • •", 16., 700, Color::hex("#ffffff59")));
-    };
-    let fill = if seat.me {
-        Color::hex("#f6dc4a40")
-    } else {
-        Color::hex("#0000008c")
-    };
-    let mut name: String = seat.name.chars().take(11).collect();
-    if seat.ready || seat.voted {
-        name.push_str(" ✓");
-    }
-    let mut el = El::new(style).paint(Paint::fill(fill).radius(18.)).child(
-        El::new(Style {
-            flex_grow: 1.,
-            min_size: Size {
-                width: length(0.),
-                height: auto(),
-            },
-            ..Default::default()
-        })
-        .child(text(&name, 16., 700, Color::hex("#f4f4f4"))),
-    );
-    if seat.host {
-        el = el.child(
-            El::new(Style {
-                padding: sides(1., 6., 1., 6.),
-                ..Default::default()
-            })
-            .paint(Paint::fill(gold_pill()).radius(4.))
-            .child(text("HOST", 12., 800, Color::hex("#0d0b00"))),
-        );
-    }
-    if seat.cpu {
-        el = el.child(
-            El::new(Style {
-                padding: sides(1., 6., 1., 6.),
-                ..Default::default()
-            })
-            .paint(Paint::fill(Color::hex("#5b8def")).radius(4.))
-            .child(text("CPU", 12., 800, Color::hex("#ffffff"))),
-        );
-    }
-    if let Some(ping) = seat.ping {
-        el = el.child(ping_bars(ping));
-    }
-    el
-}
-
-fn card(index: usize, card: &CardView, focused: bool, narrow: bool, big: bool) -> El {
-    let width = if big {
-        260.
-    } else if narrow {
-        150.
-    } else {
-        140.
-    };
-    let mode_color = match card.mode.as_str() {
-        "Race" => "#f6dc4a",
-        "Hills" => "#ef8b3c",
-        "Treasure" => "#55d66b",
-        "Stunts" => "#e86bd9",
-        _ => "#9fb7ff",
-    };
-    let mut paint = Paint::fill(Color::hex(if card.chosen {
-        "#f6dc4a33"
-    } else {
-        "#000000a6"
-    }))
-    .radius(10.);
-    if card.chosen {
-        paint.border = [2.; 4];
-        paint.border_color = Color::hex("#f6dc4a");
-    }
-    if focused {
-        paint = focus_ring(paint);
-    }
-    let mut el = El::new(Style {
-        size: Size {
-            width: length(width),
-            height: auto(),
-        },
-        min_size: Size {
-            width: auto(),
-            height: length(if big { 110. } else { 96. }),
-        },
-        padding: sides(10., 10., 10., 10.),
-        ..column(6.)
-    })
-    .paint(paint)
-    .child(text(
-        &card.mode,
-        if big { 22. } else { 17. },
-        800,
-        Color::hex(mode_color),
+    .child(classic::text(
+        format!("Lv {}", level.level),
+        TextStyle::new(Font::display(22. * pulse, 800, true), classic::INK),
+        24. * pulse,
     ))
-    .child(wrapped(
-        &card.track,
-        if big { 20. } else { 15. },
-        700,
-        Color::hex("#f2f2f2"),
-    ));
-    if !big {
-        el = el.id(CARD + index as u32).child(text(
-            &if card.votes > 0 {
-                format!("● {}", card.votes)
-            } else {
-                " ".into()
-            },
-            16.,
-            800,
-            Color::hex("#f6dc4a"),
-        ));
-    }
-    el
+    .child(classic::meter(level.fill, bar))
+    .child(classic::text(
+        &level.gain,
+        classic::ink(16., 800, classic::BODY),
+        18.,
+    ))
+    .child(classic::caps(tier, classic::DARK_GOLD))
+    .children(
+        level
+            .level_up
+            .then(|| classic::hud_text("LEVEL UP!", 20. * pulse, classic::VALUE)),
+    )
 }
 
-/// A "+35" points chip.
-fn points(value: &str) -> El {
-    El::new(Style {
-        padding: sides(1., 8., 1., 8.),
-        ..Default::default()
-    })
-    .paint(Paint::fill(Color::hex("#2f9e4a")).radius(10.))
-    .child(text(value, 14., 900, Color::hex("#ffffff")))
-}
-
-/// Level n, its bar filling, the XP gained and the league tier.
-fn level_strip(level: &LevelView, width: f32) -> El {
-    let bar = 150f32.min(width - 160.).max(60.);
-    let pulse = 1. + 0.25 * (level.beat * std::f32::consts::PI).sin().max(0.);
-    let mut strip = El::new(row(10., true))
-        .child(text(
-            &format!("Lv {}", level.level),
-            20. * pulse,
-            900,
-            Color::hex(if level.level_up { "#f6dc4a" } else { "#f4f4f4" }),
-        ))
-        .child(
-            El::new(Style {
-                size: Size {
-                    width: length(bar),
-                    height: length(10.),
-                },
-                ..Default::default()
-            })
-            .paint(Paint::fill(Color::hex("#ffffff26")).radius(5.))
-            .child(
-                El::new(Style {
-                    size: Size {
-                        width: length(bar * level.fill.clamp(0., 1.)),
-                        height: length(10.),
-                    },
-                    ..Default::default()
-                })
-                .paint(Paint::fill(gold_pill()).radius(5.)),
-            ),
-        )
-        .child(text(&level.gain, 16., 800, Color::hex("#7be38f")))
-        .child(text(
-            &format!("◆ {}{}", level.tier, if level.tier_up { " ▲" } else { "" }),
-            16.,
-            800,
-            Color::hex(if level.tier_up { "#f6dc4a" } else { "#dddddd" }),
-        ));
-    if level.level_up {
-        strip = strip.child(text("LEVEL UP!", 18. * pulse, 900, Color::hex("#f6dc4a")));
-    }
-    strip
-}
-
-/// Confetti falling over the screen, `t` 0-1 through the beat. Pieces are
-/// placed by a fixed hash of their index, so the same frame draws the same.
+/// Gold and silver confetti falling over the screen, `t` 0-1 through the
+/// beat. Pieces are placed by a fixed hash of their index, so the same frame
+/// draws the same.
 fn confetti(viewport: &Viewport, t: f32) -> El {
     const PIECES: u32 = 28;
-    let colors = ["#f6dc4a", "#55d66b", "#ef5b50", "#5bb6ef", "#f4f4f4"];
+    let colors = ["#f6dc4a", "#e5d360", "#fffaa1", "#b9b9b9", "#e9e9e9"];
     let fade = (1. - t).clamp(0., 1.);
     El::new(Style {
         position: Position::Absolute,
@@ -520,224 +389,145 @@ fn confetti(viewport: &Viewport, t: f32) -> El {
     }))
 }
 
-fn podium(rows: &[RowView]) -> El {
-    // 2nd, 1st, 3rd.
-    let order = [1usize, 0, 2];
-    let heights = [70., 96., 54.];
-    // Gold, silver, bronze by place.
-    let colors = ["#f6dc4a", "#c9ced6", "#d08a4b"];
-    El::new(Style {
-        align_items: AlignItems::END,
-        ..row(8., false)
-    })
-    .children(order.iter().filter_map(|&place| {
-        let r = rows.get(place)?;
-        let name: String = r.name.chars().take(11).collect();
-        Some(
-            El::new(column(4.))
-                .child(text(
-                    &name,
-                    16.,
-                    800,
-                    Color::hex(if r.me { "#f6dc4a" } else { "#f4f4f4" }),
-                ))
-                .child(text(&r.value, 15., 700, Color::hex("#dddddd")))
-                .children(r.points.as_deref().map(points))
-                .child(
-                    El::new(Style {
-                        size: Size {
-                            width: length(92.),
-                            height: length(heights[place]),
-                        },
-                        display: Display::Flex,
-                        justify_content: JustifyContent::CENTER,
-                        padding: sides(6., 0., 0., 0.),
-                        ..Default::default()
-                    })
-                    .paint(Paint::fill(Color::hex(colors[place])).radius(6.))
-                    .child(text(
-                        &format!("{}", place + 1),
-                        30.,
-                        900,
-                        Color::hex("#1a1a1a"),
-                    )),
-                ),
-        )
-    }))
+/// The panel's width in a view.
+pub fn panel_width(viewport: &Viewport) -> f32 {
+    (viewport.width - 24.).clamp(0., 560.)
 }
 
-/// The panel, or None when nothing shows (a round in play).
-pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
+/// The panel, or None when nothing shows (a round in play). Built from the
+/// original front end's pieces (hud::classic): a silver sheet under a white
+/// title strip with the phase's clock in race HUD lettering, the player
+/// plates, Select Track's framed photos, the Hall of Fame style table and
+/// the gold and silver buttons. The panel starts no higher than `below`
+/// (a top minimap's bottom edge, 0 for none); `photo` finds a venue's
+/// photo.
+pub fn element(
+    viewport: &Viewport,
+    view: &View,
+    below: f32,
+    photo: &dyn Fn(&str) -> Option<classic::Photo>,
+) -> Option<El> {
     let focused = |id: u32| view.focus_visible && buttons(view).get(view.focus) == Some(&id);
-    let width = (viewport.width - 24.).clamp(0., 640.);
-    let mut body = Vec::new();
-    let header = |label: &str| {
-        let mut el = El::new(Style {
-            justify_content: JustifyContent::SPACE_BETWEEN,
-            size: Size {
-                width: percent(1.),
-                height: auto(),
-            },
-            ..row(8., false)
-        })
-        .child(text(label, 22., 800, Color::hex("#f6f6f6")));
-        if let Some(s) = view.seconds {
-            el = el.child(text(&s.to_string(), 34., 900, Color::hex("#f6dc4a")));
-        }
-        el
-    };
-    match view.phase {
+    let button =
+        |id: u32, label: &str, primary: bool| classic::button(id, label, primary, focused(id));
+    let width = panel_width(viewport);
+    // Under the toolbar, and below a top minimap the panel would cover.
+    let top = 56f32.max(viewport.safe[0] + 52.).max(below);
+    let sheet =
+        |title: &str, body: Vec<El>| classic::sheet(title, timer(view.seconds), width, body);
+    let content = match view.phase {
         Phase::Play => {
             if !view.spectating {
                 return None;
             }
-            body.push(
-                El::new(Style {
-                    padding: sides(6., 14., 6., 14.),
-                    ..Default::default()
-                })
-                .paint(Paint::fill(Color::hex("#000000a6")).radius(16.))
-                .child(text("Next round", 17., 800, Color::hex("#f6dc4a"))),
-            );
+            // A race HUD sign, and the follow camera's rider.
+            let mut el = El::new(Style {
+                size: Size {
+                    width: length(width),
+                    height: auto(),
+                },
+                ..column(10.)
+            })
+            .child(classic::hud_text("NEXT ROUND", 22., classic::GOLD));
             if let Some(name) = &view.watching {
-                let name: String = name.chars().take(11).collect();
-                body.push(button(WATCH, &format!("▸ {name}"), false, focused(WATCH)));
+                el = el.child(button(WATCH, &format!("▸ {}", short(name, 11)), false));
             }
+            el
         }
-        Phase::Lobby if view.private => {
-            body.push(header(&format!("{} · Lobby", view.playlist)));
-            let chips = view
-                .seats
-                .iter()
-                .map(|s| chip(Some(s), view.narrow))
-                .chain((0..view.open).map(|_| chip(None, view.narrow)));
-            body.push(El::new(row(6., true)).children(chips));
+        Phase::Lobby => {
+            let title = if view.private { "Lobby" } else { "Waiting" };
             let buttons = if view.host {
                 let mut b = vec![
-                    button(START, "Start", true, focused(START)),
-                    button(MODE, &format!("{} ▸", view.playlist), false, focused(MODE)),
+                    button(START, "Start", true),
+                    button(MODE, &format!("{} ▸", view.playlist), false),
                 ];
                 if view.playlist == "Race" {
                     b.push(button(
                         CPUS,
                         if view.cpus { "CPUs ✓" } else { "No CPUs" },
                         false,
-                        focused(CPUS),
                     ));
                 }
                 b
             } else {
-                vec![button(
-                    READY,
-                    if view.ready { "Ready ✓" } else { "Ready" },
-                    !view.ready,
-                    focused(READY),
-                )]
+                let label = match (view.ready, view.private) {
+                    (true, _) => "Ready ✓",
+                    (false, true) => "Ready",
+                    (false, false) => "GO",
+                };
+                vec![button(READY, label, !view.ready)]
             };
-            body.push(El::new(row(10., true)).children(buttons));
-        }
-        Phase::Lobby => {
-            body.push(header(&format!("{} · Waiting", view.playlist)));
-            let chips = view
-                .seats
-                .iter()
-                .map(|s| chip(Some(s), view.narrow))
-                .chain((0..view.open).map(|_| chip(None, view.narrow)));
-            body.push(El::new(row(6., true)).children(chips));
-            body.push(button(
-                READY,
-                if view.ready { "Ready ✓" } else { "GO" },
-                !view.ready,
-                focused(READY),
-            ));
+            sheet(
+                &format!("{} {title}", view.playlist),
+                vec![seats(view, width), classic::buttons(buttons)],
+            )
         }
         Phase::Vote => {
-            body.push(header("Vote"));
-            body.push(
-                El::new(row(8., true)).children(
-                    view.cards
-                        .iter()
-                        .enumerate()
-                        .map(|(i, c)| card(i, c, focused(CARD + i as u32), view.narrow, false)),
-                ),
-            );
-            body.push(
-                El::new(row(6., true))
-                    .children(view.seats.iter().map(|s| chip(Some(s), view.narrow))),
-            );
-            if view.host {
-                body.push(button(SKIP, "Skip ▸", false, focused(SKIP)));
-            }
-        }
-        Phase::Countdown => {
-            body.push(header("Next"));
-            if let Some(picked) = &view.picked {
-                body.push(card(0, picked, false, view.narrow, true));
-            }
-        }
-        Phase::Results => {
-            body.push(header("Results"));
-            body.push(podium(&view.rows));
-            if let Some(level) = &view.level {
-                body.push(level_strip(level, width));
-            }
-            let rest: Vec<El> = view
-                .rows
+            let per = if view.narrow { 2 } else { 4 };
+            let card_w = classic::card_width(width, per);
+            let cards = view
+                .cards
                 .iter()
                 .enumerate()
-                .skip(3)
-                .map(|(i, r)| {
-                    El::new(Style {
-                        justify_content: JustifyContent::SPACE_BETWEEN,
-                        size: Size {
-                            width: length(260f32.min(width - 32.)),
-                            height: auto(),
-                        },
-                        ..row(8., false)
-                    })
-                    .child(text(
-                        &format!("{}  {}", i + 1, r.name.chars().take(14).collect::<String>()),
-                        15.,
-                        700,
-                        Color::hex(if r.me { "#f6dc4a" } else { "#dddddd" }),
-                    ))
-                    .child(
-                        El::new(row(6., false))
-                            .child(text(&r.value, 15., 700, Color::hex("#bbbbbb")))
-                            .children(r.points.as_deref().map(points)),
-                    )
+                .map(|(i, c)| {
+                    let id = CARD + i as u32;
+                    card(Some(id), c, focused(id), card_w, photo)
                 })
                 .collect();
-            if !rest.is_empty() {
-                body.push(El::new(column(2.)).children(rest));
+            let mut body = vec![classic::grid(cards)];
+            // A phone shows who voted on the cards' counts alone.
+            if !view.narrow {
+                body.push(seats(view, width));
             }
-            body.push(El::new(row(10., true)).children([
-                button(REMATCH, "Rematch", !view.leaving, focused(REMATCH)),
-                button(LEAVE, "Leave", view.leaving, focused(LEAVE)),
-            ]));
+            if view.host {
+                body.push(classic::buttons(vec![button(SKIP, "Skip ▸", false)]));
+            }
+            sheet("Vote", body)
         }
-    }
-    let panel = El::new(Style {
-        position: Position::Absolute,
-        inset: taffy::Rect {
-            left: LengthPercentageAuto::length((viewport.width - width) / 2.),
-            top: LengthPercentageAuto::length(56f32.max(viewport.safe[0] + 52.)),
-            right: LengthPercentageAuto::auto(),
-            bottom: LengthPercentageAuto::auto(),
-        },
-        size: Size {
-            width: length(width),
-            height: auto(),
-        },
-        padding: sides(12., 12., 14., 12.),
-        ..column(12.)
-    })
-    .paint(if view.phase == Phase::Play {
-        Paint::default()
-    } else {
-        Paint::fill(Color::hex("#101010c7")).radius(12.)
-    })
-    .children(body);
+        Phase::Countdown => {
+            let card_w = classic::card_width(width, 1).min(300.);
+            sheet(
+                "Next",
+                view.picked
+                    .iter()
+                    .map(|p| classic::grid(vec![card(None, p, false, card_w, photo)]))
+                    .collect(),
+            )
+        }
+        Phase::Results => {
+            let mut body = vec![standings(view)];
+            body.extend(view.level.as_ref().map(|l| level_strip(l, width)));
+            body.push(classic::buttons(vec![
+                // A choice made shows: ticked, with the course list's ring
+                // (the podium also ends on its timer).
+                classic::chosen(
+                    button(
+                        REMATCH,
+                        if view.stay { "Rematch ✓" } else { "Rematch" },
+                        !view.leaving,
+                    ),
+                    view.stay,
+                ),
+                classic::chosen(
+                    button(
+                        LEAVE,
+                        if view.leaving { "Leave ✓" } else { "Leave" },
+                        view.leaving,
+                    ),
+                    view.leaving,
+                ),
+            ]));
+            sheet("Results", body)
+        }
+    };
+    let mut placed = content;
+    placed.style.position = Position::Absolute;
+    placed.style.inset = taffy::Rect {
+        left: LengthPercentageAuto::length((viewport.width - width) / 2.),
+        top: LengthPercentageAuto::length(top),
+        right: LengthPercentageAuto::auto(),
+        bottom: LengthPercentageAuto::auto(),
+    };
     let mut root = El::new(Style {
         size: Size {
             width: length(viewport.width),
@@ -763,7 +553,7 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
             ))),
         );
     }
-    root = root.child(panel);
+    root = root.child(placed);
     if let Some(t) = view.confetti {
         root = root.child(confetti(viewport, t));
     }
@@ -875,6 +665,7 @@ mod tests {
                 .map(|m| CardView {
                     mode: m.to_string(),
                     track: "Prospect Springs".into(),
+                    venue: if *m == "Random" { "" } else { "nat01" }.into(),
                     votes: 1,
                     chosen: *m == "Hills",
                 })
@@ -908,7 +699,7 @@ mod tests {
         let view = viewport(360., 740.);
         for phase in [Phase::Lobby, Phase::Vote, Phase::Countdown, Phase::Results] {
             let state = sample(phase);
-            let el = element(&view, &state).unwrap();
+            let el = element(&view, &state, 0., &|_| None).unwrap();
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             let mut fonts = Fonts::new();
             crate::layout::render(
@@ -938,7 +729,7 @@ mod tests {
                     watching: Some("Mud Hawk".into()),
                     ..sample(phase)
                 };
-                let el = element(&view, &state).unwrap();
+                let el = element(&view, &state, 0., &|_| None).unwrap();
                 let (mut list, mut hits) = (DisplayList::default(), Vec::new());
                 let mut fonts = Fonts::new();
                 crate::layout::render(
@@ -976,12 +767,44 @@ mod tests {
             Some(&SKIP)
         );
         // Nothing shows while a round runs, unless spectating.
-        assert!(element(&view, &sample(Phase::Play)).is_none());
+        assert!(element(&view, &sample(Phase::Play), 0., &|_| None).is_none());
         let watching = View {
             spectating: true,
             ..sample(Phase::Play)
         };
-        assert!(element(&view, &watching).is_some());
+        assert!(element(&view, &watching, 0., &|_| None).is_some());
+    }
+
+    /// Rematch shows the rider's choice once pressed.
+    #[test]
+    fn the_rematch_choice_shows() {
+        let view = viewport(360., 740.);
+        let labels = |state: &View| {
+            let el = element(&view, state, 0., &|_| None).unwrap();
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            crate::layout::render(
+                &el,
+                &mut Fonts::new(),
+                view.width,
+                view.height,
+                &mut list,
+                &mut hits,
+            );
+            list.items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::paint::Item::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let podium = sample(Phase::Results);
+        assert!(labels(&podium).iter().any(|t| t == "Rematch"));
+        let stay = View {
+            stay: true,
+            ..podium
+        };
+        assert!(labels(&stay).iter().any(|t| t == "Rematch ✓"));
     }
 
     #[test]

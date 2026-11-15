@@ -3173,6 +3173,14 @@ impl App {
                 .as_ref()
                 .map(|net| {
                     let mut peers = net.hud_peers();
+                    // The follow camera's rider is named on the Watch
+                    // button; its own tag would float mid-screen over the
+                    // others' (it stays on the map).
+                    if let Some(watched) = self.quick_play.as_ref().and_then(|q| q.watch) {
+                        for p in peers.iter_mut().filter(|p| p.slot == watched) {
+                            p.map_only = true;
+                        }
+                    }
                     // The Free Ride hub's goal, join circle or hill.
                     peers.extend(net.hub.markers());
                     if let Some(tag) = &self.tag {
@@ -3424,6 +3432,15 @@ impl App {
                     overlay.view.height,
                 )
             }));
+            // The votes show the front end's track photos (loaded behind
+            // the title).
+            if let Some(front) = &self.front {
+                for venue in overlay.wanted_photos(hub.as_ref().map(|(view, _)| view)) {
+                    if let Some(photo) = front.borrow().art.photos.get(&venue) {
+                        overlay.add_photo(&gpu.device, &gpu.queue, &venue, photo);
+                    }
+                }
+            }
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -3443,9 +3460,17 @@ impl App {
                         .race()
                         .and_then(|r| r.frame.as_ref())
                         .map(|f| (f, ride.committed_points(), frame.origin)),
-                    peers: hud_peers
-                        .as_deref()
-                        .map(|peers| (peers, frame.origin, view_projection)),
+                    // Watching a round, the nearest tags are the follow
+                    // camera's, not the parked rider's.
+                    peers: hud_peers.as_deref().map(|peers| {
+                        let watching = self.quick_play.as_ref().is_some_and(|q| q.watch.is_some());
+                        let origin = if watching {
+                            ready.camera.eye()
+                        } else {
+                            frame.origin
+                        };
+                        (peers, origin, view_projection)
+                    }),
                     objective: objective_view,
                     training: training_view,
                     game: game_view,

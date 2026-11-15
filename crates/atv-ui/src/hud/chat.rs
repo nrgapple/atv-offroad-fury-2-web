@@ -1,7 +1,9 @@
 //! Quick chat on the ride HUD (research/QUICK_CHAT.md): bubbles over the
 //! senders' riders, a short feed, horn rings and the pick wheel. Authored
-//! port presentation; the PS2 game had no chat of this kind.
-use super::{Viewport, peers};
+//! port presentation; the PS2 game had no chat of this kind. Bubbles and
+//! the feed are lettered like the name tags; the wheel's targets are the
+//! front end's silver plates and gold pill (research/UI_AUDIT_HUD.md).
+use super::{Viewport, classic, peers};
 use crate::{
     color::Color,
     paint::{BoxPaint, DisplayList, Item, Rect},
@@ -219,48 +221,43 @@ pub fn paint_bubbles(
         }
         let alpha = fade(b.age, BUBBLE_S);
         list.opacity(alpha);
-        // Above the 44 px name tag.
+        // Lettered like the name tag under it (hud::peers), above its 44 px.
+        let style = label(18.);
         let (w, h) = match b.said {
-            Said::Line(text) => (fonts.measure(text, &label(16.).font, 0.).width + 20., 32.),
-            _ => (44., 44.),
+            Said::Line(text) => (fonts.measure(text, &style.font, 0.).width, 24.),
+            _ => (40., 40.),
         };
         let x = marker
             .x
             .clamp(w / 2. + 6., (view.width - w / 2. - 6.).max(w / 2. + 6.));
         let bottom = (marker.y - 50.).clamp(h + 6., view.height - 6.);
-        let rect = Rect::new(x - w / 2., bottom - h, w, h);
-        list.push(Item::Box(BoxPaint {
-            rect,
-            radii: [h / 2.; 4],
-            fill: Some(Color::hex("#101010d9").into()),
-            border: [2.; 4],
-            border_color: peers::color(b.slot),
-            ..Default::default()
-        }));
         match b.said {
-            Said::Line(text) => {
-                let style = label(16.);
-                let width = fonts.measure(text, &style.font, 0.).width;
-                list.text(text, &style, x - width / 2., bottom - h / 2. + 6.);
-            }
-            Said::Emote(e) => paint_emote(list, e, x, bottom - h / 2., 32.),
+            Said::Line(text) => list.text(text, &style, x - w / 2., bottom - 5.),
+            Said::Emote(e) => paint_emote(list, e, x, bottom - h / 2., 36.),
             Said::Horn => {}
         }
         list.unopacity();
     }
 }
 
-/// The feed: the latest few events under the toolbar, newest last.
-pub fn paint_feed(fonts: &mut Fonts, list: &mut DisplayList, view: &Viewport, feed: &[Feed]) {
+/// The feed: the latest few events under the toolbar (or under a panel
+/// ending at `below`), newest last.
+pub fn paint_feed(
+    fonts: &mut Fonts,
+    list: &mut DisplayList,
+    view: &Viewport,
+    feed: &[Feed],
+    below: f32,
+) {
     let x = view.safe[3].max(14.);
-    let mut y = view.safe[0].max(14.) + 44. + 30.;
+    let mut y = (view.safe[0].max(14.) + 44. + 30.).max(below + 24.);
     for f in feed {
         list.opacity(fade(f.age, FEED_S));
         let style = TextStyle::new(
             Font::display(15., 800, true),
             match f.slot {
                 Some(slot) => peers::color(slot),
-                None => GOLD,
+                None => classic::VALUE,
             },
         )
         .stroke(2., Color::BLACK, Join::Round);
@@ -277,14 +274,24 @@ pub fn paint_feed(fonts: &mut Fonts, list: &mut DisplayList, view: &Viewport, fe
     }
 }
 
-/// The wheel's centre and line radius in a `view`.
-pub fn wheel_geometry(view: &Viewport) -> (f32, f32, f32) {
+/// The wheel's smallest ring: its 84 x 48 line targets clear their
+/// diagonal neighbours from 119 px.
+const MIN_RING: f32 = 120.;
+/// The height the wheel needs below an open panel: its smallest ring with
+/// a 48 px target and margin at each end.
+pub const WHEEL_SPACE: f32 = 2. * (MIN_RING + 30.);
+
+/// The wheel's centre and line radius in a `view`, centred in the space
+/// below `top` (an open panel's bottom edge, 0 for none).
+pub fn wheel_geometry(view: &Viewport, top: f32) -> (f32, f32, f32) {
+    let top = top.clamp(0., (view.height - WHEEL_SPACE).max(0.));
+    let room = view.height - top;
     let cx = view.width / 2.;
-    let cy = view.height / 2.;
+    let cy = top + room / 2.;
     let r = 130f32
         .min(view.width / 2. - 50.)
-        .min(view.height / 2. - 30.)
-        .max(96.);
+        .min(room / 2. - 30.)
+        .max(MIN_RING);
     (cx, cy, r)
 }
 
@@ -294,8 +301,8 @@ const DOT: f32 = 48.;
 /// Each wheel target's rectangle and hit id: eight lines (or with
 /// `emotes` eight emotes) round the ring, then the page switch and the horn
 /// in the middle.
-pub fn wheel_targets(view: &Viewport, emotes: bool) -> [(Rect, u32); 10] {
-    let (cx, cy, r) = wheel_geometry(view);
+pub fn wheel_targets(view: &Viewport, top: f32, emotes: bool) -> [(Rect, u32); 10] {
+    let (cx, cy, r) = wheel_geometry(view, top);
     std::array::from_fn(|i| match i {
         0..8 => {
             let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::FRAC_PI_4;
@@ -317,7 +324,8 @@ pub fn wheel_targets(view: &Viewport, emotes: bool) -> [(Rect, u32); 10] {
     })
 }
 
-/// The open wheel: a dimmed backdrop that closes it, then the targets.
+/// The open wheel: a dimmed backdrop that closes it, then the targets in
+/// the space below `top` (an open panel's bottom edge).
 /// `focus` is the controller's highlighted target (its index in
 /// [`wheel_targets`]) and `hovered` the pointer's hit.
 #[allow(clippy::too_many_arguments)]
@@ -326,24 +334,18 @@ pub fn paint_wheel(
     list: &mut DisplayList,
     hits: &mut Vec<(Rect, u32)>,
     view: &Viewport,
+    top: f32,
     chat: &View,
     lines: &[&str; 8],
     emotes: bool,
     focus: Option<usize>,
     hovered: Option<u32>,
 ) {
-    let (cx, cy, r) = wheel_geometry(view);
     let full = Rect::new(0., 0., view.width, view.height);
-    list.rect(full, Color::hex("#0006"));
+    // A light dim only: the ride stays in view.
+    list.rect(full, Color::hex("#00000026"));
     hits.push((full, CLOSE_HIT));
-    let disc = r + 48.;
-    list.push(Item::Box(BoxPaint {
-        rect: Rect::new(cx - disc, cy - disc, disc * 2., disc * 2.),
-        radii: [disc; 4],
-        fill: Some(Color::hex("#080808b0").into()),
-        ..Default::default()
-    }));
-    for (index, (rect, id)) in wheel_targets(view, emotes).into_iter().enumerate() {
+    for (index, (rect, id)) in wheel_targets(view, top, emotes).into_iter().enumerate() {
         let ready = match id {
             HORN_HIT => chat.ready[2],
             PAGE_HIT => true,
@@ -353,34 +355,30 @@ pub fn paint_wheel(
         let lit = focus == Some(index) || hovered == Some(id);
         let (x, y) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
         list.opacity(if ready { 1. } else { 0.4 });
+        // The front end's silver plate; the glossy gold pill when lit.
+        let paint = if lit {
+            classic::gold_paint(5.)
+        } else {
+            classic::silver_paint(5.)
+        };
         list.push(Item::Box(BoxPaint {
             rect,
-            radii: [rect.h / 2.; 4],
-            fill: Some(
-                if lit {
-                    Color::hex("#ffc428e6")
-                } else {
-                    Color::hex("#1a1a1ae6")
-                }
-                .into(),
-            ),
-            border: [2.; 4],
-            border_color: if lit {
-                Color::WHITE
-            } else {
-                Color::hex("#ffffff59")
-            },
+            radii: [5.; 4],
+            fill: paint.fill,
+            shadows: paint.shadows,
             ..Default::default()
         }));
+        let ink = classic::INK;
         match id {
-            HORN_HIT => icon(list, HORN_ICON, Color::WHITE, x, y, 26.),
+            HORN_HIT => icon(list, HORN_ICON, ink, x, y, 26.),
             // The other page's look: a face for emotes, a bubble for lines.
-            PAGE_HIT if emotes => icon(list, CHAT_ICON, Color::WHITE, x, y, 24.),
+            PAGE_HIT if emotes => icon(list, CHAT_ICON, ink, x, y, 24.),
             PAGE_HIT => paint_emote(list, 1, x, y, 26.),
             id if id >= EMOTE_HIT => paint_emote(list, (id - EMOTE_HIT) as u8, x, y, 30.),
             id => {
                 let text = lines[(id - LINE_HIT) as usize];
-                let style = label(14.);
+                // The race-over buttons' lettering.
+                let style = TextStyle::new(Font::display(15., 700, false), ink).spacing(0.45);
                 let width = fonts.measure(text, &style.font, 0.).width;
                 list.text(text, &style, x - width / 2., y + 5.);
             }
@@ -411,10 +409,14 @@ mod tests {
     #[test]
     fn wheel_targets_are_touch_sized_apart_and_on_screen() {
         for v in [view(360., 640.), view(640., 360.), view(1280., 720.)] {
-            for emotes in [false, true] {
-                let targets = wheel_targets(&v, emotes);
+            for (emotes, top) in [(false, 0.), (true, 0.), (false, 230.), (true, 300.)] {
+                let targets = wheel_targets(&v, top, emotes);
                 for (i, (a, _)) in targets.iter().enumerate() {
                     assert!(a.w >= 48. && a.h >= 48., "{a:?}");
+                    // Under the panel whenever the room below holds the wheel.
+                    if v.height - top >= WHEEL_SPACE {
+                        assert!(a.y >= top, "{a:?} under a panel ending at {top}");
+                    }
                     assert!(
                         a.x >= 0. && a.y >= 0. && a.right() <= v.width && a.bottom() <= v.height,
                         "{a:?} in {v:?}"

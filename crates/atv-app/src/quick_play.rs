@@ -459,6 +459,7 @@ impl QuickPlay {
             CardView {
                 mode: mode_word(round.mode).into(),
                 track,
+                venue: round.environment().unwrap_or_default().into(),
                 votes,
                 chosen,
             }
@@ -473,6 +474,7 @@ impl QuickPlay {
             cards.push(CardView {
                 mode: "Random".into(),
                 track: "?".into(),
+                venue: String::new(),
                 votes: state.votes[usize::from(RANDOM)],
                 chosen: self.choice == RANDOM,
             });

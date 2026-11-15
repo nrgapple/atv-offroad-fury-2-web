@@ -159,7 +159,11 @@ try {
   await shot(guest, 'pl-podium-guest-phone');
 
   // 7. Rematch from all three: the next vote seats the late joiner.
-  for (const p of [host, guest, late]) await tap(p, REMATCH);
+  for (const p of [host, guest, late]) {
+    await tap(p, REMATCH);
+    // The press registers on the panel at once (Rematch ✓).
+    assert.equal((await ui(p)).toolbar.quickPlay.stay, true, 'Rematch recorded');
+  }
   const next = await until(host, loop, x => x.phase === 1 && x.setup.number === l.setup.number, 30000, 'next vote');
   const seated = next.seats.filter(s => !(s.flags & 1));
   assert.equal(seated.length, 3, `three riders: ${JSON.stringify(next.seats)}`);

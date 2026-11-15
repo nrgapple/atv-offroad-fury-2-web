@@ -128,6 +128,11 @@ pub fn paint_tags(
     let line = FONT_SIZE * 1.2;
     let mut edges = 0;
     let mut drawn = 0;
+    // The tags placed so far (nearest first): a farther rider's tag that
+    // would land on one stacks above it instead (riders bunched on a start
+    // grid or behind a follow camera). Authored port presentation.
+    let mut placed = [Rect::new(0., 0., 0., 0.); MAX_NAME_TAGS];
+    let mut placed_n = 0;
     for peer in nearest {
         let Some(marker) = screen_marker(peer.position, vp, view.width, view.height) else {
             continue;
@@ -167,9 +172,14 @@ pub fn paint_tags(
         let x = marker
             .x
             .clamp(half + 6., (view.width - half - 6.).max(half + 6.));
-        let y = marker
+        let mut y = marker
             .y
             .clamp(node_height + 6., (view.height - 6.).max(node_height + 6.));
+        y = unstack(&placed[..placed_n], x - half, y, node_width, node_height);
+        if placed_n < placed.len() {
+            placed[placed_n] = Rect::new(x - half, y - node_height, node_width, node_height);
+            placed_n += 1;
+        }
         if marker.edge {
             list.opacity(0.85);
         }
@@ -203,6 +213,23 @@ pub fn paint_tags(
         drawn += 1;
     }
     drawn
+}
+
+/// The bottom of a tag `width` x `height` whose left edge is `left`, lifted
+/// above any `placed` tag it would cover, so long as it stays on screen.
+fn unstack(placed: &[Rect], left: f32, bottom: f32, width: f32, height: f32) -> f32 {
+    let mut y = bottom;
+    // Each lift clears one tag; nearer tags never move, so this ends.
+    for _ in 0..placed.len() {
+        let hit = placed
+            .iter()
+            .find(|r| left < r.right() && r.x < left + width && y - height < r.bottom() && r.y < y);
+        match hit {
+            Some(r) if r.y - 2. >= height + 6. => y = r.y - 2.,
+            _ => break,
+        }
+    }
+    y
 }
 
 /// The uploaded `koh_pillbkg` art, one copy per pill colour: slots 0-3
@@ -334,6 +361,20 @@ pub fn map_marker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bunched_tags_stack_instead_of_overlapping() {
+        let near = Rect::new(100., 200., 80., 44.);
+        // A farther tag at the same spot sits right above the nearer one.
+        assert_eq!(unstack(&[near], 110., 244., 80., 44.), 198.);
+        // Clear of it, or with no room above, it stays.
+        assert_eq!(unstack(&[near], 300., 244., 80., 44.), 244.);
+        let top = Rect::new(100., 10., 80., 44.);
+        assert_eq!(unstack(&[top], 110., 54., 80., 44.), 54.);
+        // Three in a pile become a column.
+        let second = Rect::new(100., 154., 80., 44.);
+        assert_eq!(unstack(&[near, second], 100., 244., 80., 44.), 152.);
+    }
 
     #[test]
     fn markers_clamp_behind_and_off_screen_riders_to_the_edge() {
