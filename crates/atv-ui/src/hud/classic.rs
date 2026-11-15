@@ -363,10 +363,11 @@ pub fn table(columns: &[Column], lines: &[Line]) -> El {
         let paint = if line.me {
             gold_paint(5.)
         } else {
-            let mut p = Paint::default();
-            p.border = [0., 0., 1., 0.];
-            p.border_color = Color::hex("#0000002e");
-            p
+            Paint {
+                border: [0., 0., 1., 0.],
+                border_color: Color::hex("#0000002e"),
+                ..Default::default()
+            }
         };
         rows.push(table_row(
             columns
