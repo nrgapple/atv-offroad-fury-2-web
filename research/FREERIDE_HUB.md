@@ -43,7 +43,12 @@ judges every result; clients show it and send the rider's choices.
   - **Sprint**: first to a waypoint 400-1000 ft from the circle (same
     timing and 30 ft finish as a challenge). Ends when every joiner arrives.
   - **Hill King**: seconds within 35 ft (and 30 ft of height) of the hill,
-    the highest spot ridden within 500 ft of the circle; 60 s.
+    the highest spot ridden 160-500 ft from the circle; 60 s. Only the run
+    counts, and the hill never lies at the circle: riders gather there, so
+    its own spot was often the highest, and a rider who only waited held
+    the hill (#685). With no spot in range it is a waypoint 160-500 ft off
+    (below), at least 80 ft out, clear of the 40 ft circle plus the 35 ft
+    hill.
   - **Stunt-Off**: stunt points committed in 60 s, reported by each client
     twice a second at most (self-reported, see Limits).
 - Nobody joins: cancelled quietly. One joiner: a **solo score challenge**
