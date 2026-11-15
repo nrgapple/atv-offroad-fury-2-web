@@ -73,7 +73,8 @@ uses it. No overlay in this change draws a black or near-black panel.
   title. A rider who starts from a link (`?quickplay=`, a room link) skips
   the front end, so their votes show the silver photo well with the name and
   mode only; so does a vote that opens before the art has loaded.
-- The medal reveal sits inside the port's Race Results panel, the
-  single-player race-over screen. That panel is still the dark box the owner
-  objected to, but it predates epic #631 and is left for its own restyle.
+- The medal reveal sits inside the port's Race Results panel. Since #698
+  that panel is rebuilt as the original `[RaceOver Menu]` overlay page
+  (research/RACING.md, "Race Results look"), so it no longer uses the
+  inherited dark box.
 - Peer name tags draw under the panels (unchanged from before).

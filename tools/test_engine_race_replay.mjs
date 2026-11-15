@@ -38,6 +38,21 @@ try {
     await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).ride?.results?.[0] === 30);
   }
   assert.ok((await read(page)).ride.results.includes(37), `results offer Replay: ${(await read(page)).ride.results}`);
+  // The original RaceOver page (#698): Continue, Replay and Hide Menu in the
+  // navigation pill, each a touch target on screen; Hide Menu by pointer
+  // leaves Unhide Menu, whose tap brings the page back.
+  for (const id of [30, 37, 31]) {
+    const h = await hit(page, id);
+    assert.ok(h && h.height >= 44 && h.width >= 44, `results choice ${id}: ${JSON.stringify(h)}`);
+    assert.ok(h.x >= 0 && h.x + h.width <= 1280 && h.y >= 0 && h.y + h.height <= 720, `results choice ${id} on screen: ${JSON.stringify(h)}`);
+  }
+  const hide = await hit(page, 31);
+  await page.mouse.click(hide.x + hide.width / 2, hide.y + hide.height / 2);
+  await wait(page, () => JSON.stringify(JSON.parse(document.querySelector('#ui-state').textContent).ride?.results) === '[34]');
+  const unhide = await hit(page, 34);
+  assert.ok(unhide && unhide.height >= 44 && Math.abs(unhide.x + unhide.width / 2 - 640) < 2, `Unhide Menu centred at the bottom: ${JSON.stringify(unhide)}`);
+  await page.mouse.click(unhide.x + unhide.width / 2, unhide.y + unhide.height / 2);
+  await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).ride?.results?.includes(37));
   const replay = await hit(page, 37);
   await page.mouse.click(replay.x + replay.width / 2, replay.y + replay.height / 2);
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).replay).catch(async e => {

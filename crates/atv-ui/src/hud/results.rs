@@ -1075,8 +1075,21 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
     let focused = state.focused();
     if state.hidden {
         // The source shows Square "Unhide Menu" where the pill was; the pill
-        // keeps it a touch target over the ride.
-        let mut pill = nav(
+        // keeps it a touch target over the ride, centred clear of the speed
+        // meter: at the bottom, or on a touch screen (whose ride coaching
+        // and lap time hold the bottom) at the top under the toolbar.
+        let (top, bottom) = if view.coarse {
+            (
+                LengthPercentageAuto::length(view.safe[0] + 12.),
+                LengthPercentageAuto::auto(),
+            )
+        } else {
+            (
+                LengthPercentageAuto::auto(),
+                LengthPercentageAuto::length(18f32.max(view.safe[2] + 12.)),
+            )
+        };
+        let pill = nav(
             &look,
             view.width - 16.,
             vec![nav_item(
@@ -1086,14 +1099,21 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 state.focus_visible,
             )],
         );
-        pill.style.position = Position::Absolute;
-        pill.style.inset = taffy::Rect {
-            left: LengthPercentageAuto::auto(),
-            top: LengthPercentageAuto::auto(),
-            right: LengthPercentageAuto::length(16f32.max(view.safe[1] + 12.)),
-            bottom: LengthPercentageAuto::length(18f32.max(view.safe[2] + 12.)),
-        };
-        return root(pill);
+        return root(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(0.),
+                    top,
+                    right: LengthPercentageAuto::length(0.),
+                    bottom,
+                },
+                display: Display::Flex,
+                justify_content: JustifyContent::CENTER,
+                ..Default::default()
+            })
+            .child(pill),
+        );
     }
     let naming = state
         .fame

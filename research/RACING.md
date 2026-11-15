@@ -534,10 +534,35 @@ Port:
   and `001f1990` changes their rider state without an identified driver.
   Player input, tricks and Reset are ignored until Restart.
 - The results table shows rider, total time, best lap, stunt score and
-  Profile Points, with Continue → Restart / Quit Event and Hide Menu / Show
-  Results. Since 2026-10-26 the stunt score is the player's points scored
+  Profile Points, with Continue → Restart / Quit Event and Hide Menu / Unhide
+  Menu. Since 2026-10-26 the stunt score is the player's points scored
   between GO and the finish and Profile Points follow `001f1e30`
   (`PROFILE.md`).
+- **Race Results look (#698).** Facts from `Overlays.pb [RaceOver Menu]`:
+  the page is the pause overlay's art. Nine `overlay_bkg01` tiles tinted
+  10,10,10 make a rounded panel from 59,68 to 581,381 on the 640x448 screen.
+  "Race Results" is lettered in `tradegothic_bci_neg1fs_32ds` at 75,79 over
+  `overlay_titlebkg` (200 grey, alpha 64). Places "1."–"5." sit at x 70 and
+  names at x 92, with rows 24 apart from y 198. Total Time, Best Lap, Stunt
+  Score and Profile Points are centred at x 264, 356, 449 and 536 under
+  two-line labels at y 146/166. Four `white` rules, 2 px wide at alpha 64,
+  stand at x 220, 312, 404 and 496. All lettering is
+  `tradegothic_boldcondensed_22s`. The `overlay_navbar` pill runs from 276
+  to 610 at y 363, with X "Continue" and Square "Hide Menu"; while the page
+  is hidden, only Square "Unhide Menu" shows. The Quit page that Continue
+  opens is titled "Quit?" with Restart and Quit Event rows at x 134, 25
+  apart, on the `menuhighlight` capsule. `[ChampionshipRaceOver Menu]` is
+  titled "Championship Race Results" (its second column is Race Points).
+  Port: `hud/results.rs` draws these with the Pause overlay's pieces
+  (`menu::PANEL_FILL`, `title_strip`, `capsule`), scaled like Pause. Port
+  choices (not in the source): the summary line and the ghost medal row
+  under the title (beside it on a phone held sideways); the player's row in
+  the overlay gold 218,192,31; Replay in the pill; choices as 44 px touch
+  targets; Unhide Menu as a pill centred at the bottom, or at the top on
+  touch screens; and no button glyphs. The race's place, score, lap, times
+  and signs step aside while the page is up, as under the multiplayer loop
+  panels (#684). The championship page keeps Best Lap rather than Race
+  Points.
   Keyboard: Enter continues or confirms, Escape hides, shows or goes back.
   Controller: A continues/confirms, B goes back or hides, X hides/shows.
 

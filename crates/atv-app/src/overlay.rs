@@ -1140,9 +1140,9 @@ impl Overlay {
                 .quickplay
                 .as_ref()
                 .is_some_and(|q| q.spectating && q.phase == atv_ui::hud::quickplay::Phase::Play);
-            // Under a loop panel the idle "hold to ride" coaching steps
-            // aside; a finger riding still sees its control.
-            let quiet = self.loop_panel() && !self.touch.held();
+            // Under a loop panel or Race Results the idle "hold to ride"
+            // coaching steps aside; a finger riding still sees its control.
+            let quiet = (self.loop_panel() || self.results_up()) && !self.touch.held();
             self.touch.paint(
                 active && !watching && !quiet,
                 now,
@@ -1171,6 +1171,10 @@ impl Overlay {
                     .is_some_and(|m| m.split_layout(*set, name).is_some())
             });
         let loop_panel = self.loop_panel();
+        // Race Results over the riders who drive on: the race's own
+        // lettering steps aside as under a loop panel; Hide Menu brings it
+        // back.
+        let race_aside = loop_panel || self.results_up();
         // A portrait phone's speed meter sits top right, where a loop
         // panel's title and clock go: it steps aside meanwhile.
         let speed_aside = loop_panel && self.narrow();
@@ -1421,7 +1425,7 @@ impl Overlay {
             // Under a loop panel (vote, countdown, podium) the race's place,
             // score, lap and times step aside, as on the original race-over
             // screen; the map and speed stay.
-            if let Some((frame, score, origin)) = race.filter(|_| !loop_panel) {
+            if let Some((frame, score, origin)) = race.filter(|_| !race_aside) {
                 // toolbarBottom(): the toolbar's bottom edge.
                 let top_inset = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                     hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
@@ -1450,10 +1454,10 @@ impl Overlay {
                 meter.paint_compass(&mut items, compass, hw, hh);
                 self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
-            if !loop_panel && (race.is_none() || self.race_overlays.shown("info")) {
+            if !race_aside && (race.is_none() || self.race_overlays.shown("info")) {
                 meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
             }
-            if loop_panel {
+            if race_aside {
                 self.lap_history = None;
             }
             self.list
@@ -2006,6 +2010,11 @@ impl Overlay {
 
     /// A Quick Play or private-room panel other than the round's spectator
     /// line is up (lobby, vote, countdown, podium).
+    /// The Race Results panel is up (not hidden, no pause menu over it).
+    fn results_up(&self) -> bool {
+        self.results.shown && !self.results.hidden && self.menu.is_none()
+    }
+
     fn loop_panel(&self) -> bool {
         self.quickplay
             .as_ref()
