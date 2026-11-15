@@ -1430,6 +1430,22 @@ impl Front {
         if let Some(id) = &screen.current {
             screen.hero = photos.get(id).and_then(|(_, hero)| *hero);
         }
+        if matches!(screen.page.as_str(), "garage" | "splitseats") {
+            let ids: Vec<u16> = if screen.page == "garage" {
+                screen.catalog.iter().map(|v| v.id).collect()
+            } else {
+                screen.lineup.iter().filter(|v| v.2).map(|v| v.0).collect()
+            };
+            for id in ids {
+                if let Some(image) =
+                    self.image(device, queue, &format!("quadportrait:{id}"), |art| {
+                        art.quads.as_ref()?.portraits.get(&id).cloned()
+                    })
+                {
+                    screen.vehicle_portraits.insert(id, image);
+                }
+            }
+        }
         screen.shot_fade = art.shot_fade;
         if let Some(menu) = &self.menu {
             // Options sits where the main menu's rows were, beside its
@@ -1860,6 +1876,7 @@ impl Front {
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
         let shown = self.menu.is_none()
+            && page != "splitseats"
             && (matches!(page.as_str(), "profile-view" | "garage" | "gear")
                 || front::stage_page(&page)
                 || atv_ui::front::controller::store_page(&page));
