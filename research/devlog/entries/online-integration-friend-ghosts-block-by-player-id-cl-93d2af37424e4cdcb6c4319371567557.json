@@ -1,0 +1,17 @@
+{
+  "id": "online-integration-friend-ghosts-block-by-player-id-cl-93d2af37424e4cdcb6c4319371567557",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:51.587394+00:00",
+  "kind": "build",
+  "title": "Online integration: friend ghosts, block by player id, cloud medals",
+  "summary": "The online features now meet: Lap Attack can race a friend's ghost, mute and block follow the player rather than the name, and medals travel in the Pass Key cloud save.",
+  "details": [
+    "Friend ghosts: each online rider's personal best per course goes to the Worker under a tag derived from their player id (at most 32 per board). The Ghost row adds Friend, the quickest friend with a stored ghost.",
+    "Block and mute by verified id: a renamed rider stays blocked; a room block is also the identity block.",
+    "Cloud save: an additive medals block carries course best laps and weekly results and badges. Ghost blobs stay on the device. PR #668, part of #631.",
+    "Verification: extended tools/test_engine_ghost_challenges.mjs and tools/test_engine_multiplayer_chat.mjs. The PR body does not record a run result. Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "There is no Friend choice offline, since friend tags come only through the game server. A friend who has not improved for a while can drop out of a busy board's 32 stored ghosts. A second device on the same Pass Key shows the medal but has no PB ghost until it rides one.",
+  "image": "/devlog-images/online-integration-friend-ghosts-block-by-player-id-cl-93d2af37424e4cdcb6c4319371567557.png",
+  "caption": "Ghost row set to Friend: a friend's best lap on Sausalito"
+}

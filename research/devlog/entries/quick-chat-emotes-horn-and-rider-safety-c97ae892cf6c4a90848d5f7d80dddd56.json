@@ -1,0 +1,18 @@
+{
+  "id": "quick-chat-emotes-horn-and-rider-safety-c97ae892cf6c4a90848d5f7d80dddd56",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:50.533332+00:00",
+  "kind": "build",
+  "title": "Quick chat, emotes, horn and rider safety",
+  "summary": "Online riders can talk without free text: a radial wheel of eight preset lines, eight emotes and a horn, with mute, block and report built in.",
+  "details": [
+    "Chat button, wheel, bubbles over riders and a feed. Keys T, 1-8, Shift+1-8 and B; Select on a controller. The horn is a synthesized two-tone sound heard within 300 ft.",
+    "Server limits: 3 lines per 5 s then a 5 s lockout, emotes every 2 s, horn every 1 s. Only preset ids travel, never text.",
+    "Safety: per-rider mute, Mute all chat, persistent block and a one-tap report from the rider page (fixed reasons, rate-limited). Host/Join Game also gets a name dice for a rider name.",
+    "Note: research/QUICK_CHAT.md. PR #644, part of #631.",
+    "Verification: unit tests plus tools/test_engine_multiplayer_chat.mjs with two clients on a local server. Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "Riders without an identity token are still blocked by shown name, and the server still relays a blocked rider's chat (the client hides it). Reports are stored for review only; there is no moderation tooling yet. The rider's own bubble is not drawn over their own quad. The rider page capture was faint, so it is not published.",
+  "image": "/devlog-images/quick-chat-emotes-horn-and-rider-safety-c97ae892cf6c4a90848d5f7d80dddd56.png",
+  "caption": "The quick chat wheel: eight lines, an emote button and a horn"
+}

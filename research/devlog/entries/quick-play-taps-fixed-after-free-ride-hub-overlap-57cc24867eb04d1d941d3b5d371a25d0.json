@@ -1,0 +1,13 @@
+{
+  "id": "quick-play-taps-fixed-after-free-ride-hub-overlap-57cc24867eb04d1d941d3b5d371a25d0",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:52.311033+00:00",
+  "kind": "issue",
+  "title": "Quick Play taps fixed after Free Ride hub overlap",
+  "summary": "Touch and mouse taps on Quick Play vote cards, GO/Ready and Rematch stopped working after the Free Ride hub landed. Fixed.",
+  "details": [
+    "Cause: since #664 the hub's hit ids 80-85 were checked before the Quick Play panel's. Keyboard and controller were fine. The panel's range is now checked first while it shows; the hub only appears in shared Free Ride rooms, which never show the panel.",
+    "Verification: tools/test_engine_quickplay.mjs, which taps those buttons, passed on the PR's build. Host-only evidence; nothing checked on physical phones. PR #674, issue #673."
+  ],
+  "limitation": "No screenshot: the fix is input handling."
+}

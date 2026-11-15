@@ -1,0 +1,18 @@
+{
+  "id": "quick-play-server-run-public-rooms-4984b0435bb24b7b9a979160811dcfe3",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:49.719624+00:00",
+  "kind": "build",
+  "title": "Quick Play: server-run public rooms",
+  "summary": "Quick Play is a new top row on the main menu. Pick Race or Stunts and the game server puts you in a room that runs itself: lobby, map vote, countdown, race, podium, then Rematch or the next vote.",
+  "details": [
+    "Lobby lasts up to 20 s and starts early when the room is full or everyone presses GO. CPUs fill a race to 6 riders, at most 4 CPUs.",
+    "Vote: three mixed-mode cards plus Random, 12 s, weighted roulette. Podium: 8 s, Rematch is the default.",
+    "The server checks race results (monotonic laps, speed cap, time floor, drift from GO of 3% or less). A refused result ranks DNF; verified results are written to a match record with the rider's player id.",
+    "Touch, keyboard and controller all work; the panel fits 360 px portrait. Protocol adds RoomLoop and Vote packets; older clients are unchanged. Note: research/QUICK_PLAY.md. PR #663, part of the modern multiplayer epic #631.",
+    "Verification: unit tests for the server loop and panel; browser test tools/test_engine_quickplay.mjs passed on CI build 43650337246 (menu, tiles, queue, phone joins the same room, GO, vote, driver-started CPU race, checked podium, rematch). Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "A rider drives each round (the server owns the loop, vote, podium and records, but CPU physics and game rules still run on a rider's machine). A room seats 4 humans plus up to 4 CPUs, so a lone racer gets a field of five. CPU difficulty is fixed at Normal. The speed cap and drift allowance are guesses, so a very laggy rider could be refused. The later podium overlap/colour fix was not browser-verified when #663 merged. Screenshot: the vote card (the podium captures overlap the results panel and were not published).",
+  "image": "/devlog-images/quick-play-server-run-public-rooms-4984b0435bb24b7b9a979160811dcfe3.png",
+  "caption": "Quick Play vote: three cards, Random, rider seats with CPU tags and ping bars"
+}
