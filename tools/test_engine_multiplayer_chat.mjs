@@ -8,7 +8,8 @@
 // identity block too, so the host shows on the guest's Friends lists as
 // blocked (research/QUICK_CHAT.md "Verified ids", issue #666).
 //   node tools/run_browser_tests.mjs --only test_engine_multiplayer_chat.mjs --url http://127.0.0.1:4187
-// ATV_CHAT_SCREENSHOTS=<dir> saves the wheel, bubble and rider page.
+// ATV_CHAT_SCREENSHOTS=<dir> saves the wheel, bubble and rider page (the
+// guest's on a 360 px portrait phone).
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, launch, newPage, nextFrames } from './browser/harness.mjs';
 
@@ -44,8 +45,8 @@ async function menu(page, action) {
 
 const browser = await launch();
 try {
-  const open = async secret => {
-    const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  const open = async (secret, viewport = { width: 1280, height: 720 }) => {
+    const page = await newPage(browser, { viewport }, errors);
     await page.addInitScript(secret => {
       Object.defineProperty(document, 'hasFocus', { value: () => true });
       localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
@@ -57,7 +58,8 @@ try {
   await host.goto(`${base}/play.html?venue=env01&host=1&name=Chatty&uiDiagnostics=1`);
   await wait(host, () => JSON.parse(window.furyMultiplayer ?? 'null')?.code);
   const { code, peer } = await room(host);
-  const guest = await open('b2'.repeat(16));
+  // With screenshots the guest is a 360 px portrait phone.
+  const guest = await open('b2'.repeat(16), shots ? { width: 360, height: 740 } : undefined);
   await guest.goto(`${base}/play.html?room=${code}&name=Listener&uiDiagnostics=1`);
   await wait(guest, () => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, 180000);
   await wait(host, () => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, 180000);
@@ -80,6 +82,12 @@ try {
     await guest.bringToFront();
     await nextFrames(guest, 3);
     await guest.screenshot({ path: `${shots}/bubble.png` });
+    await key(guest, 'KeyT');
+    await nextFrames(guest, 3);
+    await guest.screenshot({ path: `${shots}/wheel-phone.png` });
+    await tap(guest, 321);
+    assert.equal((await ui(guest)).toolbar.chatWheel, null, 'a tap outside closes it');
+    await host.bringToFront();
   }
   // The host's own line is echoed into its feed.
   await shown(host, 1);

@@ -1,6 +1,7 @@
 //! In-ride HUD pieces drawn by the engine.
 pub mod assets;
 pub mod chat;
+pub mod classic;
 pub mod games;
 pub mod help;
 pub mod hub;

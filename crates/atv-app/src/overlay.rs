@@ -1132,8 +1132,14 @@ impl Overlay {
                 self.list.items.extend(place(list, frame));
             }
         } else {
+            // A rider watching a room's round is parked: no ride controls
+            // or "hold to ride" coaching over the follow camera.
+            let watching = self
+                .quickplay
+                .as_ref()
+                .is_some_and(|q| q.spectating && q.phase == atv_ui::hud::quickplay::Phase::Play);
             self.touch
-                .paint(active, now, &mut self.fonts, &mut self.list);
+                .paint(active && !watching, now, &mut self.fonts, &mut self.list);
         }
         // Options → Accessibility: the HUD size (split views keep the
         // original, their quarters have no room) and colour assistance.
@@ -1767,9 +1773,16 @@ impl Overlay {
         if self.results.shown && active && !self.quickplay_hides_results {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
-        self.paint_quickplay();
+        let panel_bottom = self.paint_quickplay();
         if let Some(chat) = chat {
-            atv_ui::hud::chat::paint_feed(&mut self.fonts, &mut self.list, &view, &chat.feed);
+            // The feed runs under the Quick Play panel, not over its title.
+            atv_ui::hud::chat::paint_feed(
+                &mut self.fonts,
+                &mut self.list,
+                &view,
+                &chat.feed,
+                panel_bottom,
+            );
             self.chat.post = self.results.shown && self.lobby.is_some();
             if self.chat.open {
                 atv_ui::hud::chat::paint_wheel(
@@ -1915,9 +1928,11 @@ impl Overlay {
         }
     }
 
-    /// Quick Play's panel over the ride (and the round's results).
-    fn paint_quickplay(&mut self) {
+    /// Quick Play's panel over the ride (and the round's results); the
+    /// panel's bottom edge, 0 when none shows.
+    fn paint_quickplay(&mut self) -> f32 {
         let view = self.view;
+        let mut bottom = 0f32;
         if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
             && let Some(element) = atv_ui::hud::quickplay::element(&view, state)
         {
@@ -1930,9 +1945,20 @@ impl Overlay {
                 &mut list,
                 &mut hits,
             );
+            // The panel is the widest box short of the whole view (the win
+            // flash covers it; buttons and confetti are narrower).
+            for item in &list.items {
+                if let atv_ui::paint::Item::Box(b) = item
+                    && b.rect.w >= 120.
+                    && b.rect.w < view.width - 1.
+                {
+                    bottom = bottom.max(b.rect.bottom());
+                }
+            }
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(&hits);
         }
+        bottom
     }
 
     /// A portrait phone: the Quick Play panel's narrow layout.

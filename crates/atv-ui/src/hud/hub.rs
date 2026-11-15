@@ -3,13 +3,13 @@
 //! one status chip with a live countdown, the map vote and result toasts,
 //! plus the glowing ground circle of a join spot or goal. Authored for the
 //! port, following research/MULTIPLAYER_EXPERIENCE.md "UI rules": labels
-//! of 1-3 words, numbers and timers instead of sentences, 48 px targets.
-use super::{Viewport, peers};
+//! of 1-3 words, numbers and timers instead of sentences, 48 px targets;
+//! drawn with the classic HUD pieces (research/UI_AUDIT_HUD.md).
+use super::{Viewport, classic, peers};
 use crate::{
     color::Color,
-    layout::{Content, El, Paint, sides},
+    layout::El,
     paint::{BoxPaint, BoxShadow, DisplayList, Item, Rect},
-    text::{Font, TextStyle},
 };
 use taffy::prelude::*;
 
@@ -96,102 +96,18 @@ pub struct View {
     pub toast: Option<Toast>,
 }
 
-fn style(size: f32, weight: u16, color: Color) -> TextStyle {
-    TextStyle::new(Font::display(size, weight, false), color)
-        .spacing(0.4)
-        .shadow(1., 2., 0., Color::hex("#000c"))
-}
-
-fn text(value: impl Into<String>, size: f32, weight: u16, color: &str) -> El {
-    El::new(Style::default()).content(Content::Text {
-        text: value.into(),
-        style: style(size, weight, Color::hex(color)),
-        line_height: size * 1.2,
-        wrap: false,
-    })
-}
-
 fn row(gap: f32) -> Style {
     Style {
         display: Display::Flex,
         align_items: AlignItems::CENTER,
         justify_content: JustifyContent::CENTER,
+        flex_wrap: FlexWrap::Wrap,
         gap: Size {
             width: LengthPercentage::length(gap),
-            height: LengthPercentage::length(gap),
+            height: LengthPercentage::length(gap * 0.4),
         },
         ..Default::default()
     }
-}
-
-fn column(gap: f32) -> Style {
-    Style {
-        flex_direction: FlexDirection::Column,
-        ..row(gap)
-    }
-}
-
-fn panel(fill: &str) -> Paint {
-    Paint::fill(Color::hex(fill))
-        .radius(10.)
-        .shadow(BoxShadow::outer(0., 3., 0., Color::hex("#0008")))
-}
-
-/// A 48 px button.
-fn button(id: u32, label: El, fill: &str, width: f32) -> El {
-    El::new(Style {
-        min_size: Size {
-            width: LengthPercentageAuto::length(width),
-            height: LengthPercentageAuto::length(48.),
-        },
-        padding: sides(4., 14., 4., 14.),
-        ..column(0.)
-    })
-    .id(id)
-    .paint(panel(fill))
-    .child(label)
-}
-
-/// A countdown ring: 20 dots around `seconds`, lit for the share left.
-fn ring(left: f32, seconds: u32) -> El {
-    const SIZE: f32 = 56.;
-    const DOTS: usize = 20;
-    let lit = (left * DOTS as f32).ceil() as usize;
-    let mut el = El::new(Style {
-        size: Size {
-            width: length(SIZE),
-            height: length(SIZE),
-        },
-        flex_shrink: 0.,
-        ..column(0.)
-    })
-    .child(text(seconds.to_string(), 22., 900, "#ffd166"));
-    for i in 0..DOTS {
-        let a = i as f32 / DOTS as f32 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
-        let (x, y) = (
-            SIZE / 2. + a.cos() * 24. - 3.,
-            SIZE / 2. + a.sin() * 24. - 3.,
-        );
-        let on = i < lit;
-        el = el.child(
-            El::new(Style {
-                position: Position::Absolute,
-                inset: taffy::Rect {
-                    left: LengthPercentageAuto::length(x),
-                    top: LengthPercentageAuto::length(y),
-                    right: LengthPercentageAuto::auto(),
-                    bottom: LengthPercentageAuto::auto(),
-                },
-                size: Size {
-                    width: length(6.),
-                    height: length(6.),
-                },
-                ..Default::default()
-            })
-            .paint(Paint::fill(Color::hex(if on { "#ffd166" } else { "#fff3" })).radius(3.)),
-        );
-    }
-    el
 }
 
 fn absolute(left: f32, top: f32, width: f32) -> Style {
@@ -207,11 +123,37 @@ fn absolute(left: f32, top: f32, width: f32) -> Style {
             width: length(width),
             height: auto(),
         },
-        ..column(6.)
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::CENTER,
+        ..Default::default()
     }
 }
 
-/// The hub HUD over the whole view; `top` clears the toolbar.
+/// A name cut to fit a label.
+fn short(name: &str, max: usize) -> String {
+    let mut out: String = name.chars().take(max).collect();
+    if name.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+fn timer(clock: &str, low: bool) -> El {
+    classic::hud_text(
+        clock,
+        24.,
+        if low {
+            Color::hex("#ff6b5b")
+        } else {
+            Color::WHITE
+        },
+    )
+}
+
+/// The hub HUD over the whole view; `top` clears the toolbar. Built from
+/// the race HUD's lettering, the Race Results panel and the race-over
+/// buttons (hud::classic); no cards of its own.
 pub fn element(view: &Viewport, state: &View, top: f32) -> El {
     let width = 340f32.min(view.width - 24.);
     let left = (view.width - width) / 2.;
@@ -224,126 +166,115 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
     });
     let mut y = top;
     if let Some(b) = &state.banner {
-        let chip = El::new(Style {
-            padding: sides(6., 14., 6., 14.),
-            ..row(10.)
-        })
-        .paint(panel("#0c0c0cc8"))
-        .child(text(&b.title, 15., 800, "#f1d84e"))
-        .child(text(&b.line, 15., 700, "#f6f6f6"))
-        .child(text(
-            &b.clock,
-            20.,
-            900,
-            if b.low { "#ff6b5b" } else { "#ffffff" },
-        ));
-        root = root.child(El::new(absolute(left, y, width)).child(chip));
-        y += 46.;
+        // The race HUD's info line: gold title, silver detail, the clock.
+        let line = El::new(row(10.))
+            .child(classic::hud_text(&b.title, 18., classic::GOLD))
+            .children(
+                (!b.line.is_empty()).then(|| classic::hud_text(&b.line, 17., classic::SILVER)),
+            )
+            .child(timer(&b.clock, b.low));
+        root = root.child(El::new(absolute(left, y, width)).child(line));
+        y += 42.;
     }
     if let Some(offer) = &state.offer {
-        let card = El::new(Style {
-            padding: sides(10., 12., 12., 12.),
-            ..column(8.)
-        })
-        .paint(panel("#101820e0"))
-        .child(
-            El::new(row(12.))
-                .child(ring(offer.left, offer.seconds))
-                .child(
-                    El::new(column(2.))
-                        .child(text(&offer.name, 18., 800, "#ffffff"))
-                        .child(text("RACE?", 16., 800, "#ffd166")),
-                ),
-        )
-        .child(
-            El::new(row(10.))
-                .child(button(
-                    ACCEPT,
-                    text("ACCEPT", 16., 900, "#0b1a0b"),
-                    "#7cff6b",
-                    120.,
-                ))
-                .child(button(
-                    DECLINE,
-                    text("NO", 16., 900, "#ffffff"),
-                    "#3a3a3aee",
-                    90.,
+        let panel = classic::panel(width)
+            .child(classic::heading(
+                "Race?",
+                Some(classic::hud_text(
+                    offer.seconds.to_string(),
+                    30.,
+                    classic::GOLD,
                 )),
-        );
-        root = root.child(El::new(absolute(left, y, width)).child(card));
-        y += 150.;
+            ))
+            .child(classic::hud_text(
+                short(&offer.name, 16),
+                20.,
+                classic::CELL,
+            ))
+            .child(classic::buttons(vec![
+                classic::button(ACCEPT, "Accept", true, false),
+                classic::button(DECLINE, "Decline", false, false),
+            ]));
+        root = root.child(El::new(absolute(left, y, width)).child(panel));
+        y += 170.;
     } else if let Some(name) = &state.challenge {
-        let label = El::new(column(0.))
-            .child(text("CHALLENGE", 16., 900, "#1a1200"))
-            .child(text(name, 12., 700, "#3a2a00"));
-        root = root.child(
-            El::new(absolute(left, y, width)).child(button(CHALLENGE, label, "#ffd166", 150.)),
-        );
+        root = root.child(El::new(absolute(left, y, width)).child(classic::button(
+            CHALLENGE,
+            &format!("Challenge {}", short(name, 10)),
+            true,
+            false,
+        )));
         y += 60.;
     }
     if let Some((options, clock)) = &state.vote {
-        let mut card = El::new(Style {
-            padding: sides(8., 10., 10., 10.),
-            ..column(6.)
-        })
-        .paint(panel("#0c0c0cd8"))
-        .child(
-            El::new(row(8.))
-                .child(text("NEXT MAP", 15., 800, "#f1d84e"))
-                .child(text(clock, 18., 900, "#ffffff")),
-        );
-        let mut buttons = El::new(Style {
-            flex_wrap: FlexWrap::Wrap,
-            ..row(6.)
-        });
+        let mut panel =
+            classic::panel(width).child(classic::heading("Next Map", Some(timer(clock, false))));
         for (i, option) in options.iter().enumerate() {
-            let label = El::new(column(0.))
-                .child(text(&option.name, 13., 800, "#ffffff"))
-                .child(text(format!("{}", option.votes), 13., 900, "#ffd166"));
-            buttons = buttons.child(button(
-                VOTE + i as u32,
-                label,
+            let votes = classic::hud_text(
+                option.votes.to_string(),
+                22.,
                 if option.mine {
-                    "#2f6d2fee"
+                    classic::INK
                 } else {
-                    "#2a2a2aee"
+                    classic::GOLD
                 },
-                ((width - 32.) / 3.).max(90.),
+            );
+            panel = panel.child(classic::course(
+                Some(VOTE + i as u32),
+                &option.name,
+                "",
+                Some(votes),
+                option.mine,
+                false,
             ));
         }
-        card = card.child(buttons);
-        root = root.child(El::new(absolute(left, y, width)).child(card));
-        y += 120.;
+        root = root.child(El::new(absolute(left, y, width)).child(panel));
+        y += 90. + 56. * options.len() as f32;
     }
     if let Some(toast) = &state.toast {
-        let mut card = El::new(Style {
-            padding: sides(10., 16., 12., 16.),
-            ..column(4.)
-        })
-        .paint(if toast.win {
-            panel("#2a2000e8").shadow(BoxShadow::outer(0., 0., 18., Color::hex("#ffd166aa")))
+        let at = y.max(view.height * 0.3);
+        let color = if toast.win {
+            classic::GOLD
         } else {
-            panel("#0c0c0ce0")
-        })
-        .child(text(
-            &toast.title,
-            22.,
-            900,
-            if toast.win { "#ffd166" } else { "#ffffff" },
-        ));
-        for (place, name, points) in &toast.rows {
-            let mut line = El::new(row(10.));
-            if !place.is_empty() {
-                line = line.child(text(place, 16., 900, "#f1d84e"));
-            }
-            card = card.child(line.child(text(name, 16., 700, "#f6f6f6")).child(text(
-                format!("+{points}"),
-                16.,
-                900,
-                "#7cff6b",
-            )));
-        }
-        root = root.child(El::new(absolute(left, y.max(view.height * 0.3), width)).child(card));
+            Color::WHITE
+        };
+        let el = if toast.rows.is_empty() {
+            // A one-word answer reads as a race HUD sign.
+            classic::hud_text(&toast.title, 30., color)
+        } else {
+            let lines: Vec<classic::Line> = toast
+                .rows
+                .iter()
+                .map(|(place, name, points)| classic::Line {
+                    cells: vec![
+                        if place.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{place}. {name}")
+                        },
+                        format!("+{points}"),
+                    ],
+                    me: false,
+                    dim: false,
+                })
+                .collect();
+            classic::panel(width)
+                .child(classic::heading_in(&toast.title, color, None))
+                .child(classic::standings(
+                    &[
+                        classic::Column {
+                            label: "RIDER",
+                            right: false,
+                        },
+                        classic::Column {
+                            label: "POINTS",
+                            right: true,
+                        },
+                    ],
+                    &lines,
+                ))
+        };
+        root = root.child(El::new(absolute(left, at, width)).child(el));
     }
     root
 }
@@ -388,5 +319,108 @@ pub fn paint_ring(
             shadows: vec![BoxShadow::outer(0., 0., size, Color::hex("#ffd166cc"))],
             ..Default::default()
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{paint::DisplayList, text::Fonts};
+
+    fn viewport(width: f32, height: f32) -> Viewport {
+        Viewport {
+            width,
+            height,
+            scale: 1.,
+            safe: [0.; 4],
+            hover: false,
+            coarse: true,
+            touch_first: true,
+        }
+    }
+
+    fn hits(view: &Viewport, state: &View) -> Vec<(Rect, u32)> {
+        let el = element(view, state, 60.);
+        let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+        crate::layout::render(
+            &el,
+            &mut Fonts::new(),
+            view.width,
+            view.height,
+            &mut list,
+            &mut hits,
+        );
+        hits
+    }
+
+    /// Every button is a 48 px target and stays on a 360 px portrait phone.
+    #[test]
+    fn buttons_are_touch_sized_and_fit_a_portrait_phone() {
+        let vote = VoteOption {
+            name: "Prospect Springs Long Name".into(),
+            votes: 2,
+            mine: false,
+        };
+        let states = [
+            View {
+                challenge: Some("Mud Hawk Rider".into()),
+                ..Default::default()
+            },
+            View {
+                challenge: None,
+                banner: Some(Banner {
+                    title: "HILL KING".into(),
+                    line: "JOIN · 120 ft".into(),
+                    clock: "0:12".into(),
+                    low: false,
+                }),
+                offer: Some(Offer {
+                    name: "Mud Hawk".into(),
+                    left: 0.5,
+                    seconds: 7,
+                }),
+                vote: Some((
+                    vec![
+                        vote.clone(),
+                        VoteOption {
+                            mine: true,
+                            ..vote.clone()
+                        },
+                        vote,
+                    ],
+                    "0:42".into(),
+                )),
+                toast: Some(Toast {
+                    title: "SPRINT RESULTS".into(),
+                    rows: vec![("1".into(), "Ann".into(), 100)],
+                    win: true,
+                }),
+            },
+        ];
+        for view in [viewport(360., 740.), viewport(1280., 720.)] {
+            for state in &states {
+                let hits = hits(&view, state);
+                let mut ids: Vec<u32> = Vec::new();
+                if state.challenge.is_some() && state.offer.is_none() {
+                    ids.push(Button::Challenge.id());
+                }
+                if state.offer.is_some() {
+                    ids.extend([Button::Accept.id(), Button::Decline.id()]);
+                }
+                if let Some((options, _)) = &state.vote {
+                    ids.extend((0..options.len() as u8).map(|i| Button::Vote(i).id()));
+                }
+                for id in ids {
+                    let (rect, _) = hits.iter().find(|(_, h)| *h == id).expect("button drawn");
+                    assert!(rect.h >= 48. && rect.w >= 48., "{id}: {rect:?}");
+                    assert!(
+                        rect.x >= 0. && rect.right() <= view.width + 0.5,
+                        "{id}: {rect:?} in {}",
+                        view.width
+                    );
+                    assert_eq!(Button::from_id(id).map(Button::id), Some(id));
+                }
+            }
+        }
     }
 }

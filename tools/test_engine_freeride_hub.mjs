@@ -15,7 +15,8 @@
 // 300 s, after the event, with no second event in between):
 //   FURY_HUB_EVENT_SECS=75 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=300 make server-run
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_hub.mjs
-// ATV_MP_SCREENSHOT=dir saves the prompt, the race and the event.
+// ATV_MP_SCREENSHOT=dir saves the prompt, the race, the event and the vote
+// (Bo's on a phone).
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
@@ -122,6 +123,7 @@ try {
   await hubIs(ann, h => h.outcomes.some(o => o.kind !== 'challenge'), null, 90000);
   await hubIs(bo, h => h.outcomes.some(o => o.kind !== 'challenge'), null, 10000);
   await shot(ann, 'event-results');
+  await shot(bo, 'event-results-phone');
   const annEvent = (await hub(ann)).outcomes.find(o => o.kind !== 'challenge');
   const boEvent = (await hub(bo)).outcomes.find(o => o.kind !== 'challenge');
   assert.equal(annEvent.serial, boEvent.serial);
@@ -144,6 +146,7 @@ try {
   await hubIs(ann, h => h.vote && h.vote.maps.length === 3, null, 240000);
   const vote = (await hub(ann)).vote;
   await shot(ann, 'rotation-vote');
+  await shot(bo, 'rotation-vote-phone');
   await key(ann, 'Digit1');
   await key(bo, 'Digit1');
   await hubIs(ann, h => h.vote && h.vote.votes[0] === 2, null, 10000);

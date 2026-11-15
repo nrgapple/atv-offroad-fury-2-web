@@ -1,10 +1,13 @@
 //! Quick chat on the ride HUD (research/QUICK_CHAT.md): bubbles over the
 //! senders' riders, a short feed, horn rings and the pick wheel. Authored
-//! port presentation; the PS2 game had no chat of this kind.
-use super::{Viewport, peers};
+//! port presentation; the PS2 game had no chat of this kind. Bubbles and
+//! the feed are lettered like the name tags; the wheel's targets are the
+//! race-over buttons (research/UI_AUDIT_HUD.md).
+use super::{Viewport, classic, peers};
 use crate::{
     color::Color,
-    paint::{BoxPaint, DisplayList, Item, Rect},
+    menu::gold_pill,
+    paint::{BoxPaint, BoxShadow, DisplayList, Item, Rect},
     text::{Font, Fonts, Join, Shape, Stroke, TextStyle},
 };
 
@@ -219,48 +222,43 @@ pub fn paint_bubbles(
         }
         let alpha = fade(b.age, BUBBLE_S);
         list.opacity(alpha);
-        // Above the 44 px name tag.
+        // Lettered like the name tag under it (hud::peers), above its 44 px.
+        let style = label(18.);
         let (w, h) = match b.said {
-            Said::Line(text) => (fonts.measure(text, &label(16.).font, 0.).width + 20., 32.),
-            _ => (44., 44.),
+            Said::Line(text) => (fonts.measure(text, &style.font, 0.).width, 24.),
+            _ => (40., 40.),
         };
         let x = marker
             .x
             .clamp(w / 2. + 6., (view.width - w / 2. - 6.).max(w / 2. + 6.));
         let bottom = (marker.y - 50.).clamp(h + 6., view.height - 6.);
-        let rect = Rect::new(x - w / 2., bottom - h, w, h);
-        list.push(Item::Box(BoxPaint {
-            rect,
-            radii: [h / 2.; 4],
-            fill: Some(Color::hex("#101010d9").into()),
-            border: [2.; 4],
-            border_color: peers::color(b.slot),
-            ..Default::default()
-        }));
         match b.said {
-            Said::Line(text) => {
-                let style = label(16.);
-                let width = fonts.measure(text, &style.font, 0.).width;
-                list.text(text, &style, x - width / 2., bottom - h / 2. + 6.);
-            }
-            Said::Emote(e) => paint_emote(list, e, x, bottom - h / 2., 32.),
+            Said::Line(text) => list.text(text, &style, x - w / 2., bottom - 5.),
+            Said::Emote(e) => paint_emote(list, e, x, bottom - h / 2., 36.),
             Said::Horn => {}
         }
         list.unopacity();
     }
 }
 
-/// The feed: the latest few events under the toolbar, newest last.
-pub fn paint_feed(fonts: &mut Fonts, list: &mut DisplayList, view: &Viewport, feed: &[Feed]) {
+/// The feed: the latest few events under the toolbar (or under a panel
+/// ending at `below`), newest last.
+pub fn paint_feed(
+    fonts: &mut Fonts,
+    list: &mut DisplayList,
+    view: &Viewport,
+    feed: &[Feed],
+    below: f32,
+) {
     let x = view.safe[3].max(14.);
-    let mut y = view.safe[0].max(14.) + 44. + 30.;
+    let mut y = (view.safe[0].max(14.) + 44. + 30.).max(below + 24.);
     for f in feed {
         list.opacity(fade(f.age, FEED_S));
         let style = TextStyle::new(
             Font::display(15., 800, true),
             match f.slot {
                 Some(slot) => peers::color(slot),
-                None => GOLD,
+                None => classic::PLAYER,
             },
         )
         .stroke(2., Color::BLACK, Join::Round);
@@ -332,17 +330,10 @@ pub fn paint_wheel(
     focus: Option<usize>,
     hovered: Option<u32>,
 ) {
-    let (cx, cy, r) = wheel_geometry(view);
     let full = Rect::new(0., 0., view.width, view.height);
-    list.rect(full, Color::hex("#0006"));
+    // The pause menu's darkening behind the targets.
+    list.rect(full, Color::hex("#00000073"));
     hits.push((full, CLOSE_HIT));
-    let disc = r + 48.;
-    list.push(Item::Box(BoxPaint {
-        rect: Rect::new(cx - disc, cy - disc, disc * 2., disc * 2.),
-        radii: [disc; 4],
-        fill: Some(Color::hex("#080808b0").into()),
-        ..Default::default()
-    }));
     for (index, (rect, id)) in wheel_targets(view, emotes).into_iter().enumerate() {
         let ready = match id {
             HORN_HIT => chat.ready[2],
@@ -353,34 +344,36 @@ pub fn paint_wheel(
         let lit = focus == Some(index) || hovered == Some(id);
         let (x, y) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
         list.opacity(if ready { 1. } else { 0.4 });
+        // Race Results' Show Results button; the menu's gold pill when lit.
         list.push(Item::Box(BoxPaint {
             rect,
-            radii: [rect.h / 2.; 4],
-            fill: Some(
-                if lit {
-                    Color::hex("#ffc428e6")
-                } else {
-                    Color::hex("#1a1a1ae6")
-                }
-                .into(),
-            ),
-            border: [2.; 4],
-            border_color: if lit {
-                Color::WHITE
+            radii: [5.; 4],
+            fill: Some(if lit {
+                gold_pill()
             } else {
-                Color::hex("#ffffff59")
+                Color::hex("#0c0c0cdb").into()
+            }),
+            shadows: if lit {
+                vec![
+                    BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")),
+                    BoxShadow::outer(0., 2., 0., Color::hex("#0009")),
+                ]
+            } else {
+                vec![BoxShadow::outer(0., 4., 0., Color::hex("#0009"))]
             },
             ..Default::default()
         }));
+        let ink = if lit { classic::INK } else { Color::WHITE };
         match id {
-            HORN_HIT => icon(list, HORN_ICON, Color::WHITE, x, y, 26.),
+            HORN_HIT => icon(list, HORN_ICON, ink, x, y, 26.),
             // The other page's look: a face for emotes, a bubble for lines.
-            PAGE_HIT if emotes => icon(list, CHAT_ICON, Color::WHITE, x, y, 24.),
+            PAGE_HIT if emotes => icon(list, CHAT_ICON, ink, x, y, 24.),
             PAGE_HIT => paint_emote(list, 1, x, y, 26.),
             id if id >= EMOTE_HIT => paint_emote(list, (id - EMOTE_HIT) as u8, x, y, 30.),
             id => {
                 let text = lines[(id - LINE_HIT) as usize];
-                let style = label(14.);
+                // The race-over buttons' lettering.
+                let style = TextStyle::new(Font::display(15., 700, false), ink).spacing(0.45);
                 let width = fonts.measure(text, &style.font, 0.).width;
                 list.text(text, &style, x - width / 2., y + 5.);
             }
