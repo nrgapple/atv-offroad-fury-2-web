@@ -1,0 +1,14 @@
+{
+  "id": "race-results-rebuilt-from-the-disc-s-own-raceover-menu-56a2da5f6c284ea68aa80c3a7dc8e8fa",
+  "timestamp": "2026-11-15T18:42:01.963539+00:00",
+  "recorded_at": "2026-11-15T18:57:19.171132+00:00",
+  "kind": "build",
+  "title": "Race Results rebuilt from the disc's own RaceOver menu",
+  "summary": "The single-player Race Results page now follows Overlays.pb [RaceOver Menu]: the same near-black rounded panel, faint title strip and black navigation pill as Pause. It lists places 1.-5. with names, then four centred columns (Total Time, Best Lap, Stunt Score, Profile Points) with two-line labels and faint rules. Continue, Replay and Hide Menu sit in the pill; Hide shows only Unhide Menu. Continue opens a Quit? page (Restart, Quit Event). Championship rounds are titled Championship Race Results. The ghost medal reveal stays inside the page. Port additions: a summary line, the player row in gold, and Replay. PR #704, closes #698, part of #679.",
+  "details": [
+    "Verification: results unit tests 8/8; test_engine_race_replay, test_engine_ghost_challenges and test_engine_championship pass; desktop and portrait screenshots inspected."
+  ],
+  "limitation": "The course map is hidden while the page is up; no PlayStation button icons. Known bugs: #702 (best laps on 1-lap races) and #703 (Escape also opens Pause).",
+  "image": "/devlog-images/race-results-rebuilt-from-the-disc-s-own-raceover-menu-56a2da5f6c284ea68aa80c3a7dc8e8fa.png",
+  "caption": "Race Results on desktop"
+}
