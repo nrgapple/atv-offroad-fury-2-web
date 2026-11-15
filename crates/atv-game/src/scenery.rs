@@ -74,6 +74,8 @@ pub struct Scenery {
     pub chunks: Vec<Chunk>,
     /// Scene order: models as listed, then their groups and passes.
     pub draws: Vec<Draw>,
+    /// Source-hidden MX models keep their indices for activity transitions.
+    pub hidden_models: Vec<usize>,
     pub unsupported: Vec<(String, String)>,
     pub skipped_groups: usize,
     /// Stadium `[CameraFlash]` settings and the cameraflash pool size.
@@ -100,7 +102,15 @@ pub fn load(
     gate: Option<usize>,
     enduro: &[EnduroDress],
 ) -> Result<Scenery> {
-    let mut scenery = Scenery::default();
+    let mut scenery = Scenery {
+        hidden_models: scene
+            .models
+            .iter()
+            .enumerate()
+            .filter_map(|(index, model)| model.hidden.then_some(index))
+            .collect(),
+        ..Scenery::default()
+    };
     let mut materials = Materials::default();
     let mut geometry: Vec<(String, Vec<usize>, Option<ModelLod>)> = Vec::new();
     for model in &scene.models {

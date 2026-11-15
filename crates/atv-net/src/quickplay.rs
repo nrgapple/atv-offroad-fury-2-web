@@ -514,6 +514,128 @@ impl Vote {
     }
 }
 
+/// [`Reward::flags`].
+pub mod reward_flag {
+    /// The round's XP reached a new level.
+    pub const LEVEL_UP: u8 = 1;
+    /// The round's points reached a new weekly league tier.
+    pub const TIER_UP: u8 = 2;
+    pub const ALL: u8 = 3;
+}
+
+/// League tiers (research/ONLINE_IDENTITY.md): Bronze to Champion.
+pub const TIERS: u8 = 6;
+
+/// What one verified rider earned for a round (research/ONLINE_IDENTITY.md
+/// "League points" and "Levels"), worked out by the server from its own
+/// checked podium and the rider's stored XP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Reward {
+    pub peer: PeerId,
+    /// [`reward_flag`] bits.
+    pub flags: u8,
+    /// League points, which are also XP, for this round.
+    pub points: u16,
+    /// Lifetime XP with this round's.
+    pub xp: u32,
+    /// The level for `xp` (from 1).
+    pub level: u16,
+    /// The XP where `level` starts and where the next one does.
+    pub level_xp: u32,
+    pub next_xp: u32,
+    /// The weekly tier after this round (0 Bronze … 5 Champion).
+    pub tier: u8,
+    /// This week's league points with this round's.
+    pub week_points: u32,
+}
+
+/// Kind 25: the podium's rewards for round `round`, to builds that said
+/// [`crate::signal::REWARDS`]. Riders without a verified rider id, CPUs
+/// and unverified rounds get none.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Rewards {
+    pub round: u32,
+    pub rewards: Vec<Reward>,
+}
+
+/// Most points one round gives (10, 5 for each of 19 riders behind, 10
+/// for a win), with room to spare.
+const MAX_POINTS: u16 = 1_000;
+const REWARD_BYTES: usize = 23;
+
+impl Rewards {
+    pub fn validate(&self) -> Result<()> {
+        if self.rewards.len() > QUICKPLAY_HUMANS {
+            return Err(Error::InvalidValue);
+        }
+        let mut seen = 0u16;
+        for r in &self.rewards {
+            if usize::from(r.peer) >= QUICKPLAY_HUMANS
+                || seen & (1 << r.peer) != 0
+                || r.flags & !reward_flag::ALL != 0
+                || r.points > MAX_POINTS
+                || r.level == 0
+                || r.xp < r.level_xp
+                || r.next_xp <= r.level_xp
+                || r.tier >= TIERS
+            {
+                return Err(Error::InvalidValue);
+            }
+            seen |= 1 << r.peer;
+        }
+        Ok(())
+    }
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.validate()?;
+        out.extend_from_slice(&self.round.to_le_bytes());
+        out.push(self.rewards.len() as u8);
+        for r in &self.rewards {
+            out.extend_from_slice(&[r.peer, r.flags]);
+            out.extend_from_slice(&r.points.to_le_bytes());
+            out.extend_from_slice(&r.xp.to_le_bytes());
+            out.extend_from_slice(&r.level.to_le_bytes());
+            out.extend_from_slice(&r.level_xp.to_le_bytes());
+            out.extend_from_slice(&r.next_xp.to_le_bytes());
+            out.push(r.tier);
+            out.extend_from_slice(&r.week_points.to_le_bytes());
+        }
+        Ok(())
+    }
+    pub(crate) fn decode(body: &[u8]) -> Result<Self> {
+        let mut r = Cursor(body);
+        let round = r.u32()?;
+        let count = usize::from(r.byte()?);
+        if count > QUICKPLAY_HUMANS {
+            return Err(Error::InvalidValue);
+        }
+        if r.0.len() != count * REWARD_BYTES {
+            return Err(Error::InvalidLength);
+        }
+        let rewards = (0..count)
+            .map(|_| {
+                Ok(Reward {
+                    peer: r.byte()?,
+                    flags: r.byte()?,
+                    points: r.u16()?,
+                    xp: r.u32()?,
+                    level: r.u16()?,
+                    level_xp: r.u32()?,
+                    next_xp: r.u32()?,
+                    tier: r.byte()?,
+                    week_points: r.u32()?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let value = Rewards { round, rewards };
+        value.validate()?;
+        Ok(value)
+    }
+    /// This rider's reward.
+    pub fn of(&self, peer: PeerId) -> Option<&Reward> {
+        self.rewards.iter().find(|r| r.peer == peer)
+    }
+}
+
 fn round_bytes(round: &Round, out: &mut Vec<u8>) {
     out.push(round.mode);
     out.extend_from_slice(&round.map.to_le_bytes());
@@ -735,6 +857,60 @@ mod tests {
         };
         let bytes = encode(&Packet::RoomLoop(Box::new(lobby.clone()))).unwrap();
         assert_eq!(decode(&bytes).unwrap(), Packet::RoomLoop(Box::new(lobby)));
+    }
+
+    #[test]
+    fn rewards_round_trip_and_refuse_bad_values() {
+        let reward = Reward {
+            peer: 1,
+            flags: reward_flag::LEVEL_UP,
+            points: 45,
+            xp: 120,
+            level: 2,
+            level_xp: 100,
+            next_xp: 300,
+            tier: 0,
+            week_points: 45,
+        };
+        let rewards = Rewards {
+            round: 3,
+            rewards: vec![reward, Reward { peer: 0, ..reward }],
+        };
+        let bytes = encode(&Packet::Rewards(Box::new(rewards.clone()))).unwrap();
+        assert_eq!(bytes.len(), 8 + 5 + 2 * REWARD_BYTES);
+        assert_eq!(decode(&bytes).unwrap(), Packet::Rewards(Box::new(rewards)));
+        let empty = Rewards::default();
+        let bytes = encode(&Packet::Rewards(Box::new(empty.clone()))).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), Packet::Rewards(Box::new(empty)));
+        for bad in [
+            Reward { peer: 4, ..reward },
+            Reward { flags: 4, ..reward },
+            Reward { level: 0, ..reward },
+            Reward { xp: 99, ..reward },
+            Reward {
+                next_xp: 100,
+                ..reward
+            },
+            Reward {
+                tier: TIERS,
+                ..reward
+            },
+            Reward {
+                points: MAX_POINTS + 1,
+                ..reward
+            },
+        ] {
+            let rewards = Rewards {
+                round: 1,
+                rewards: vec![bad],
+            };
+            assert!(encode(&Packet::Rewards(Box::new(rewards))).is_err());
+        }
+        let twice = Rewards {
+            round: 1,
+            rewards: vec![reward, reward],
+        };
+        assert!(encode(&Packet::Rewards(Box::new(twice))).is_err());
     }
 
     #[test]

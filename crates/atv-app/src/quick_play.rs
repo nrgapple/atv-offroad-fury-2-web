@@ -13,11 +13,11 @@
 //! rider watching a round it joined late follows a racer with a camera.
 use atv_core::math::Det;
 use atv_game::multiplayer::quickplay::{
-    Hosting, NO_CHOICE, RANDOM, RoomLoop, Round, Setup, Vote, host_flag, loop_phase, playlist,
-    rematch, result_flag, seat_flag,
+    Hosting, NO_CHOICE, RANDOM, Reward, Rewards, RoomLoop, Round, Setup, Vote, host_flag,
+    loop_phase, playlist, rematch, result_flag, reward_flag, seat_flag,
 };
 use atv_game::multiplayer::{CPU_PEER, game_kind};
-use atv_ui::hud::quickplay::{self as panel, CardView, Phase, RowView, SeatView, View};
+use atv_ui::hud::quickplay::{self as panel, CardView, LevelView, Phase, RowView, SeatView, View};
 
 /// Votes are resent this often (they carry the rider's ping).
 const RESEND_MS: f64 = 2_000.;
@@ -25,6 +25,12 @@ const RESEND_MS: f64 = 2_000.;
 const COUNT_UP_MS: f64 = 1_200.;
 /// The win flash (ms).
 const FLASH_MS: f64 = 700.;
+/// The level-up beat: its flash and confetti (ms).
+const BEAT_MS: f64 = 1_600.;
+/// The weekly league tiers (research/ONLINE_IDENTITY.md).
+const TIER_NAMES: [&str; 6] = [
+    "Bronze", "Silver", "Gold", "Platinum", "Diamond", "Champion",
+];
 /// The modes a private room's host cycles through.
 const MODES: [u8; 4] = [
     game_kind::RACE,
@@ -66,6 +72,13 @@ pub struct QuickPlay {
     /// Leave was pressed: queue again elsewhere.
     pub leave: bool,
     pad_held: [bool; 3],
+    /// The round whose podium rewards came, and when.
+    rewards_round: u32,
+    rewards_at: f64,
+    /// The countdown's last beeped second.
+    beeped: Option<u32>,
+    /// One-shots for the ride's mixer (the countdown's beeps).
+    pub sounds: Vec<&'static str>,
     /// The last panel built (tests and diagnostics).
     pub view: View,
     /// A private room's loop (Leave leaves the room).
@@ -102,6 +115,36 @@ pub fn mode_word(mode: u8) -> &'static str {
         game_kind::TREASURE_HUNT => "Treasure",
         game_kind::FREESTYLE => "Stunts",
         _ => "Random",
+    }
+}
+
+/// This rider's level bar for a reward `gain` (0-1) into its count-up: a
+/// level-up fills the new level from empty; otherwise the bar grows from
+/// the XP before the round.
+fn level_view(w: &Reward, gain: f64, beat: Option<f64>) -> LevelView {
+    let span = f64::from(w.next_xp.saturating_sub(w.level_xp).max(1));
+    let after = f64::from(w.xp.saturating_sub(w.level_xp)) / span;
+    let up = w.flags & reward_flag::LEVEL_UP != 0;
+    let before = if up {
+        0.
+    } else {
+        f64::from(
+            w.xp.saturating_sub(u32::from(w.points))
+                .saturating_sub(w.level_xp),
+        ) / span
+    };
+    LevelView {
+        level: w.level,
+        fill: (before + (after - before) * gain).clamp(0., 1.) as f32,
+        gain: format!("+{} XP", (f64::from(w.points) * gain).round() as u32),
+        tier: TIER_NAMES
+            .get(usize::from(w.tier))
+            .copied()
+            .unwrap_or("Bronze")
+            .into(),
+        tier_up: w.flags & reward_flag::TIER_UP != 0 && gain >= 1.,
+        level_up: up && gain >= 1.,
+        beat: beat.map_or(0., |t| t as f32),
     }
 }
 
@@ -180,11 +223,12 @@ impl QuickPlay {
     /// One frame: follow the loop, send this rider's choices, and say what
     /// to start when this rider drives a round that has not started.
     /// `environment` is the course this client has loaded; `name` names a
-    /// seat, `course` a venue.
+    /// seat, `course` a venue; `rewards` are the latest podium rewards.
     #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         state: &RoomLoop,
+        rewards: Option<&Rewards>,
         me: Option<u8>,
         now: f64,
         server_now: Option<f64>,
@@ -207,6 +251,7 @@ impl QuickPlay {
             self.phase = state.phase;
             self.phase_at = now;
             self.focus = 0;
+            self.beeped = None;
             self.start = false;
             self.skip = false;
             match state.phase {
@@ -227,6 +272,26 @@ impl QuickPlay {
                 _ => {}
             }
         }
+        // The countdown card beeps its last three seconds with the start
+        // lamps' beep; the round's own lamps play GO.
+        if state.phase == loop_phase::COUNTDOWN
+            && let Some(t) = server_now.filter(|_| state.deadline_ms > 0)
+        {
+            let left = ((state.deadline_ms as f64 - t) / 1000.).ceil().max(0.) as u32;
+            if (1..=3).contains(&left) && self.beeped.is_none_or(|b| left < b) {
+                self.beeped = Some(left);
+                self.sounds.push("beep01.vag");
+            }
+        }
+        let mine = rewards.filter(|r| r.round == state.setup.number && r.round > 0);
+        if state.phase == loop_phase::RESULTS
+            && let Some(r) = mine
+            && r.round != self.rewards_round
+        {
+            self.rewards_round = r.round;
+            self.rewards_at = now;
+        }
+        let rewards = mine.filter(|_| state.phase == loop_phase::RESULTS);
         let ping = ping.map_or(0, |p| p.clamp(1, 9_999) as u16);
         let mut vote = self.vote(state, ping);
         if host {
@@ -240,7 +305,7 @@ impl QuickPlay {
         });
         let start = self.start(state, me, environment, loaded);
         self.watch = self.watched(state, me);
-        self.view = self.build(state, me, now, server_now, name, course, narrow);
+        self.view = self.build(state, rewards, me, now, server_now, name, course, narrow);
         (vote, start)
     }
 
@@ -341,6 +406,7 @@ impl QuickPlay {
     fn build(
         &self,
         state: &RoomLoop,
+        rewards: Option<&Rewards>,
         me: Option<u8>,
         now: f64,
         server_now: Option<f64>,
@@ -414,6 +480,9 @@ impl QuickPlay {
         let picked = (phase == Phase::Countdown).then(|| card(&state.setup.round, 0, false));
         let since = now - self.phase_at;
         let grow = (since / COUNT_UP_MS).clamp(0., 1.);
+        // Rewards count up from their arrival, then a level-up beats.
+        let earned = now - self.rewards_at;
+        let gain = (earned / COUNT_UP_MS).clamp(0., 1.);
         let rows = state
             .results
             .iter()
@@ -425,9 +494,18 @@ impl QuickPlay {
                     cpu: r.flags & result_flag::CPU != 0,
                     me: Some(r.peer) == me,
                     dnf,
+                    points: rewards
+                        .and_then(|w| w.of(r.peer))
+                        .map(|w| format!("+{}", (f64::from(w.points) * gain).round() as u32)),
                 }
             })
             .collect();
+        let reward = rewards.zip(me).and_then(|(w, me)| w.of(me)).copied();
+        let beat = reward
+            .filter(|w| w.flags & reward_flag::LEVEL_UP != 0)
+            .map(|_| (earned - COUNT_UP_MS) / BEAT_MS)
+            .filter(|t| (0. ..1.).contains(t));
+        let level = reward.map(|w| level_view(&w, gain, beat));
         let won =
             phase == Phase::Results && state.results.first().is_some_and(|r| Some(r.peer) == me);
         let me_seat = me.and_then(|m| state.seat(m));
@@ -459,8 +537,10 @@ impl QuickPlay {
             flash: if won && since < FLASH_MS {
                 (1. - since / FLASH_MS) as f32
             } else {
-                0.
+                beat.map_or(0., |t| ((1. - t * 2.).max(0.) * 0.8) as f32)
             },
+            level,
+            confetti: beat.map(|t| t as f32),
             spectating: phase == Phase::Play
                 && me_seat.is_some_and(|s| s.flags & seat_flag::SPECTATING != 0),
             narrow,
@@ -618,11 +698,23 @@ mod tests {
         now: f64,
         env: &str,
     ) -> (Option<Vote>, Option<Start>) {
+        frame_with(q, s, None, now, Some(4_000.), env)
+    }
+
+    fn frame_with(
+        q: &mut QuickPlay,
+        s: &RoomLoop,
+        rewards: Option<&Rewards>,
+        now: f64,
+        server_now: Option<f64>,
+        env: &str,
+    ) -> (Option<Vote>, Option<Start>) {
         q.frame(
             s,
+            rewards,
             Some(0),
             now,
-            Some(4_000.),
+            server_now,
             Some(40),
             env,
             true,
@@ -697,6 +789,96 @@ mod tests {
         assert_eq!(sent.unwrap().rematch, rematch::STAY);
         q.press(panel::LEAVE);
         assert!(q.leave);
+    }
+
+    #[test]
+    fn podium_rewards_count_up_and_a_level_up_beats() {
+        let mut q = QuickPlay::new(playlist::RACE, "QPR00001".into());
+        let results = state(loop_phase::RESULTS);
+        let reward = Reward {
+            peer: 0,
+            flags: reward_flag::LEVEL_UP | reward_flag::TIER_UP,
+            points: 45,
+            xp: 120,
+            level: 2,
+            level_xp: 100,
+            next_xp: 300,
+            tier: 1,
+            week_points: 120,
+        };
+        let rewards = Rewards {
+            round: 3,
+            rewards: vec![reward],
+        };
+        // Another round's rewards are not shown.
+        let old = Rewards {
+            round: 2,
+            ..rewards.clone()
+        };
+        frame_with(&mut q, &results, Some(&old), 0., None, "nat01");
+        assert!(q.view.level.is_none() && q.view.rows[0].points.is_none());
+        frame_with(&mut q, &results, Some(&rewards), 100., None, "nat01");
+        assert_eq!(q.view.rows[0].points.as_deref(), Some("+0"));
+        // CPUs earn nothing.
+        assert_eq!(q.view.rows[1].points, None);
+        let level = q.view.level.clone().unwrap();
+        assert_eq!((level.level, level.fill, level.level_up), (2, 0., false));
+        frame_with(
+            &mut q,
+            &results,
+            Some(&rewards),
+            100. + COUNT_UP_MS,
+            None,
+            "nat01",
+        );
+        assert_eq!(q.view.rows[0].points.as_deref(), Some("+45"));
+        let level = q.view.level.clone().unwrap();
+        assert_eq!(level.gain, "+45 XP");
+        assert!((level.fill - 0.1).abs() < 1e-6);
+        assert!(level.level_up && level.tier_up);
+        assert_eq!(level.tier, "Silver");
+        // The beat: flash and confetti, then calm.
+        frame_with(
+            &mut q,
+            &results,
+            Some(&rewards),
+            200. + COUNT_UP_MS,
+            None,
+            "nat01",
+        );
+        assert!(q.view.confetti.is_some() && q.view.flash > 0.);
+        frame_with(
+            &mut q,
+            &results,
+            Some(&rewards),
+            200. + COUNT_UP_MS + BEAT_MS,
+            None,
+            "nat01",
+        );
+        assert!(q.view.confetti.is_none());
+        // Without a level-up the bar grows from the XP before the round.
+        let plain = Reward {
+            flags: 0,
+            xp: 250,
+            ..reward
+        };
+        let view = level_view(&plain, 0., None);
+        assert!((view.fill - 105. / 200.).abs() < 1e-6);
+        assert!((level_view(&plain, 1., None).fill - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_countdown_beeps_its_last_three_seconds() {
+        let mut q = QuickPlay::new(playlist::RACE, "QPR00001".into());
+        let countdown = RoomLoop {
+            deadline_ms: 10_000,
+            ..state(loop_phase::COUNTDOWN)
+        };
+        // 4 s left: quiet; then one beep each for 3, 2 and 1.
+        for t in [6_000., 6_500., 7_100., 7_200., 8_100., 9_100., 9_900.] {
+            frame_with(&mut q, &countdown, None, t, Some(t), "env05");
+        }
+        assert_eq!(q.sounds, ["beep01.vag"; 3]);
     }
 
     fn hosted(phase: u8) -> RoomLoop {

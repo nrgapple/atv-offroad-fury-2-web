@@ -1186,7 +1186,13 @@ struct World {
     /// A Waypoint Editor ride (no race): the long Enduro scene with the
     /// editor's gate models.
     editor: bool,
+    /// A multiplayer room's ride: the start lamps' beeps load even off a
+    /// race (Quick Play's countdown, research/QUICK_PLAY.md).
+    lamps: bool,
 }
+
+/// The start lamps' beep and GO (`002e79a0`), for a room ride's countdowns.
+const LAMP_SAMPLES: [&str; 2] = ["beep01.vag", "go.vag"];
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
 static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
@@ -1323,6 +1329,7 @@ async fn prepare_inner(
         cpus: cpu_request,
         user_course,
         editor,
+        lamps,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1524,11 +1531,13 @@ async fn prepare_inner(
                     mode,
                     music,
                     selection,
-                    race_samples: riding
-                        .ride
-                        .race()
-                        .map(|r| r.samples())
-                        .unwrap_or_else(|| hockey::samples(&venue.environment)),
+                    race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_else(|| {
+                        let mut samples = hockey::samples(&venue.environment);
+                        if lamps {
+                            samples.extend(LAMP_SAMPLES.map(String::from));
+                        }
+                        samples
+                    }),
                     train_sounds: venue.train_sounds.clone(),
                     actor_sounds: venue.actor_sounds.clone(),
                     // loadWeather: active Rain weather loops rain.vag.
@@ -2436,6 +2445,7 @@ impl App {
                 let narrow = self.overlay.as_ref().is_some_and(|o| o.narrow());
                 let (vote, start) = qp.frame(
                     &state,
+                    net.rewards(),
                     me,
                     net.session_now() as f64,
                     net.server_ms(),
@@ -2451,6 +2461,11 @@ impl App {
                 }
                 quick_start = start;
                 quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
+                if let Some(sound) = &mut riding.sound {
+                    for name in qp.sounds.drain(..) {
+                        sound.one_shot(name);
+                    }
+                }
                 // Watching a round it joined late, the rider is parked (the
                 // server relays its pose to nobody meanwhile).
                 if riding.parked != qp.view.spectating {
@@ -5996,6 +6011,11 @@ impl ApplicationHandler<Message> for App {
                 .unwrap_or_else(|| server_for(&site, None));
             self.online.endpoints = Some((site, server));
             self.online.name = options.room.as_ref().map(|r| r.name.clone());
+            // Joining a room is using something online: a first-time rider
+            // registers (a Quick Play claim waits for it).
+            if options.room.is_some() {
+                self.online.wanted = Some(true);
+            }
         }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
@@ -6089,6 +6109,7 @@ impl ApplicationHandler<Message> for App {
             cpus: game_cpu::Request::default(),
             user_course: None,
             editor: false,
+            lamps: false,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -8365,7 +8386,8 @@ impl App {
                 quad,
                 rider,
                 name,
-            } => self.start_quick_play(playlist, None, quad, rider, name),
+                room,
+            } => self.start_quick_play(playlist, None, room, quad, rider, name),
             Event::RoomRide {
                 quad,
                 rider,
@@ -8977,6 +8999,7 @@ impl App {
                 .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
                 .and(self.user_course.clone()),
             editor: race.is_none() && self.editor.is_some(),
+            lamps: false,
             // Only a local game or a plain free ride takes CPU riders
             // (never a room, a race, an objective, Training or the editor).
             cpus: if self.cpu_request.roam {
@@ -9118,7 +9141,8 @@ impl App {
                     r.difficulty == 2,
                 )
             });
-        let (world, ride) = self.ride_setup(&front, quad, rider, race);
+        let (mut world, ride) = self.ride_setup(&front, quad, rider, race);
+        world.lamps = room.is_some();
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
@@ -10700,6 +10724,7 @@ impl App {
         &mut self,
         playlist: u8,
         avoid: Option<String>,
+        room: Option<String>,
         quad: u16,
         rider: u16,
         name: String,
@@ -10731,7 +10756,7 @@ impl App {
             code: None,
             host: false,
             freeride: false,
-            quickplay: Some((playlist, avoid)),
+            quickplay: Some((playlist, avoid, room)),
             name,
             drop_after: None,
             train_place: None,
@@ -10763,7 +10788,14 @@ impl App {
         if !self.quit_to(Some("quickplay")) {
             return;
         }
-        self.start_quick_play(playlist, Some(code), quad, rider, name.unwrap_or_default());
+        self.start_quick_play(
+            playlist,
+            Some(code),
+            None,
+            quad,
+            rider,
+            name.unwrap_or_default(),
+        );
     }
 
     /// The server made this rider the round's driver: start the round as
@@ -10961,6 +10993,7 @@ impl App {
             cpus: game_cpu::Request::default(),
             user_course: None,
             editor: false,
+            lamps: true,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -11449,7 +11482,8 @@ pub fn start() {
             drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
             train_place: param("trainPlace").and_then(|v| v.parse().ok()),
             freeride: false,
-            quickplay: quickplay.map(|p| (p, None)),
+            // `quickplayRoom=QPR00001`: a friend's room first (tests).
+            quickplay: quickplay.map(|p| (p, None, param("quickplayRoom"))),
         }),
         // `script=storage` reads a long parity script from localStorage
         // `furyScript` (URLs are bounded).

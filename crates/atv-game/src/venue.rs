@@ -169,6 +169,7 @@ fn animated_models(
         matrix[12..15].copy_from_slice(&[x, y, z]);
         scene.models.push(atv_core::scene::StaticModel {
             name: t.model.clone(),
+            hidden: false,
             position: t.offset,
             look: [0., 0., 1.],
             up: Some([0., 1., 0.]),
@@ -393,6 +394,7 @@ async fn load_selected(
         let matrix = gate.matrix(0.);
         scene.models.push(atv_core::scene::StaticModel {
             name: gate.model.clone(),
+            hidden: false,
             position: gate.position,
             look: [matrix[8], matrix[9], matrix[10]],
             up: Some([matrix[4], matrix[5], matrix[6]]),
@@ -417,6 +419,7 @@ async fn load_selected(
                 matrix[12..15].copy_from_slice(&[x, y, z]);
                 scene.models.push(atv_core::scene::StaticModel {
                     name: "hockeypuck".into(),
+                    hidden: false,
                     position: [x, y, z],
                     look: [0., 0., 1.],
                     up: Some([0., 1., 0.]),
@@ -445,6 +448,7 @@ async fn load_selected(
             matrix[12..15].copy_from_slice(&[x, y + 4., z]);
             scene.models.push(atv_core::scene::StaticModel {
                 name: "tagball".into(),
+                hidden: false,
                 position: [x, y + 4., z],
                 look: [0., 0., 1.],
                 up: Some([0., 1., 0.]),
@@ -463,6 +467,7 @@ async fn load_selected(
                 std::array::from_fn(|_| {
                     scene.models.push(atv_core::scene::StaticModel {
                         name: "arrow".into(),
+                        hidden: false,
                         position: [0.; 3],
                         look: [0., 0., 1.],
                         up: Some([0., 1., 0.]),
@@ -662,6 +667,7 @@ async fn load_selected(
         for _ in 0..atv_core::user_course::MAX_GATES {
             scene.models.push(atv_core::scene::StaticModel {
                 name: name.clone(),
+                hidden: false,
                 position: [matrix[12], matrix[13], matrix[14]],
                 look: [0., 0., 1.],
                 up: Some([0., 1., 0.]),
@@ -708,6 +714,7 @@ async fn load_selected(
             let matrix = atv_core::enduro::model_matrix(gate);
             scene.models.push(atv_core::scene::StaticModel {
                 name: name.clone(),
+                hidden: false,
                 position: [matrix[12], matrix[13], matrix[14]],
                 look: [matrix[8], matrix[9], matrix[10]],
                 up: Some([0., 1., 0.]),
