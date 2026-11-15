@@ -1,0 +1,16 @@
+{
+  "id": "mx-rendering-repairs-after-visual-acceptance-efc1ad29bc7244e59821a4339adbaa3c",
+  "timestamp": "2026-11-15T02:13:07.617958+00:00",
+  "recorded_at": "2026-11-15T02:54:57.481990+00:00",
+  "kind": "verification",
+  "title": "MX rendering repairs after visual acceptance",
+  "summary": "Initial import checks showed the MX venues loaded, but visual acceptance was insufficient: selector previews lost opacity, nearby foliage looked cut out, and MX skies showed an edge seam. Focused repairs have now been merged for those three defects.",
+  "details": [
+    "Preview opacity (#677, 35d219c1): restored the original full 280 photos and corrected GS alpha 128 to UI alpha 255. All 56 mobile selector cases passed; the application carrying this fix was observed live.",
+    "Foliage (#678, b43ae6a9): adjusted the MX near-foliage alpha threshold margin while preserving the ATV2 path. Original and Remastered captures were inspected on the exact artifact; this is host verification.",
+    "Sky (#687, 6fcd51f7): MX sky UVs now use unpadded edges while ATV2 keeps its inset. Exact-artifact run 43668172056 passed focused The Glades sky 97 and NAT01 sky 28 tests. Four horizons and the zenith were matched in Original and Remastered; five ATV2 control images remained byte-identical. Host captures before and after were inspected."
+  ],
+  "limitation": "The sky repair is merged but public deployment was not confirmed when this checkpoint was recorded. Ground softness, a dark terrain card and a stretched banner remain under active repair. Native LOD, weather and reflections remain incomplete; no physical-phone visual acceptance was performed. This is not full MX rendering parity.",
+  "image": "/devlog-images/mx-rendering-repairs-after-visual-acceptance-efc1ad29bc7244e59821a4339adbaa3c.png",
+  "caption": "Host capture of The Glades near foliage after the MX alpha-threshold repair; terrain presentation still needs work."
+}
