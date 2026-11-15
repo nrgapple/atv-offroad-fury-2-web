@@ -49,7 +49,7 @@ uses it. No overlay in this change draws a black or near-black panel.
 | Spectator "Next round" and Watch | A `#000000a6` pill and a dark button | "NEXT ROUND" in race HUD gold with no box; Watch is a silver plate |
 | Race HUD under the panel | The race's PLACE list, SCORE/LAP labels and LAP TIME block showed through or collided with the Results panel and its title; a name tag sat on the place list | While a loop panel is up (vote, countdown, podium), the race's place, score, lap, times, lamps and stunt text step aside, as on the original race-over screen. The map and speed stay |
 | Touch coaching under the panel | "HOLD ANYWHERE TO RIDE" and the resting touch circle sat under the panel | Hidden while a loop panel is up. A finger that is riding (riders can ride during lobby, vote and podium) still sees its control |
-| Phone placement | The panel at the top covered the minimap at 360 px portrait | Placed below the minimap when the screen is tall enough. On a phone the vote shows cards two across and leaves out the seat plates |
+| Phone placement | The panel at the top covered the minimap at 360 px portrait | The panel starts below the minimap whenever the minimap sits at the top over the panel's span. It uses the minimap's own rect, which #697's compass styling keeps. On a phone the vote shows cards two across and leaves out the seat plates |
 | Free Ride hub: status line | A rounded `#0c0c0cc8` chip | Race HUD lettering: gold title, silver detail and the clock, no box |
 | Free Ride hub: Challenge | A flat `#ffd166` rounded card | The gold pill button, "Challenge <name>" |
 | Free Ride hub: offer prompt | A blue-black `#101820e0` card with a 20-dot ring, a green ACCEPT and a grey NO | "Race?" title strip with the seconds in HUD gold, over a silver sheet with the rider's name, a gold Accept and a silver Decline |
@@ -60,8 +60,8 @@ uses it. No overlay in this change draws a black or near-black panel.
 | Quick chat: bubbles | A dark `#101010d9` pill with a coloured border | Name-tag lettering (white, black outline) with no box; emotes drawn bare |
 | Quick chat: feed | Outlined lettering already, but printed over the Quick Play panel's title, with the player's name in an invented orange-gold | The feed starts under the panel; your name is in the HUD gold |
 | Quick chat: wheel vs panels | The wheel was centred on the screen, so its top target sat on the lobby buttons | Centred in the free space under any open panel (Quick Play or hub). Where that space cannot hold the smallest ring (120 px, needing 300 px), the loop panel steps aside while the wheel is open |
-| Toolbar labels at about 390 px | PAUSE CAMERA KEYS CHAT clipped CHAT to "CHA" | The toolbar goes icon-only whenever the labelled row (about 96 px a button) would not fit, with or without KEYS |
-| Quick chat: CHAT toolbar button | The classic toolbar control already | Unchanged |
+| Toolbar labels at about 390 px | PAUSE CAMERA KEYS CHAT clipped CHAT to "CHA" | Resolved by main's race-HUD toolbar (#694 and later): icon-only buttons in the overlays' lettering, with no labels to clip |
+| Quick chat: CHAT toolbar button | The toolbar control | Main's race-HUD toolbar |
 | Follow camera (#671) | The watched rider's tag floated mid-screen under the Watch button and ran into other riders' tags. Tags were ranked from the parked spectator. The touch controls and "HOLD ANYWHERE TO RIDE" showed although a spectator cannot ride | The watched rider's tag is hidden (Watch names that rider) but stays on the map. Tags are ranked from the camera, and a farther tag that would cover a nearer one stacks above it (this also fixes bunched start grids). Touch controls are hidden while watching |
 | Ghost challenges: medal reveal | Inside Race Results; the NEW tag was a flat `#f6e061` chip | The NEW tag sits on the gold pill. The coin itself comes from `medal.rs`, which the menu restyle (#682) owns |
 

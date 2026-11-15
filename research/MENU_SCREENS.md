@@ -25,7 +25,7 @@ used; these are approximate composites, not captures.
 | Hints | Black pill with PS2 cross/triangle glyphs | Console glyphs dropped (players use touch, mouse, keyboard and modern pads); a plain Back control keeps that corner |
 | Select ATV & Rider | ATV and Rider are rows on one page beside a live 3D model | One page: ATV row with previous/next, Male/Female rider toggle, a grouped list of every vehicle (ATVs, Motorcycles), and the ATV and rider models together on the stage. Rider gear opens its own page from a separate outlined button beside Done |
 | Select Track | Left rows, 384×256 track photo on the right | Event-type tabs (Enduro, Stunt, Nationals, Supercross, Arena), a course list with photo thumbnails and a large preview with Ride |
-| Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, as one compact list over the frozen ride |
+| Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, from the source geometry, for Pause and every Options page over a ride (see [Pause overlay](#pause-overlay-2026-11-14)) |
 | 3D previews | Lit original models on the gray panel | Drawn opaque. The UI rider textures (`RIDEINFO.RES` `atv2_*_ui`) keep a specular/reflection mask in alpha (about 50/255 on shirt, pants and sleeves); treating it as transparency let the silver panel show through and turned the black jersey gray. Rider materials never alpha-cut |
 
 Original stats sliders, gear rows and the four-player colour columns are not
@@ -33,6 +33,28 @@ reproduced; the port has no matching systems yet. The Profile Editor and View
 Profile pages use the main-menu layout (rows left, ride stage on the editor and
 view menus) with a label/value table on the silver panel for the name entry,
 profile lists, alerts, Overview, Trophies and Records (`PROFILE.md`).
+
+## Pause overlay (2026-11-14)
+
+Over a ride, Pause and the Options pages it opens are drawn as the original
+in-game overlay, `Overlays.pb [Main Menu]` (art in `E01_FR.RES`), rather than
+as a frontend column. The owner asked for the original pause look back. The
+port's rows, labels and actions are unchanged. Source numbers are on a
+640x448 screen and are scaled with the screen.
+
+| Source | Port |
+| --- | --- |
+| `overlay_bkg01` nine-slice, tint 10,10,10, panel 59..581 x 68..381 | Centred rounded panel, `#0a0a0a` at the texture's alpha 122/255, 2px black rim; about 4:3 of the screen height, nearly the full width on a portrait phone |
+| `overlay_titlebkg` at 61,82, 256 wide, tint 200 alpha 64 | Faint grey strip over half the panel, fading out to the right, with "Pause" (or the page name) in bold condensed italics |
+| Rows at x 134, `tradegothic_boldcondensed_22s`, 200 grey; selected black in `22soff` | Same colours, no bullets; rows are at least 44px apart for touch, so they sit further apart than the source's 25 |
+| `menuhighlight` capsule from x-42 to x+415 | Olive-gold capsule with the texture's shading (dark rim, gloss line, darker middle, black lower edge) |
+| `overlay_bulletoff` left/right markers at x-34 and x-16 on value rows | Grey markers before value rows (black on the capsule); the value follows the label in the same lettering ("Music Volume: 70%") |
+| `overlay_navbar` black capsule with a grey outline across the panel's lower edge, `X Select` | Same pill, holding Back on Options pages and Copy ride link / Dev log on Pause; PS2 glyphs are dropped as on the frontend. A landscape phone puts it beside the title so all seven Pause rows fit |
+
+The source dims nothing behind the panel. The port adds a light veil (20%
+black) so lettering stays legible over bright snow. Options opened from the
+main menu is a frontend page in the original too, so it keeps the frontend
+column and silver stage. The Jukebox and Credits keep their own pages.
 
 ## Navigation and value rows
 

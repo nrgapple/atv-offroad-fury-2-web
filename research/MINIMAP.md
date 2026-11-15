@@ -1,5 +1,14 @@
 # Freestyle GPS minimap
 
+Look (2026-11-14): the map is dressed as the original HUD compass
+(`compassbkg`/`compassarrow`, `QuadzillaCompass`) so it reads as part of
+the race HUD. It has a thin white rim between dark edges, N/E/S/W outside
+the rim in the overlays' outlined lettering (turning with the map
+heading-up, as the compass face turns), and the white compass wedge for the
+player. The letters take about 9% of the footprint on each side, so the map
+inside is smaller than the footprint. The terrain map itself is still the
+port's enhancement.
+
 World orientation correction (2026-10-14): the original camera uses +X-right
 with north/up = +Z. The former WebGL −X-right camera reflected the entire world;
 the October 13 GPS alignment matched that incorrect view. The corrected camera

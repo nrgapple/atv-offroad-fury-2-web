@@ -1898,7 +1898,7 @@ mod parity_tests {
     }
 
     #[test]
-    fn options_opens_one_page_at_a_time_in_a_column_beside_the_ride() {
+    fn options_opens_one_page_at_a_time_on_the_overlay_panel() {
         let mut fx = Fixture::new();
         let mut menu = PauseMenu::new();
         fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
@@ -1930,19 +1930,31 @@ mod parity_tests {
                     .unwrap()
             };
             let button = rect(back.expect("Back"));
-            // Back bottom right, clear of the home indicator and notch.
+            // Back in the navigation pill at the panel's right (its lower
+            // edge, or beside the title on a phone on its side), clear of
+            // the home indicator and notch.
             assert!(button.bottom() <= height - safe[2], "{width}: {button:?}");
             assert!(button.right() <= width - safe[1], "{width}: {button:?}");
-            assert!(button.right() >= width * 0.85, "{width}: {button:?}");
+            assert!(button.x >= width * 0.5, "{width}: {button:?}");
             for i in (0..state.rows.choices.len()).filter(|i| Some(*i) != back) {
                 let row = rect(i);
                 assert!(row.x >= safe[3] && row.h >= 42., "{width}: {row:?}");
                 assert!(row.right() <= width - safe[1] + 0.5, "{width}: {row:?}");
-                // In landscape the ride stays in view beside the column.
-                if width > height {
-                    assert!(row.right() <= width * 0.46, "{width}: {row:?}");
+                // Rows span the panel centred over the ride, which stays in
+                // view either side of it in landscape.
+                let middle = (row.x + row.right()) / 2.;
+                let centre = (width + safe[3] - safe[1]) / 2.;
+                // (A slider's track sits under its lettering.)
+                if state.rows.slider(&state.rows.choices[i]).is_none() {
+                    assert!((middle - centre).abs() <= 2., "{width}: {row:?}");
                 }
-                assert!(row.bottom() <= button.y || row.right() <= button.x);
+                if width > height {
+                    assert!(row.w <= width * 0.82, "{width}: {row:?}");
+                }
+                assert!(
+                    row.bottom() <= button.y || row.y >= button.bottom() || row.right() <= button.x,
+                    "{width}: {row:?} clear of {button:?}"
+                );
             }
         }
         fx.with(&mut menu, |m, ctx| m.run("back", 1, false, ctx));

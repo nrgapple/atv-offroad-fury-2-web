@@ -6,6 +6,8 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct StaticModel {
     pub name: String,
+    /// Source scene starts this model hidden; activities may reveal it later.
+    pub hidden: bool,
     pub position: [f32; 3],
     pub look: [f32; 3],
     pub up: Option<[f32; 3]>,
@@ -415,9 +417,9 @@ pub fn static_models(data: &[u8]) -> Result<Vec<StaticModel>> {
     static_models_from_document(&document(data)?)
 }
 fn static_models_from_document(data: &PhysicsData) -> Result<Vec<StaticModel>> {
-    static_models_profile(data, 4096)
+    static_models_profile(data, 4096, false)
 }
-fn static_models_profile(data: &PhysicsData, limit: usize) -> Result<Vec<StaticModel>> {
+fn static_models_profile(data: &PhysicsData, limit: usize, mx: bool) -> Result<Vec<StaticModel>> {
     let mut models = Vec::new();
     for index in 1..=count_bounded(data, "StaticModels", "NumberOfStaticModels", limit)? {
         let section = format!("Model{index}");
@@ -440,6 +442,7 @@ fn static_models_profile(data: &PhysicsData, limit: usize) -> Result<Vec<StaticM
         let up = optional_vector(data, &section, "UpVector")?;
         models.push(StaticModel {
             name: name.to_owned(),
+            hidden: mx && mx_boolean(data, &section, "Hide", false)?,
             position,
             look,
             up,
@@ -536,7 +539,7 @@ fn parse_profile(data: &[u8], mode: Option<&[u8]>, mx: bool) -> Result<Scene> {
     let cube_file = value(&data, "Environment", "CubeFile")
         .ok_or("missing scene cube file")?
         .to_owned();
-    let models = static_models_profile(&data, model_limit)?;
+    let models = static_models_profile(&data, model_limit, mx)?;
     let mut lights = Vec::new();
     for index in 1..=count(&data, "Lights", "NumberOfLights")? {
         let section = format!("Light{index}");
@@ -988,6 +991,19 @@ mod tests {
 
 #[cfg(test)]
 mod mx_scene_tests {
+    #[test]
+    fn hidden_mx_static_models_keep_their_scene_slots() {
+        let source = b"[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=test.cub\n[Fog]\nColorRGB=0,0,0\n[Lights]\nNumberOfLights=0\n[StaticModels]\nNumberOfStaticModels=2\n[Model1]\nSLT=Type_National\nHide=TRUE\nType=StartZone\n[Model2]\nSLT=finishgate\n";
+        let scene = super::parse_mx(source).unwrap();
+        assert_eq!(scene.models.len(), 2);
+        assert_eq!(scene.models[0].name, "Type_National");
+        assert!(scene.models[0].hidden);
+        assert_eq!(scene.models[1].name, "finishgate");
+        assert!(!scene.models[1].hidden);
+        // ATV2's static-model parser has no MX Hide semantics.
+        assert!(!super::parse(source).unwrap().models[0].hidden);
+    }
+
     #[test]
     fn mx_nonphysical_triggers_remain_metadata() {
         let source = b"[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=test.cub\n[Fog]\nColorRGB=0,0,0\n[Lights]\nNumberOfLights=0\n[StaticModels]\nNumberOfStaticModels=0\n[CollisionObjects]\nNumberOfCollisionObjects=2\n[Object1]\nCOL=Ring_Trigger.col\nHasCol=False\nIsTrigger=True\nInvisible=True\nHide=TRUE\nType=Waypoint\nActivity=\"Airplane Race\"\n[Object2]\nCOL=solid.col\nPosition=4,5,6\n";

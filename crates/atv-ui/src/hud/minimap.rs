@@ -1,7 +1,9 @@
 //! Freestyle GPS minimap (web/minimap.js `FreestyleMinimap`, game.css
 //! `#freestyle-minimap`): an orthographic 1024x1024 course map built once from
-//! the original terrain textures and heights, a gold heading marker, north
-//! lettering and the speed/preload footer.
+//! the original terrain textures and heights and the speed/preload footer,
+//! dressed as the original HUD compass (`compassbkg`, `QuadzillaCompass`):
+//! a thin white rim, N/E/S/W around it in the overlays' outlined lettering
+//! (turning with the map heading-up) and the white `compassarrow` marker.
 use super::{Viewport, tokens};
 use crate::settings::Settings;
 use crate::{
@@ -450,7 +452,15 @@ impl Minimap {
         if !self.settings.enabled {
             return;
         }
-        let rect = self.rect(view);
+        // The compass letters sit outside the rim, as on `compassbkg`.
+        let outer = self.rect(view);
+        let margin = (outer.w * 0.09).max(10.);
+        let rect = Rect::new(
+            outer.x + margin,
+            outer.y + margin,
+            outer.w - 2. * margin,
+            outer.h - 2. * margin,
+        );
         let size = rect.w;
         let (cx, cy) = (rect.x + size / 2., rect.y + size / 2.);
         let radius = match self.settings.shape {
@@ -512,15 +522,16 @@ impl Minimap {
                 ..Default::default()
             }));
         }
-        // Heading marker: pale gold arrow with an ink outline.
+        // Heading marker: `compassarrow`, a white wedge (8x8 at the
+        // compass's size), with the overlays' dark outline.
         list.push(Item::Shape {
             shape: Shape {
-                path: "M0 -8L6 6L0 3L-6 6Z".into(),
-                bounds: [-6., -8., 6., 6.],
+                path: "M0 -7L5 6L-5 6Z".into(),
+                bounds: [-5., -7., 5., 6.],
                 unit: 1.,
-                fill: tokens::GOLD_LIGHT,
+                fill: Color::WHITE,
                 stroke: Some(crate::text::Stroke {
-                    width: 3.,
+                    width: 2.5,
                     color: tokens::INK,
                     join: Join::Miter,
                 }),
@@ -537,26 +548,6 @@ impl Minimap {
                 Join::Miter,
             )
         };
-        list.text("N", &outlined(10., 800, true), cx - 4., rect.y + 13.);
-        if heading_up {
-            list.push(Item::Shape {
-                shape: Shape {
-                    path: "M0 -4L3 3L0 1L-3 3Z".into(),
-                    bounds: [-3., -4., 3., 3.],
-                    unit: 1.,
-                    fill: tokens::SILVER_LIGHT,
-                    stroke: Some(crate::text::Stroke {
-                        width: 2.,
-                        color: tokens::INK,
-                        join: Join::Miter,
-                    }),
-                    drop_shadow: None,
-                },
-                x: cx,
-                y: rect.y + 22.,
-                rotation: -pose.heading,
-            });
-        }
         if let Some(hud) = instrument {
             let speed_size = (size * 0.17).max(16.);
             let units_size = (size * 0.07).max(9.);
@@ -590,6 +581,33 @@ impl Minimap {
             }
         }
         list.unclip();
+        // The compass rim: a thin white ring between dark edges.
+        for (grow, width, color) in [(2., 4., tokens::INK), (1., 2., Color::WHITE)] {
+            let ring = Rect::new(
+                rect.x - grow,
+                rect.y - grow,
+                size + 2. * grow,
+                size + 2. * grow,
+            );
+            list.push(Item::Box(crate::paint::BoxPaint {
+                rect: ring,
+                radii: [radius + grow; 4],
+                border: [width; 4],
+                border_color: color,
+                ..Default::default()
+            }));
+        }
+        // N, E, S, W outside the rim; heading-up, they turn with the map.
+        let letter = (margin * 0.95).clamp(10., 16.);
+        let style = outlined(letter, 800, false);
+        let turn = if heading_up { -pose.heading } else { 0. };
+        let reach = size / 2. + margin / 2.;
+        for (i, name) in ["N", "E", "S", "W"].iter().enumerate() {
+            let a = turn + i as f32 * std::f32::consts::FRAC_PI_2;
+            let (x, y) = (cx + reach * a.sin(), cy - reach * a.cos());
+            let width = fonts.measure(name, &style.font, 0.).width;
+            list.text(*name, &style, x - width / 2., y + letter * 0.36);
+        }
         list.unopacity();
     }
 }

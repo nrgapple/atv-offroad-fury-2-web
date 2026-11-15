@@ -388,27 +388,30 @@ fn confetti(viewport: &Viewport, t: f32) -> El {
     }))
 }
 
+/// The panel's width in a view.
+pub fn panel_width(viewport: &Viewport) -> f32 {
+    (viewport.width - 24.).clamp(0., 560.)
+}
+
 /// The panel, or None when nothing shows (a round in play). Built from the
 /// original front end's pieces (hud::classic): a silver sheet under a white
 /// title strip with the phase's clock in race HUD lettering, the player
 /// plates, Select Track's framed photos, the Hall of Fame style table and
-/// the gold and silver buttons. `photo` finds a venue's photo.
+/// the gold and silver buttons. The panel starts no higher than `below`
+/// (a top minimap's bottom edge, 0 for none); `photo` finds a venue's
+/// photo.
 pub fn element(
     viewport: &Viewport,
     view: &View,
+    below: f32,
     photo: &dyn Fn(&str) -> Option<classic::Photo>,
 ) -> Option<El> {
     let focused = |id: u32| view.focus_visible && buttons(view).get(view.focus) == Some(&id);
     let button =
         |id: u32, label: &str, primary: bool| classic::button(id, label, primary, focused(id));
-    let width = (viewport.width - 24.).clamp(0., 560.);
-    // A portrait phone keeps its minimap (top right) clear when there is
-    // room below it.
-    let top = if view.narrow && viewport.height >= 640. {
-        160f32.max(viewport.safe[0] + 150.)
-    } else {
-        56f32.max(viewport.safe[0] + 52.)
-    };
+    let width = panel_width(viewport);
+    // Under the toolbar, and below a top minimap the panel would cover.
+    let top = 56f32.max(viewport.safe[0] + 52.).max(below);
     let sheet =
         |title: &str, body: Vec<El>| classic::sheet(title, timer(view.seconds), width, body);
     let content = match view.phase {
@@ -695,7 +698,7 @@ mod tests {
         let view = viewport(360., 740.);
         for phase in [Phase::Lobby, Phase::Vote, Phase::Countdown, Phase::Results] {
             let state = sample(phase);
-            let el = element(&view, &state, &|_| None).unwrap();
+            let el = element(&view, &state, 0., &|_| None).unwrap();
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             let mut fonts = Fonts::new();
             crate::layout::render(
@@ -725,7 +728,7 @@ mod tests {
                     watching: Some("Mud Hawk".into()),
                     ..sample(phase)
                 };
-                let el = element(&view, &state, &|_| None).unwrap();
+                let el = element(&view, &state, 0., &|_| None).unwrap();
                 let (mut list, mut hits) = (DisplayList::default(), Vec::new());
                 let mut fonts = Fonts::new();
                 crate::layout::render(
@@ -763,12 +766,12 @@ mod tests {
             Some(&SKIP)
         );
         // Nothing shows while a round runs, unless spectating.
-        assert!(element(&view, &sample(Phase::Play), &|_| None).is_none());
+        assert!(element(&view, &sample(Phase::Play), 0., &|_| None).is_none());
         let watching = View {
             spectating: true,
             ..sample(Phase::Play)
         };
-        assert!(element(&view, &watching, &|_| None).is_some());
+        assert!(element(&view, &watching, 0., &|_| None).is_some());
     }
 
     /// Rematch shows the rider's choice once pressed.
@@ -776,7 +779,7 @@ mod tests {
     fn the_rematch_choice_shows() {
         let view = viewport(360., 740.);
         let labels = |state: &View| {
-            let el = element(&view, state, &|_| None).unwrap();
+            let el = element(&view, state, 0., &|_| None).unwrap();
             let (mut list, mut hits) = (DisplayList::default(), Vec::new());
             crate::layout::render(
                 &el,

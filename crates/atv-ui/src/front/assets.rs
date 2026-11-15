@@ -364,6 +364,7 @@ pub struct QuadInfo {
 pub struct QuadCatalog {
     pub info: HashMap<u16, QuadInfo>,
     pub logos: HashMap<String, Rgba>,
+    pub portraits: HashMap<u16, Rgba>,
     /// The Profile Store's ATVs in uiQuad.txt order.
     pub atvs: Vec<atv_core::store::Atv>,
 }
@@ -419,7 +420,23 @@ pub async fn quad_catalog(content: &Content) -> Result<QuadCatalog, String> {
         }
         atv_content::yield_frame().await;
     }
-    Ok(QuadCatalog { info, logos, atvs })
+    // PAGE08 uses multi_atvNN, indexed by IngameID, not QuadN order.
+    // ATV06 has no original portrait: leave it absent rather than mislabel it.
+    let mut portraits = HashMap::new();
+    for id in 1..=26 {
+        if let Some(index) = archive.named(&format!("multi_atv{id:02}.pst"))
+            && let Ok(image) = pst(&archive.member(index).await?)
+        {
+            portraits.insert(id, image.trim_clear().unwrap_or(image));
+        }
+        atv_content::yield_frame().await;
+    }
+    Ok(QuadCatalog {
+        info,
+        logos,
+        portraits,
+        atvs,
+    })
 }
 
 /// The authored physics top speed (mph) of an ATV.

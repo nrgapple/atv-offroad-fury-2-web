@@ -14,6 +14,8 @@ pub struct Tile {
 pub struct Sky {
     pub origin: [f32; 3],
     pub tiles: Vec<Tile>,
+    /// MX CUB43 tiles are rasterized at pixel centers with no IPUM gutter.
+    pub mx_raster_tiles: bool,
 }
 
 /// The encoded tile images of a cube file, in its layout's order.
@@ -50,6 +52,7 @@ pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
         return Ok(Sky {
             origin: source.origin,
             tiles,
+            mx_raster_tiles: true,
         });
     }
     let layout = sky::layout(bytes)?;
@@ -82,5 +85,6 @@ pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
     Ok(Sky {
         origin: layout.origin,
         tiles,
+        mx_raster_tiles: false,
     })
 }

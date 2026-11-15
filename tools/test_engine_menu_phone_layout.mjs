@@ -130,11 +130,20 @@ try {
     for (const p of ['games', 'split', 'splitseats']) {
       await page.goto(url(`/play.html?uiDiagnostics=1&front=${p}`));
       await onPage(page, p);
-      await page.waitForFunction(
-        () => JSON.parse(document.querySelector('#ui-state').textContent).front.modelTargets?.[0],
-        null,
-        { timeout: 60000 }
-      );
+      if (p === 'splitseats') {
+        const cards = (await front(page)).hits.filter(h => h.id >= 2470 && h.id < 2474);
+        assert.equal(cards.length, 4, `${name}: four player cards replace the single model`);
+        for (const card of cards) assert.ok(inside(card, viewport), `${name}: player card stays on screen ${JSON.stringify(card)}`);
+        for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
+          assert.ok(!overlaps(cards[i], cards[j]), `${name}: player cards do not overlap`);
+        }
+        if (shots) await page.screenshot({ path: `${shots}/${name}-lineup.png` });
+      } else {
+        await page.waitForFunction(
+          () => JSON.parse(document.querySelector('#ui-state').textContent).front.modelTargets?.[0],
+          null, { timeout: 60000 }
+        );
+      }
       assertFixed(await front(page), `${name} ${p}`, viewport);
     }
     // Single Player: its modes fit without scrolling on every phone.
@@ -207,7 +216,9 @@ try {
     assert.equal(f.vehicleSheet, true, `${name}: a tap on the vehicle opens the picker`);
     const vehicles = hit(f, LIST);
     const items = f.hits.filter(h => h.id >= VEHICLE && h.id < VEHICLE + 100 && h.y >= vehicles.y && h.y + h.height <= vehicles.y + vehicles.height);
-    assert.ok(items.length >= least, `${name}: at least ${least} whole vehicles in the picker (${items.length})`);
+    assert.ok(items.length >= 2, `${name}: two whole picture cards in the picker (${items.length})`);
+    assert.ok(Math.abs(items[0].y - items[1].y) < 1, `${name}: vehicle pictures sit side by side`);
+    assert.ok(items[0].x + items[0].width <= items[1].x + 1, `${name}: picture cards do not overlap`);
     if (shots) await page.screenshot({ path: `${shots}/${name}-garage-picker.png` });
     const pick = items.find(h => h.id !== VEHICLE + quad);
     await tap(page, pick);

@@ -1,8 +1,9 @@
-// Pause and Options in the Rust engine, laid out like the main menu: a
-// column of rows on the left with the paused ride in view beside it (the
-// whole width on a portrait phone), Back bottom right, and one page at a
-// time. Up and Down follow the rows as drawn. The menu status bar's gear
-// opens Options from the main menu, beside the frontend's stage.
+// Pause and Options over a ride in the Rust engine, on the original in-game
+// overlay: a panel centred over the paused ride (nearly the whole width on a
+// portrait phone) with Back, or Pause's sharing entries, in the navigation
+// pill at its right, and one page at a time. Up and Down follow the
+// rows as drawn. The menu status bar's gear opens Options from the main
+// menu, beside the frontend's stage.
 // Host browser evidence.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
@@ -32,18 +33,21 @@ async function ride(browser, viewport, errors, options = {}) {
   return page;
 }
 
-// Rows keep to the column on the left of a landscape screen (a scrolled
-// row may sit below it); Back, or Pause's sharing chips, sit bottom right,
-// clear of every row.
-const corner = ['back', 'copyride', 'devlog'];
+// Rows span the panel centred over the ride (a scrolled row may sit below
+// it; a slider's track sits under its lettering, a little off centre), and
+// in landscape the ride stays in view either side. The navigation pill's
+// entries sit at the panel's right (its lower edge, or beside the title on a
+// phone on its side), clear of every row.
+const nav = ['back', 'copyride', 'devlog'];
 function column(m, view) {
-  const back = row(m, 'back');
-  for (const h of m.hits.filter(h => !corner.includes(h.action))) {
+  const pill = m.hits.filter(h => nav.includes(h.action));
+  for (const h of m.hits.filter(h => !nav.includes(h.action))) {
     assert.ok(h.x >= -0.5 && right(h) <= view.width + 0.5, `${m.page} ${h.action} on screen: ${JSON.stringify(h)}`);
-    if (view.width > view.height) assert.ok(right(h) <= view.width * 0.46, `${m.page} ${h.action} in the column: ${JSON.stringify(h)}`);
-    if (back && h.y < view.height) assert.ok(h.y + h.height <= back.y + 0.5 || right(h) <= back.x + 0.5, `${h.action} clear of Back`);
+    assert.ok(Math.abs(h.x + h.width / 2 - view.width / 2) <= 50, `${m.page} ${h.action} centred: ${JSON.stringify(h)}`);
+    if (view.width > view.height) assert.ok(h.width <= view.width * 0.82, `${m.page} ${h.action} leaves the ride in view: ${JSON.stringify(h)}`);
+    for (const p of pill) if (h.y < view.height) assert.ok(h.y + h.height <= p.y + 0.5 || h.y >= p.y + p.height - 0.5 || right(h) <= p.x + 0.5, `${h.action} clear of ${p.action}`);
   }
-  if (back) assert.ok(inside(back, view) && right(back) >= view.width * 0.85, `Back bottom right: ${JSON.stringify(back)}`);
+  for (const p of pill) assert.ok(inside(p, view) && p.x >= view.width * 0.4, `${p.action} on the right: ${JSON.stringify(p)}`);
 }
 
 const browser = await launch();
@@ -96,7 +100,7 @@ try {
   await onMenu(page, 'pause');
   await page.close();
 
-  // A landscape phone: the same column.
+  // A landscape phone: the same panel.
   const land = { width: 844, height: 390 };
   page = await ride(browser, land, errors, { deviceScaleFactor: 3, hasTouch: true, isMobile: true });
   await key(page, 'Escape');
@@ -109,7 +113,7 @@ try {
   column(await menu(page), land);
   await page.close();
 
-  // A portrait phone: the column spans the screen.
+  // A portrait phone: the panel spans nearly the whole width.
   const tall = { width: 390, height: 844 };
   page = await ride(browser, tall, errors, { deviceScaleFactor: 3, hasTouch: true, isMobile: true });
   await key(page, 'Escape');
@@ -145,7 +149,7 @@ try {
   await key(page, 'Escape');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front?.menu == null);
   assertNoErrors(errors);
-  console.log('PASS: Pause and Options as a column beside the ride, rows in drawn order, one page at a time; the main menu gear');
+  console.log('PASS: Pause and Options on the original overlay panel over the ride, rows in drawn order, one page at a time; the main menu gear');
 } finally {
   await browser.close();
 }

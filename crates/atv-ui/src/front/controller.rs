@@ -3565,6 +3565,26 @@ impl Frontend {
             previous_shot: shot.1,
             shot_fade: 1.,
             pulse,
+            vehicle_portraits: Default::default(),
+            lineup: if self.page == "splitseats" {
+                (0..4)
+                    .map(|i| {
+                        let id = if i == 0 {
+                            self.quad_id
+                        } else {
+                            self.split_seconds[i - 1].0
+                        };
+                        (
+                            id,
+                            self.quad_label(id),
+                            self.seats.joined[i],
+                            self.seats.ready[i],
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             quad_model: None,
             rider_model: None,
             model_status: [None, None],
