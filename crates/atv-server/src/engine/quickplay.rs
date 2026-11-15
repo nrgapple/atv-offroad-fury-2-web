@@ -10,14 +10,19 @@
 //! private room's host does. The server forwards the driver's state, watches
 //! every rider's progress, and decides the podium itself.
 //!
+//! A private room runs the same loop host-run ([`Loop::hosted`], slice C):
+//! the room's host drives every round, picks the mode, starts the lobby
+//! and can skip the vote; results are the host's own (no checks) and no
+//! match records are kept.
+//!
 //! No I/O, clock or randomness of its own: the room passes the time and a
 //! seed, and sends what [`Loop::state`] returns.
 
 use std::collections::BTreeMap;
 
 use atv_net::quickplay::{
-    self as qp, NO_CHOICE, Placing, QUICKPLAY_HUMANS, RANDOM, RoomLoop, Round, Seat, Setup,
-    VOTE_OPTIONS, Vote, loop_phase, playlist, rematch, result_flag, seat_flag,
+    self as qp, Hosted, NO_CHOICE, Placing, QUICKPLAY_HUMANS, RANDOM, RoomLoop, Round, Seat, Setup,
+    VOTE_OPTIONS, Vote, host_flag, loop_phase, playlist, rematch, result_flag, seat_flag,
 };
 use atv_net::{
     CPU_PEER, GameClaim, GameState, NO_PEER, RACE_CPUS, RACE_DNF, RaceProgress, claim_kind,
@@ -52,6 +57,9 @@ pub const RACE_FIELD: u8 = 6;
 /// rooms of proven strong riders (mu clearly above the 25 start) get
 /// Expert CPUs; everyone else keeps Normal, the original's default.
 pub const EXPERT_ORDINAL: f64 = 20.;
+/// A private room's lobby starts this long after every guest is ready
+/// (ms).
+pub const READY_MS: u64 = 10_000;
 /// Fastest plausible race speed along the racing line (ft/s): an ATV's top
 /// speed is about 100 ft/s; jumps and slopes add little along the line.
 pub const MAX_SPEED_FPS: f32 = 180.;
@@ -87,6 +95,9 @@ pub struct Human {
     /// Can run the round as its driver (every rider today: only new
     /// builds reach a Quick Play room).
     pub can_drive: bool,
+    /// Follows the loop (said `signal::LOOP` in a private room; every
+    /// Quick Play rider): the lobby and the vote wait only for these.
+    pub follows: bool,
 }
 
 /// What the room does after a step.
@@ -163,6 +174,30 @@ pub struct Record {
     pub riders: Vec<RecordRider>,
 }
 
+/// A private room's host and its choices (slice C).
+#[derive(Clone, Debug, Default)]
+struct Host {
+    /// The room's host: it drives every round.
+    peer: u8,
+    mode: u8,
+    cpus: bool,
+    laps: u8,
+    minutes: u8,
+    /// Start pressed in the lobby; Skip pressed in the vote.
+    start: bool,
+    skip: bool,
+    /// The room's map (Select Track): the vote's first card.
+    map: u16,
+    /// When every guest was ready.
+    ready_at: Option<u64>,
+    /// The highest game serial the host has run: new rounds number above it.
+    serial: u32,
+    /// The serial of the round last played, never adopted again.
+    played: u32,
+    /// A round the host started itself (Pause → Play Race), to follow.
+    adopt: Option<GameState>,
+}
+
 /// The room's loop.
 #[derive(Clone, Debug)]
 pub struct Loop {
@@ -186,6 +221,8 @@ pub struct Loop {
     verified: bool,
     records: Vec<Record>,
     random: u64,
+    /// A private room's host-run loop.
+    host: Option<Host>,
 }
 
 impl Loop {
@@ -210,6 +247,44 @@ impl Loop {
             verified: false,
             records: Vec::new(),
             random: seed | 1,
+            host: None,
+        }
+    }
+
+    /// A private room's host-run loop: `host` drives, `map` is the room's.
+    pub fn hosted(host: u8, map: u16, seed: u64) -> Self {
+        Loop {
+            host: Some(Host {
+                peer: host,
+                mode: game_kind::RACE,
+                laps: 3,
+                minutes: 5,
+                map,
+                ..Default::default()
+            }),
+            driver: host,
+            ..Loop::new(playlist::RACE, seed)
+        }
+    }
+
+    /// Runs host-run (a private room).
+    pub fn is_hosted(&self) -> bool {
+        self.host.is_some()
+    }
+
+    /// A private room's host and map, before each step.
+    pub fn set_room(&mut self, host: u8, map: u16) {
+        if let Some(h) = &mut self.host {
+            h.peer = host;
+            h.map = map;
+        }
+    }
+
+    /// Every round the vote can deal or Random can draw.
+    fn pool(&self) -> Vec<Round> {
+        match &self.host {
+            Some(h) => qp::mode_pool(h.mode),
+            None => qp::pool(self.playlist),
         }
     }
 
@@ -229,6 +304,11 @@ impl Loop {
     /// Finished matches since the last call.
     pub fn take_records(&mut self) -> Vec<Record> {
         std::mem::take(&mut self.records)
+    }
+    /// `peer` watches the round under way (joined after it started): its
+    /// pose is relayed to nobody, so racers neither draw nor touch it.
+    pub fn watching(&self, peer: u8) -> bool {
+        self.phase == loop_phase::PLAY && !self.watched.racers.contains(&peer)
     }
     /// A newcomer can take a seat for the next round without waiting long.
     pub fn joinable(&self) -> bool {
@@ -265,11 +345,18 @@ impl Loop {
     /// allows: one of each of the playlist's modes first, so every vote
     /// offers a race and a game (or Freestyle and Treasure Hunt).
     fn deal(&mut self) {
-        let mut pool = qp::pool(self.playlist);
+        let mut pool = self.pool();
+        self.options.clear();
+        // A private room: the room's own track first (Select Track; on a
+        // rematch, the track just played).
+        if let Some(h) = &self.host
+            && let Some(i) = pool.iter().position(|r| r.map == h.map)
+        {
+            self.options.push(pool.swap_remove(i));
+        }
         if let Some(last) = self.last_round {
             pool.retain(|r| *r != last);
         }
-        self.options.clear();
         let mut modes: Vec<u8> = Vec::new();
         for r in &pool {
             if !modes.contains(&r.mode) {
@@ -315,14 +402,19 @@ impl Loop {
             }
             ticket -= t;
         }
-        let round = if pick == RANDOM {
-            let pool = qp::pool(self.playlist);
-            let i = self.below(pool.len());
-            pool[i]
-        } else {
-            self.options[usize::from(pick)]
-        };
-        (pick, round)
+        (pick, self.round_of(pick))
+    }
+
+    /// The round a card stands for (Random: any of the pool).
+    fn round_of(&mut self, pick: u8) -> Round {
+        match self.options.get(usize::from(pick)) {
+            Some(round) if pick != RANDOM => *round,
+            _ => {
+                let pool = self.pool();
+                let i = self.below(pool.len());
+                pool.get(i).copied().unwrap_or_default()
+            }
+        }
     }
 
     fn votes(&self) -> [u8; VOTE_OPTIONS + 1] {
@@ -340,6 +432,44 @@ impl Loop {
         let mut changed = false;
         if vote.ping_ms > 0 && self.pings.insert(peer, vote.ping_ms) != Some(vote.ping_ms) {
             changed = true;
+        }
+        // A private room's host: its settings any time; Start only in the
+        // lobby and Skip only in this vote, so a late resend never starts
+        // or skips the next one.
+        let host = self
+            .host
+            .as_mut()
+            .filter(|h| h.peer == peer)
+            .zip(vote.hosting);
+        let mut dealt = false;
+        if let Some((h, hosting)) = host {
+            let cpus = hosting.flags & host_flag::CPUS != 0;
+            if h.mode != hosting.mode || h.cpus != cpus {
+                dealt = h.mode != hosting.mode;
+                h.mode = hosting.mode;
+                h.cpus = cpus;
+                changed = true;
+            }
+            h.laps = hosting.laps;
+            h.minutes = hosting.minutes;
+            match self.phase {
+                loop_phase::LOBBY => h.start = hosting.flags & host_flag::START != 0,
+                loop_phase::VOTE if vote.round == self.setup.number + 1 => {
+                    h.skip = hosting.flags & host_flag::SKIP != 0;
+                }
+                _ => {}
+            }
+        }
+        if let Some(h) = &self.host {
+            self.playlist = match h.mode {
+                game_kind::FREESTYLE | game_kind::TREASURE_HUNT => playlist::STUNTS,
+                _ => playlist::RACE,
+            };
+        }
+        // A new mode mid-vote deals that mode's cards.
+        if dealt && self.phase == loop_phase::VOTE {
+            self.deal();
+            self.votes.clear();
         }
         match self.phase {
             loop_phase::LOBBY => {
@@ -365,6 +495,25 @@ impl Loop {
 
     /// The driver's state for the round (the room forwards it as a host's).
     pub fn game(&mut self, state: &GameState, now: u64) {
+        if let Some(h) = &mut self.host {
+            h.serial = h.serial.max(state.serial);
+            // A round the host started itself (Pause → Play Race): the
+            // loop follows it to the podium.
+            let active = if state.game == game_kind::RACE {
+                state.phase <= race_phase::RACING
+            } else {
+                state.phase <= game_phase::PLAY
+            };
+            if matches!(
+                self.phase,
+                loop_phase::LOBBY | loop_phase::VOTE | loop_phase::RESULTS
+            ) && qp::loop_mode(state.game)
+                && active
+                && state.serial != h.played
+            {
+                h.adopt = Some(state.clone());
+            }
+        }
         if self.phase != loop_phase::PLAY || state.game != self.setup.round.mode {
             return;
         }
@@ -392,7 +541,9 @@ impl Loop {
 
     /// A rider's forwarded race progress: the plausibility checks.
     pub fn progress(&mut self, peer: u8, p: &RaceProgress, now: u64) {
-        if self.phase != loop_phase::PLAY
+        // A private room ranks on its host's results.
+        if self.host.is_some()
+            || self.phase != loop_phase::PLAY
             || self.setup.round.mode != game_kind::RACE
             || Some(p.serial) != self.watched.serial
             || !self.watched.racers.contains(&peer)
@@ -477,12 +628,15 @@ impl Loop {
             self.watched = Watched::default();
             self.results.clear();
         }
+        self.adopt(now, humans, &mut fx);
         match self.phase {
+            loop_phase::LOBBY if self.host.is_some() => self.hosted_lobby(now, humans, &mut fx),
             loop_phase::LOBBY => {
                 if let Some(first) = self.first_at.filter(|_| !humans.is_empty()) {
                     let full = humans.len() >= QUICKPLAY_HUMANS;
                     let ready = humans
                         .iter()
+                        .filter(|h| h.follows)
                         .all(|h| self.ready.get(&h.peer).copied().unwrap_or(false));
                     if full || ready || now >= first + LOBBY_MS {
                         self.start_vote(now);
@@ -496,36 +650,45 @@ impl Loop {
                 }
             }
             loop_phase::VOTE => {
-                let all = humans.iter().all(|h| self.votes.contains_key(&h.peer));
-                if all || now >= self.deadline {
-                    let (pick, round) = self.spin();
+                let all = humans
+                    .iter()
+                    .filter(|h| h.follows)
+                    .all(|h| self.votes.contains_key(&h.peer));
+                // A private room's host can end the vote: its own card wins.
+                let skip = self.host.as_ref().filter(|h| h.skip).map(|h| {
+                    self.votes
+                        .get(&h.peer)
+                        .copied()
+                        .filter(|c| *c == RANDOM || usize::from(*c) < self.options.len())
+                });
+                if all || now >= self.deadline || skip.is_some() {
+                    let (pick, round) = match skip.flatten() {
+                        Some(pick) => (pick, self.round_of(pick)),
+                        None => self.spin(),
+                    };
                     self.pick = pick;
                     self.last_round = Some(round);
                     let seed = self.next_random() as u32;
-                    self.setup = Setup {
-                        round,
-                        number: self.setup.number + 1,
-                        laps: if round.mode == game_kind::RACE {
-                            LAPS
-                        } else {
-                            0
+                    let race = round.mode == game_kind::RACE;
+                    self.setup = match &self.host {
+                        Some(h) => Setup {
+                            round,
+                            number: self.setup.number.max(h.serial) + 1,
+                            laps: if race { h.laps.clamp(1, 5) } else { 0 },
+                            minutes: if race { 0 } else { h.minutes.clamp(1, 20) },
+                            cpu_field: if race && h.cpus { RACE_FIELD } else { 0 },
+                            difficulty: u8::from(race),
+                            seed: seed.max(1),
                         },
-                        minutes: if round.mode == game_kind::RACE {
-                            0
-                        } else {
-                            MINUTES
+                        None => Setup {
+                            round,
+                            number: self.setup.number + 1,
+                            laps: if race { LAPS } else { 0 },
+                            minutes: if race { 0 } else { MINUTES },
+                            cpu_field: if race { RACE_FIELD } else { 0 },
+                            difficulty: if race { difficulty(humans) } else { 0 },
+                            seed: seed.max(1),
                         },
-                        cpu_field: if round.mode == game_kind::RACE {
-                            RACE_FIELD
-                        } else {
-                            0
-                        },
-                        difficulty: if round.mode == game_kind::RACE {
-                            difficulty(humans)
-                        } else {
-                            0
-                        },
-                        seed: seed.max(1),
                     };
                     fx.map = Some(round.map);
                     self.enter(loop_phase::COUNTDOWN, now, COUNTDOWN_MS);
@@ -563,7 +726,7 @@ impl Loop {
                 }
             }
             loop_phase::RESULTS => {
-                let stay = humans.iter().all(|h| {
+                let stay = humans.iter().filter(|h| h.follows).all(|h| {
                     self.rematch.get(&h.peer).copied() == Some(rematch::STAY)
                         || self.rematch.get(&h.peer).copied() == Some(rematch::LEAVE)
                 });
@@ -573,8 +736,16 @@ impl Loop {
             }
             _ => {}
         }
-        // The driver: the current one while connected, else the lowest
-        // connected rider that can drive.
+        // A private room's host drives; in Quick Play, the current driver
+        // while connected, else the lowest connected rider that can drive.
+        if let Some(h) = &self.host {
+            if self.driver != h.peer {
+                self.driver = h.peer;
+                fx.changed = true;
+            }
+            fx.changed |= self.phase != before;
+            return fx;
+        }
         let driver_here = humans.iter().any(|h| h.peer == self.driver && h.can_drive);
         if !driver_here {
             let next = humans
@@ -595,7 +766,95 @@ impl Loop {
         fx
     }
 
+    /// A private room's lobby: the host's Start, or every guest ready
+    /// for [`READY_MS`].
+    fn hosted_lobby(&mut self, now: u64, humans: &[Human], fx: &mut Effects) {
+        let Some(h) = &self.host else {
+            return;
+        };
+        let mut guests = humans.iter().filter(|x| x.follows && x.peer != h.peer);
+        let ready = guests.clone().next().is_some()
+            && guests.all(|x| self.ready.get(&x.peer).copied().unwrap_or(false));
+        let (start, ready_at) = (h.start, h.ready_at);
+        if start || ready_at.is_some_and(|t| ready && now >= t + READY_MS) {
+            self.start_vote(now);
+            return;
+        }
+        let h = self.host.as_mut().expect("hosted");
+        match (ready, ready_at) {
+            (true, None) => {
+                h.ready_at = Some(now);
+                self.deadline = now + READY_MS;
+                fx.changed = true;
+            }
+            (false, Some(_)) => {
+                h.ready_at = None;
+                self.deadline = 0;
+                fx.changed = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// A private room's host started a round itself (Pause → Play Race,
+    /// Games): the loop plays it, on the room's map, with the riders here.
+    fn adopt(&mut self, now: u64, humans: &[Human], fx: &mut Effects) {
+        let Some(state) = self.host.as_mut().and_then(|h| h.adopt.take()) else {
+            return;
+        };
+        let Some(h) = &self.host else {
+            return;
+        };
+        let race = state.game == game_kind::RACE;
+        let round = Round {
+            mode: state.game,
+            map: h.map,
+            variant: if race { state.race.variant.min(3) } else { 0 },
+        };
+        if self.phase == loop_phase::PLAY
+            || self.phase == loop_phase::COUNTDOWN
+            || !atv_net::valid_map(round.map)
+        {
+            return;
+        }
+        let cpus = if race { state.race.cpus } else { 0 };
+        self.setup = Setup {
+            round,
+            number: state.serial,
+            laps: if race { state.race.laps.clamp(1, 5) } else { 0 },
+            minutes: if race { 0 } else { h.minutes.clamp(1, 20) },
+            cpu_field: if cpus > 0 {
+                humans.len() as u8 + cpus
+            } else {
+                0
+            },
+            difficulty: if race {
+                state.race.difficulty.min(2)
+            } else {
+                0
+            },
+            seed: 1,
+        };
+        self.last_round = Some(round);
+        self.pick = NO_CHOICE;
+        self.watched = Watched {
+            racers: humans.iter().map(|h| h.peer).collect(),
+            started_at: now,
+            names: std::mem::take(&mut self.watched.names),
+            ..Default::default()
+        };
+        self.results.clear();
+        self.enter(loop_phase::PLAY, now, 0);
+        self.game(&state, now);
+        fx.changed = true;
+    }
+
     fn start_vote(&mut self, now: u64) {
+        if let Some(h) = &mut self.host {
+            h.start = false;
+            h.skip = false;
+            h.ready_at = None;
+        }
         self.deal();
         self.votes.clear();
         self.pick = NO_CHOICE;
@@ -610,8 +869,31 @@ impl Loop {
         let mut rows: Vec<(Placing, (u32, i64))> = Vec::new();
         let last = w.last.clone().unwrap_or_default();
         let mode = self.setup.round.mode;
-        let mut verified = played && w.go_at.is_some();
-        if mode == game_kind::RACE {
+        let mut verified = played && w.go_at.is_some() && self.host.is_none();
+        if let Some(h) = &mut self.host {
+            h.played = w.serial.unwrap_or(h.played);
+        }
+        if mode == game_kind::RACE && self.host.is_some() {
+            // A private room: the host's own finish order (its results'
+            // times, `RACE_DNF + n` for the rest).
+            for &peer in &w.racers {
+                let score = last.scores.get(usize::from(peer)).copied().unwrap_or(0);
+                let finished = score > 0 && score < RACE_DNF;
+                let mut flags = if finished { 0 } else { result_flag::DNF };
+                if !here(peer) {
+                    flags |= result_flag::LEFT;
+                }
+                let key = if finished {
+                    (0, i64::from(score))
+                } else if score == 0 {
+                    (2, 0)
+                } else {
+                    (1, i64::from(score - RACE_DNF))
+                };
+                let value = if finished { score } else { 0 };
+                rows.push((Placing { peer, flags, value }, key));
+            }
+        } else if mode == game_kind::RACE {
             for &peer in &w.racers {
                 let p = w.progress.get(&peer).cloned().unwrap_or_default();
                 let left = !here(peer);
@@ -640,12 +922,17 @@ impl Loop {
                 let value = if finished { p.finish_ms } else { 0 };
                 rows.push((Placing { peer, flags, value }, key));
             }
+        }
+        if mode == game_kind::RACE {
             // CPUs: the driver simulated them; its frozen results stand.
             let cpus = usize::from(last.race.cpus).min(RACE_CPUS);
             for (i, &score) in last.race.cpu_scores.iter().take(cpus).enumerate() {
                 let finished = score > 0 && score < RACE_DNF;
                 let key = if finished {
                     (0, i64::from(score))
+                } else if self.host.is_some() {
+                    // The host's order among everyone who did not finish.
+                    (1, i64::from(score.saturating_sub(RACE_DNF)))
                 } else {
                     (
                         1,
@@ -675,7 +962,7 @@ impl Loop {
                 } else {
                     last.scores.get(slot).copied().unwrap_or(0) as f32
                 };
-                if freestyle {
+                if freestyle && self.host.is_none() {
                     // The driver cannot score a rider above its own reports.
                     let claimed = w.claims.get(&peer).copied().unwrap_or(0.);
                     if value > claimed + 0.5 {
@@ -704,7 +991,8 @@ impl Loop {
         rows.sort_by_key(|(p, key)| (*key, p.peer));
         self.results = rows.into_iter().map(|(p, _)| p).collect();
         self.verified = verified;
-        if !played || self.results.is_empty() {
+        // Private rooms keep no match records.
+        if !played || self.results.is_empty() || self.host.is_some() {
             return;
         }
         let riders = self
@@ -775,18 +1063,30 @@ impl Loop {
             .collect();
         seats.truncate(QUICKPLAY_HUMANS);
         seats.sort_by_key(|s| s.peer);
-        // CPU seats: a race field's fill (the coming round's while waiting).
-        let racing = match self.phase {
-            loop_phase::LOBBY | loop_phase::VOTE => self.playlist == playlist::RACE,
-            _ => self.setup.round.mode == game_kind::RACE,
+        // CPU seats: a race field's fill (the coming round's while waiting;
+        // a private room's only when its host fills with CPUs).
+        let waiting = matches!(self.phase, loop_phase::LOBBY | loop_phase::VOTE);
+        let field = match &self.host {
+            Some(h) if waiting => {
+                if h.mode == game_kind::RACE && h.cpus {
+                    RACE_FIELD
+                } else {
+                    0
+                }
+            }
+            Some(_) if self.setup.round.mode == game_kind::RACE => self.setup.cpu_field,
+            Some(_) => 0,
+            None if waiting && self.playlist == playlist::RACE => RACE_FIELD,
+            None if self.setup.round.mode == game_kind::RACE => RACE_FIELD,
+            None => 0,
         };
-        if racing {
+        if field > 0 {
             let humans = if self.phase == loop_phase::PLAY {
                 self.watched.racers.len()
             } else {
                 seats.len()
             };
-            let cpus = usize::from(RACE_FIELD)
+            let cpus = usize::from(field)
                 .saturating_sub(humans.max(1))
                 .min(RACE_CPUS);
             for i in 0..cpus {
@@ -825,6 +1125,10 @@ impl Loop {
                 Vec::new()
             },
             verified: self.phase == loop_phase::RESULTS && self.verified,
+            hosted: self.host.as_ref().map(|h| Hosted {
+                mode: h.mode,
+                flags: if h.cpus { host_flag::CPUS } else { 0 },
+            }),
         }
     }
 }
@@ -840,6 +1144,7 @@ mod tests {
             pid: Some(format!("pid{peer}")),
             rating: None,
             can_drive: true,
+            follows: true,
         }
     }
 
@@ -850,6 +1155,7 @@ mod tests {
             rematch: rematch::UNDECIDED,
             ready: false,
             ping_ms: 0,
+            hosting: None,
         }
     }
 
@@ -1212,5 +1518,203 @@ mod tests {
         );
         // The driver's table disagreed with rider 1's own reports.
         assert!(!s.verified);
+    }
+
+    fn hosting(flags: u8) -> Vote {
+        Vote {
+            hosting: Some(qp::Hosting {
+                mode: game_kind::RACE,
+                flags,
+                laps: 2,
+                minutes: 3,
+            }),
+            ..vote(0, NO_CHOICE)
+        }
+    }
+
+    #[test]
+    fn a_private_room_lobby_waits_for_its_host_or_ten_seconds_of_ready() {
+        // nat01 is map 17; the host follows, rider 2 is an older build.
+        let nat01 = qp::map_id("nat01").unwrap();
+        let mut l = Loop::hosted(0, nat01, 5);
+        let mut old = human(2);
+        old.follows = false;
+        let riders = [human(0), human(1), old];
+        // No deadline while waiting, the host drives, and no CPU seats
+        // until the host fills with them.
+        let fx = l.step(1_000, &riders, "ROOM0001");
+        assert_eq!(fx.driver, None);
+        let s = l.state(&riders);
+        assert_eq!(s.deadline_ms, 0);
+        assert_eq!(s.driver, 0);
+        assert_eq!(s.seats.len(), 3);
+        assert_eq!(
+            s.hosted,
+            Some(Hosted {
+                mode: game_kind::RACE,
+                flags: 0
+            })
+        );
+        l.vote(0, hosting(host_flag::CPUS));
+        assert_eq!(l.state(&riders).seats.len(), RACE_FIELD as usize);
+        // The host's own Ready does not count; the guest's starts 10 s.
+        l.vote(
+            1,
+            Vote {
+                ready: true,
+                ..vote(0, NO_CHOICE)
+            },
+        );
+        assert!(l.step(2_000, &riders, "ROOM0001").changed);
+        assert_eq!(l.state(&riders).deadline_ms, 2_000 + READY_MS);
+        l.step(2_000 + READY_MS - 1, &riders, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::LOBBY);
+        // Unready: the countdown goes.
+        l.vote(1, vote(0, NO_CHOICE));
+        l.step(2_500, &riders, "ROOM0001");
+        assert_eq!(l.state(&riders).deadline_ms, 0);
+        l.step(2_000 + READY_MS, &riders, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::LOBBY);
+        // The host's Start goes at once; a guest's "start" is not one.
+        l.vote(1, hosting(host_flag::START));
+        l.step(3_000, &riders, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::LOBBY);
+        l.vote(0, hosting(host_flag::CPUS | host_flag::START));
+        l.step(3_000, &riders, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::VOTE);
+        // Races only, the room's own track first.
+        assert_eq!(l.options.len(), VOTE_OPTIONS);
+        assert_eq!(l.options[0].map, nat01);
+        assert!(l.options.iter().all(|r| r.mode == game_kind::RACE));
+        // The vote waits only for riders that follow the loop.
+        l.vote(0, vote(1, 2));
+        l.vote(1, vote(1, 2));
+        let fx = l.step(3_100, &riders, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::COUNTDOWN);
+        assert_eq!(fx.map, Some(l.options[2].map));
+        // The host's laps and CPU fill.
+        let setup = l.setup().unwrap();
+        assert_eq!(setup.laps, 2);
+        assert_eq!(setup.cpu_field, RACE_FIELD);
+    }
+
+    #[test]
+    fn a_private_room_host_skips_the_vote_and_ranks_its_own_race() {
+        let mut l = Loop::hosted(0, qp::map_id("sx01").unwrap(), 6);
+        let two = [human(0), human(1)];
+        l.step(1_000, &two, "ROOM0001");
+        // A host whose earlier races reached serial 4: rounds number above.
+        l.game(&race_state(4, race_phase::RESULTS, 0.), 1_000);
+        l.vote(0, hosting(host_flag::START));
+        l.step(1_100, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::VOTE);
+        // The guest votes card 2, the host card 0 and Skip: card 0 wins.
+        l.vote(1, vote(1, 2));
+        l.vote(
+            0,
+            Vote {
+                choice: 0,
+                round: 1,
+                ..hosting(host_flag::SKIP)
+            },
+        );
+        l.step(1_200, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::COUNTDOWN);
+        assert_eq!(l.pick, 0);
+        let setup = l.setup().unwrap();
+        assert_eq!(setup.number, 5);
+        assert_eq!(setup.cpu_field, 0);
+        l.step(1_200 + COUNTDOWN_MS, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::PLAY);
+        // The host's race: its own results, no checks and no record.
+        l.game(&race_state(5, race_phase::RACING, 0.), 2_000);
+        let mut over = race_state(5, race_phase::RESULTS, 0.);
+        over.scores = [70_000, 65_000, 0, 0];
+        l.game(&over, 90_000);
+        l.step(90_000, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::RESULTS);
+        let s = l.state(&two);
+        assert_eq!(s.results.iter().map(|r| r.peer).collect::<Vec<_>>(), [1, 0]);
+        assert_eq!(s.results[0].value, 65_000);
+        assert!(!s.verified);
+        assert!(l.take_records().is_empty());
+        // Its finished state is never adopted again; the rematch votes.
+        l.game(&over, 91_000);
+        l.step(91_000 + RESULTS_MS, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::VOTE);
+        // A stale Skip from the last vote does not skip this one.
+        l.vote(
+            0,
+            Vote {
+                choice: 0,
+                round: 5,
+                ..hosting(host_flag::SKIP)
+            },
+        );
+        l.step(91_100 + RESULTS_MS, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::VOTE);
+    }
+
+    #[test]
+    fn a_private_room_follows_a_round_its_host_starts_from_pause() {
+        let mut l = Loop::hosted(0, qp::map_id("sx02").unwrap(), 2);
+        let mut two = vec![human(0), human(1)];
+        l.step(1_000, &two, "ROOM0001");
+        let mut grid = race_state(9, race_phase::GRID, 0.);
+        grid.race.laps = 3;
+        l.game(&grid, 1_500);
+        l.step(1_500, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::PLAY);
+        let setup = l.setup().unwrap();
+        assert_eq!(setup.number, 9);
+        assert_eq!(setup.laps, 3);
+        assert_eq!(setup.round.map, qp::map_id("sx02").unwrap());
+        // A rider who joins mid-round watches it.
+        two.push(human(2));
+        let s = l.state(&two);
+        assert_eq!(
+            s.seat(2).unwrap().flags & seat_flag::SPECTATING,
+            seat_flag::SPECTATING
+        );
+        assert_eq!(s.seat(0).unwrap().flags & seat_flag::SPECTATING, 0);
+        assert!(l.watching(2) && !l.watching(0) && !l.watching(1));
+        let mut over = race_state(9, race_phase::RESULTS, 0.);
+        over.scores = [50_000, RACE_DNF, 0, 0];
+        l.game(&over, 60_000);
+        l.step(60_000, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::RESULTS);
+        let s = l.state(&two);
+        assert_eq!(s.results.len(), 2);
+        assert_eq!(s.results[1].flags & result_flag::DNF, result_flag::DNF);
+        // Rematch from everyone: the next vote seats the late joiner.
+        for h in &two {
+            l.vote(
+                h.peer,
+                Vote {
+                    rematch: rematch::STAY,
+                    ..vote(9, NO_CHOICE)
+                },
+            );
+        }
+        l.step(60_000 + RESULTS_MIN_MS, &two, "ROOM0001");
+        assert_eq!(l.phase(), loop_phase::VOTE);
+        let s = l.state(&two);
+        assert!(s.seats.iter().all(|x| x.flags & seat_flag::SPECTATING == 0));
+        assert_eq!(s.seats.len(), 3);
+        // The host changes mode mid-vote: that mode's cards.
+        l.vote(
+            0,
+            Vote {
+                hosting: Some(qp::Hosting {
+                    mode: game_kind::FREESTYLE,
+                    flags: 0,
+                    laps: 3,
+                    minutes: 2,
+                }),
+                ..vote(10, NO_CHOICE)
+            },
+        );
+        assert!(l.options.iter().all(|r| r.mode == game_kind::FREESTYLE));
+        assert_eq!(l.state(&two).playlist, playlist::STUNTS);
     }
 }

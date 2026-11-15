@@ -2162,6 +2162,18 @@ impl App {
             Ok((camera, focal)) if !ready.fixed => {
                 ready.camera = camera;
                 ready.focal_length = focal * focal_scale;
+                // Watching a room's round (joined late): follow a racer.
+                if let Some(qp) = &mut self.quick_play
+                    && let Some(peer) = qp.watch
+                    && let Some((position, velocity)) =
+                        ready.net.as_ref().and_then(|n| n.rider_motion(peer))
+                {
+                    let ride = &riding.ride;
+                    let (eye, target) = qp.follow(position, velocity, dt, &|x, z| {
+                        ride.ground(x, z).unwrap_or(f32::MIN)
+                    });
+                    ready.camera = instant_replay::look(eye, target);
+                }
             }
             Ok(_) => {}
             Err(error) => status(&error),
@@ -2372,13 +2384,35 @@ impl App {
                 overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
             }
             // Quick Play: the server's loop, this rider's votes, and the
-            // round this rider starts as the driver.
-            if net.quickplay()
-                && let Some(state) = net.room_loop().cloned()
-            {
+            // round this rider starts as the driver. A private room's
+            // host-run loop is the same panel (research/QUICK_PLAY.md
+            // "Private rooms").
+            let room_loop = if net.quickplay() {
+                net.room_loop().cloned()
+            } else {
+                net.private_loop().cloned()
+            };
+            if room_loop.is_none() && !net.quickplay() && self.quick_play.take().is_some() {
+                // The host's build stopped running the loop.
+                riding.parked = false;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.quickplay = None;
+                    overlay.quickplay_hides_results = false;
+                }
+            }
+            if let Some(state) = room_loop {
                 let qp = self.quick_play.get_or_insert_with(|| {
                     quick_play::QuickPlay::new(state.playlist, net.code().to_string())
                 });
+                // A private room host's Race laps and game minutes.
+                if let Some(front) = &self.front {
+                    let front = front.borrow();
+                    qp.laps = front.state.race.laps.clamp(1, 5) as u8;
+                    qp.minutes = (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+                        .find(|m| url_flag(&format!("gameMinutes={m}")))
+                        .unwrap_or(front.state.games.minutes)
+                        .clamp(1, 20) as u8;
+                }
                 let (me, roster) = net.roster();
                 let humans: Vec<(u8, String)> =
                     roster.iter().copied().zip(net.names(&roster)).collect();
@@ -2415,6 +2449,12 @@ impl App {
                     for name in qp.sounds.drain(..) {
                         sound.one_shot(name);
                     }
+                }
+                // Watching a round it joined late, the rider is parked (the
+                // server relays its pose to nobody meanwhile).
+                if riding.parked != qp.view.spectating {
+                    riding.parked = qp.view.spectating;
+                    riding.clear_input();
                 }
                 if let Some(overlay) = &mut self.overlay {
                     // Between rounds the podium and the vote replace the
@@ -2501,7 +2541,12 @@ impl App {
             return;
         }
         if let Some((list, code)) = quick_leave {
-            self.leave_quick_play(list, code);
+            if self.quick_play.as_ref().is_some_and(|q| q.private) {
+                // A private room's Leave leaves the room.
+                self.menu_event(atv_ui::menu::controller::Event::LeaveGame);
+            } else {
+                self.leave_quick_play(list, code);
+            }
             return;
         }
         if let Some(start) = quick_start {
@@ -3366,6 +3411,7 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            state["parked"] = riding.parked.into();
             // The full-density surface and the scene drawn inside it
             // (tools/test_engine_shell.mjs, test_engine_crisp_hud.mjs).
             state["surface"] = serde_json::json!([ready.gpu.config.width, ready.gpu.config.height]);

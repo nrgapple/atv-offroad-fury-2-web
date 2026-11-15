@@ -916,3 +916,170 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
     let back = Room::restore(saved, f.now).unwrap();
     assert!(back.quickplay_loop().is_some());
 }
+
+#[test]
+fn a_private_room_runs_a_host_run_loop_only_for_builds_that_follow_it() {
+    use atv_net::quickplay::{Hosting, NO_CHOICE, Vote, host_flag, loop_phase};
+    let mut f = Fixture::new(false);
+    f.join(1, Some(HOST_KEY), "Host");
+    f.join(2, None, "Old");
+    let loops = |out: &[Out], to| {
+        sent(out, to)
+            .into_iter()
+            .filter_map(|p| match p {
+                Packet::RoomLoop(l) => Some(*l),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let hello_loop = |f: &mut Fixture, id| {
+        let peer = f.room.conns[f.room.index(id).unwrap()].peer;
+        f.send(
+            id,
+            &Packet::Signal(atv_net::Signal {
+                peer,
+                kind: signal::HELLO,
+                data: vec![signal::FRAMES, signal::LOOP],
+            }),
+        )
+    };
+    // No loop until the host's build says it follows one.
+    f.hello(1, signal::FRAMES);
+    f.hello(2, signal::FRAMES);
+    assert!(loops(&f.tick(), 1).is_empty());
+    hello_loop(&mut f, 1);
+    let out = f.tick();
+    let state = loops(&out, 1);
+    assert_eq!(state.len(), 1);
+    assert_eq!(state[0].phase, loop_phase::LOBBY);
+    assert_eq!(state[0].driver, 0);
+    assert!(state[0].hosted.is_some());
+    // An older build in the room never gets it.
+    assert!(loops(&out, 2).is_empty());
+    // The host keeps its Select Track; its Start opens the vote.
+    let epoch = f.room.lobby().epoch;
+    let sx01 = atv_net::quickplay::map_id("sx01").unwrap();
+    f.send(
+        1,
+        &Packet::SetLobby {
+            epoch,
+            map: sx01,
+            started: true,
+        },
+    );
+    assert_eq!(f.room.lobby().map, sx01);
+    let start = Vote {
+        choice: NO_CHOICE,
+        hosting: Some(Hosting {
+            mode: atv_net::game_kind::RACE,
+            flags: host_flag::START,
+            laps: 1,
+            minutes: 2,
+        }),
+        ..Default::default()
+    };
+    f.send(1, &Packet::Vote(start));
+    f.now += 100;
+    let state = loops(&f.tick(), 1);
+    assert_eq!(state[0].phase, loop_phase::VOTE);
+    assert_eq!(state[0].options[0].map, sx01);
+    // A guest's build that follows it gets it too; the host stays host.
+    hello_loop(&mut f, 2);
+    f.now += 2_100;
+    let out = f.tick();
+    assert_eq!(loops(&out, 2).len(), 1);
+    assert_eq!(f.room.lobby().host, 0);
+    // A host build that stops following ends the loop.
+    f.hello(1, signal::FRAMES);
+    f.now += 2_100;
+    assert!(loops(&f.tick(), 2).is_empty());
+    // Private rooms stay private: not saved as Quick Play.
+    let mut out = Vec::new();
+    assert_eq!(f.room.shut_down(f.now, &mut out).quickplay, None);
+}
+
+#[test]
+fn a_rider_watching_a_loop_round_is_never_relayed_to_the_racers() {
+    use atv_net::quickplay::loop_phase;
+    let mut f = Fixture::new(false);
+    f.join(1, Some(HOST_KEY), "Host");
+    f.join(2, None, "Guest");
+    let hello = |f: &mut Fixture, id, first| {
+        let peer = f.room.conns[f.room.index(id).unwrap()].peer;
+        f.send(
+            id,
+            &Packet::Signal(atv_net::Signal {
+                peer,
+                kind: signal::HELLO,
+                data: vec![first, signal::LOOP],
+            }),
+        );
+    };
+    // The host takes frames; the guest gets each pose on its own.
+    hello(&mut f, 1, signal::FRAMES);
+    hello(&mut f, 2, 0);
+    let epoch = f.room.lobby().epoch;
+    let map = atv_net::quickplay::map_id("sx01").unwrap();
+    f.send(
+        1,
+        &Packet::SetLobby {
+            epoch,
+            map,
+            started: true,
+        },
+    );
+    f.ready(1);
+    f.ready(2);
+    f.tick();
+    // The host starts a race from Pause: the loop plays it with both.
+    let mut grid = atv_net::GameState {
+        game: atv_net::game_kind::RACE,
+        serial: 3,
+        holder: atv_net::NO_PEER,
+        ..Default::default()
+    };
+    grid.race.laps = 1;
+    grid.race.grid = [1, 2, 0, 0];
+    f.send(1, &Packet::Game(Box::new(grid)));
+    f.now += 50;
+    f.tick();
+    assert_eq!(
+        f.room.private_loop.as_ref().unwrap().phase(),
+        loop_phase::PLAY
+    );
+    // A late joiner arrives mid-race and rides out.
+    let (late, _) = f.join(3, None, "Late");
+    hello(&mut f, 3, signal::FRAMES);
+    f.ready(3);
+    let out = f.send(3, &snapshot(late, 1, 5.));
+    assert!(sent(&out, 2).is_empty(), "no single pose to the guest");
+    f.now += 100;
+    let frames = |out: &[Out], to| {
+        sent(out, to)
+            .into_iter()
+            .flat_map(|p| match p {
+                Packet::Frame { poses } => poses,
+                _ => Vec::new(),
+            })
+            .filter_map(|b| match decode(&b).unwrap() {
+                Packet::Snapshot(s) => Some(s.peer),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        !frames(&f.tick(), 1).contains(&late),
+        "nor in the host's frames"
+    );
+    // The watcher still sees the racers.
+    f.send(2, &snapshot(1, 1, 9.));
+    f.now += 100;
+    assert!(frames(&f.tick(), 3).contains(&1));
+    // A newly ready racer's catch-up leaves the watcher out too.
+    let out = f.ready(2);
+    assert!(
+        sent(&out, 2)
+            .iter()
+            .all(|p| !matches!(p, Packet::Snapshot(s) if s.peer == late))
+    );
+}

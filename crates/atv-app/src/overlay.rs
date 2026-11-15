@@ -774,7 +774,7 @@ impl Overlay {
                 // 80-85; they never show together (the hub is only in
                 // shared rooms), so the panel on screen takes them (#673).
                 if self.quickplay.is_some()
-                    && (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LEAVE)
+                    && (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LAST)
                         .contains(&p.button)
                 {
                     return Some(Some(Action::QuickPlay(p.button)));
@@ -2470,6 +2470,7 @@ impl Overlay {
                 "seconds": q.seconds,
                 "seats": q.seats.iter().map(|s| serde_json::json!({
                     "name": s.name, "cpu": s.cpu, "me": s.me, "ping": s.ping,
+                    "ready": s.ready, "host": s.host,
                 })).collect::<Vec<_>>(),
                 "cards": q.cards.iter().map(|c| serde_json::json!({
                     "mode": c.mode, "track": c.track, "votes": c.votes, "chosen": c.chosen,
@@ -2483,6 +2484,11 @@ impl Overlay {
                     "levelUp": l.level_up, "tierUp": l.tier_up,
                 })),
                 "spectating": q.spectating,
+                "private": q.private,
+                "host": q.host,
+                "cpus": q.cpus,
+                "mode": q.playlist,
+                "watching": q.watching,
             })),
             "kidTouch": self.touch.kid(),
             "kidGo": self.touch.kid_go(),

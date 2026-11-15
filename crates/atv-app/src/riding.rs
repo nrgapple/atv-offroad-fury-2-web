@@ -27,6 +27,9 @@ pub struct Riding {
     pub paused: bool,
     /// A replayed parity state: input never resumes it.
     pub held: bool,
+    /// Watching a room round it joined late (research/QUICK_PLAY.md
+    /// "Private rooms"): no input and no steps until the next round.
+    pub parked: bool,
     /// The Training Course holds the ATV while a line plays (+0x94c): the
     /// player's drive input is replaced by a full brake.
     pub locked: bool,
@@ -211,6 +214,7 @@ impl Riding {
             accumulator: 0.,
             rush: SpeedRush::default(),
             paused: false,
+            parked: false,
             held: false,
             locked: false,
             center: cells(venue, origin),
@@ -376,6 +380,9 @@ impl Riding {
         self.step_cameras.clear();
         self.step_rest.clear();
         self.step_race.clear();
+        if self.parked {
+            return Ok(());
+        }
         // Online, a paused or unfocused rider keeps riding with neutral input:
         // the room still sees it and its world clocks keep running.
         if self.online
