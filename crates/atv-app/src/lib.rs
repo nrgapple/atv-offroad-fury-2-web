@@ -1569,10 +1569,19 @@ async fn prepare_inner(
                     })
                     .map(|b| b.world_matrix)
             })
-            && let Err(error) =
+            && let Err(error) = if url_flag("actorPlace=twister3") {
+                // The funnel initially travels west at about 150 ft/s. Wait
+                // in its path instead of chasing it from the south.
+                riding.ride.place_beside(
+                    [m[12] - 100., m[13] + 6., m[14]],
+                    std::f32::consts::FRAC_PI_2,
+                    [0.; 3],
+                )
+            } else {
                 riding
                     .ride
                     .place_beside([m[12], m[13] + 6., m[14] - 40.], 0., [0., 0., 30.])
+            }
         {
             status(&format!("Unable to place beside the actor: {error}"));
         }
@@ -3674,7 +3683,7 @@ impl App {
                         serde_json::json!({"count": actors.actors.len(),
                         "collision": collision,
                         "collisionUnresolved": actors.collision_unresolved.len(),
-                        "dynamicContacts": riding.ride.frame().dynamic_contact_count,
+                        "dynamicContacts": riding.ride.frame().dynamic_contact_count + riding.ride.frame().dynamic_secondary_contacts,
                         "velocity": riding.ride.frame().linear_velocity,
                         "angularVelocity": riding.ride.frame().local_angular_velocity,
                         "grounded": riding.ride.frame().grounded,

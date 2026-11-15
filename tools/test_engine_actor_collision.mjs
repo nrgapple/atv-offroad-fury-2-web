@@ -64,8 +64,8 @@ try {
   assert.equal(s.actors.collision.length, 30);
   assert.equal(s.actors.collisionUnresolved, 0);
   const before = s.actors.collision;
+  // Stay parked in the funnel's path: its motion must supply the launch.
   await page.mouse.click(100, 100);
-  await page.keyboard.down('ArrowUp');
   let tornadoContacts = 0;
   let upwardSpeed = 0;
   let spinSpeed = 0;

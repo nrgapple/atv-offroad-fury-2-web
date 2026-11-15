@@ -116,21 +116,21 @@ pub struct Actors {
     cache: std::cell::RefCell<Vec<(PoseKey, NodePose)>>,
 }
 
-/// A `UseCollision` actor's original COL body. `0011e1d0` attaches it to the
-/// model's engine root, so its world transform is the placement and never
-/// follows the MOT; `0011e520` registers it in the scene's dynamic list.
+/// An original COL body in the scene's dynamic list. Type-0 actors attach
+/// to the engine root; compound sections attach to their indexed PSG node
+/// (`0032d330`) and retain its previous/current animated pose (`0032c490`).
 #[derive(Clone)]
 pub struct ActorCollision {
     pub actor: usize,
     pub mesh: Rc<atv_core::collision::CollisionMesh>,
     pub world_matrix: [f32; 16],
     pub previous_matrix: [f32; 16],
+    /// Compound section's PSG node; None for a placement-fixed type-0 body.
     pub node: Option<usize>,
 }
 
 impl ActorCollision {
-    /// The dynamic scene body: a placement-fixed transform whose prior and
-    /// current poses agree, so the moving-target velocity is zero.
+    /// Moving-target contact, with zero velocity for placement-fixed bodies.
     pub fn obstacle(&self) -> atv_core::scene_collision::DynamicObstacle {
         atv_core::scene_collision::DynamicObstacle {
             obstacle: atv_core::obstacle::StaticObstacle {
