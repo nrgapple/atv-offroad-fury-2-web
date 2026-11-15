@@ -1852,7 +1852,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
             }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
-            rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // The rider lists keep a lane clear on the right for the Lobby's
+            // scroll rail, so the gold pill stops short of it.
+            let rail = if controller::online_page::RAIL_PAGES.contains(&page) {
+                20.
+            } else {
+                0.
+            };
+            rows.style.padding = sides(0., rail + if m.portrait { 0. } else { 8. }, 0., 0.);
             // A page with nothing but Back (the Overview and Trophies)
             // keeps Back as its row.
             let only_back = s.choices.iter().all(|(a, _)| a == "back");
