@@ -118,8 +118,10 @@ first, then the usual lowest room with space.
   `quickplay`) and, for Free Ride and private rooms, the code.
 - **Join.** Free Ride: a Free Ride claim asking for the friend's shard. A
   private room: the usual Join Game by code (the room still holds four).
-  Quick Play rooms show as Quick Play without Join; joining one waits for
-  Quick Play (wave 2, as the umbrella spec plans).
+  Quick Play: builds that ask (`"quickplay": true` on `/multiplayer/friends`)
+  get the room's code, and Join is a Quick Play claim for that room
+  (research/QUICK_PLAY.md "Join a friend"); older builds see Quick Play
+  without Join.
 
 ## Stats, hidden rating and league
 
@@ -246,7 +248,6 @@ are kept (new ones are refused with 503 past it).
 
 ## Limits and follow-ups
 
-- Join into Quick Play waits for Quick Play's rooms (wave 2).
 - Stats, rating and league count only Quick Play's verified records; private
   rooms and Free Ride add nothing. Until Quick Play writes `matches.jsonl`,
   stats stay at zero in production.
@@ -255,7 +256,7 @@ are kept (new ones are refused with 503 past it).
 - The weekly board sorts every rider with points this week on each request
   (fine at today's numbers; cache it if the board gets hot).
 - The level bar and league badge are text glyphs (`▰▱`, `◆`) in the existing
-  details table, not new art; a podium/XP count-up on results belongs to the
-  Quick Play results screen (wave 2).
+  details table, not new art; the Quick Play podium counts points and XP up
+  with a level bar (research/QUICK_PLAY.md "Podium rewards").
 - Physical phones were not checked; the phone layout was checked in a
   390×844 browser context only.

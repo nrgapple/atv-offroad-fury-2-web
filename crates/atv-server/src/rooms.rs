@@ -13,7 +13,8 @@ use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::engine::chat::ReportContext;
-use crate::engine::{ConnId, Counters, Entropy, Out, Refused, Room, SavedRoom};
+use crate::engine::quickplay::Record;
+use crate::engine::{ConnId, Counters, Entropy, Out, QuickInfo, Refused, Room, SavedRoom};
 use crate::interest::TICK_MS;
 use crate::outbox::{Outbox, Pushed};
 use crate::stats::Metrics;
@@ -61,6 +62,9 @@ pub enum RoomMsg {
     },
     Riders {
         reply: oneshot::Sender<usize>,
+    },
+    QuickInfo {
+        reply: oneshot::Sender<Option<QuickInfo>>,
     },
     Shutdown {
         reply: oneshot::Sender<SavedRoom>,
@@ -113,6 +117,12 @@ impl RoomHandle {
     pub async fn claim_quickplay(&self, any_phase: bool) -> Option<Option<String>> {
         self.ask(|reply| RoomMsg::QuickClaim { any_phase, reply })
             .await
+    }
+    /// A Quick Play room's seats, phase and rating (None for other rooms).
+    pub async fn quick_info(&self) -> Option<QuickInfo> {
+        self.ask(|reply| RoomMsg::QuickInfo { reply })
+            .await
+            .flatten()
     }
     pub async fn riders(&self) -> Option<usize> {
         self.ask(|reply| RoomMsg::Riders { reply }).await
@@ -281,6 +291,29 @@ fn report(shared: &Shared, room: &mut Room, reported: &mut Reported) {
     }
 }
 
+/// A Quick Play room's riders' hidden ratings, for its CPU difficulty and
+/// the queue's room choice.
+fn rate(shared: &Shared, room: &mut Room) {
+    if room.quickplay_loop().is_some() {
+        room.rate(|pid| shared.players.rating(pid).map(|r| r.ordinal()));
+    }
+}
+
+/// What each verified rider earned for a finished Quick Play round, to the
+/// builds that show it on the podium (research/QUICK_PLAY.md "Podium
+/// rewards").
+fn send_rewards(shared: &Shared, room: &Room, record: &Record, out: &mut Vec<Out>) {
+    let peers: Vec<Option<u8>> = record.riders.iter().map(|r| r.peer).collect();
+    let mut rewards = shared
+        .players
+        .rewards(&crate::players::MatchRecord::from(record), &peers);
+    if rewards.rewards.is_empty() {
+        return;
+    }
+    rewards.round = record.number;
+    room.send_rewards(&rewards, out);
+}
+
 async fn run(
     shared: Arc<Shared>,
     mut room: Room,
@@ -308,6 +341,7 @@ async fn run(
                         if let Ok(peer) = admitted {
                             room.set_counted(peer, counted);
                             room.set_pid(peer, pid);
+                            rate(&shared, &mut room);
                             outboxes.insert(conn, outbox);
                         }
                         let _ = reply.send(admitted);
@@ -322,6 +356,9 @@ async fn run(
                     }
                     RoomMsg::QuickClaim { any_phase, reply } => {
                         let _ = reply.send(room.claim_quickplay(now, &mut rng, any_phase));
+                    }
+                    RoomMsg::QuickInfo { reply } => {
+                        let _ = reply.send(room.quick_info());
                     }
                     RoomMsg::Riders { reply } => {
                         let _ = reply.send(room.riders());
@@ -340,9 +377,14 @@ async fn run(
             _ = tick.tick() => {
                 let now = now_ms();
                 room.tick(now, &mut out);
-                crate::queue::save_records(&shared, room.take_records());
+                let records = room.take_records();
+                for record in &records {
+                    send_rewards(&shared, &room, record, &mut out);
+                }
+                crate::queue::save_records(&shared, records);
                 if now >= housekeep_at {
                     housekeep_at = now + HOUSEKEEP_MS;
+                    rate(&shared, &mut room);
                     if let Some(reason) = room.housekeep(now, &mut out) {
                         deliver(&mut room, &mut out, &mut outboxes, &shared.metrics);
                         break reason;

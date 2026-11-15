@@ -373,3 +373,32 @@ Cost (host only, not a physical-phone result):
 - Sequence probability and blending are parsed but not stepped, because no
   active multi-motion sequence ships.
 - Lighting uses the provisional prop lighting shared with the train.
+
+## FREE06 tornado repair (2026-11-14)
+
+The actor shader now applies each PSM's recovered UV scroll, using the same
+`Scroll` integrator as scenery. FREE06's three twister layers specify different
+U/V velocities; previously their textures stayed frozen while their MOTs moved.
+Scrolling shares the simulation clock, pauses with play and survives GPU recovery.
+Geometry and textures remain the original layered 3D funnel, with no new assets.
+
+The `twister3.col` compound has ten bounded type-0 mesh sections with sequential
+one-based node identifiers, matching the ten PSG nodes. The reader consumes the
+entire file and validates each mesh using the existing COL reader. Only twister3
+opts into this compound path; other compound actors remain unresolved. Each of
+three placements registers ten sections. Their current and previous transforms
+follow the corresponding MOT node and feed the existing moving-body contacts for
+ATVs and motorcycles (and CPU scene copies).
+
+The exact-build compound reader `0032d330` confirms the node association: it
+builds a table with the engine root at zero and reads each section's node index
+before its type-0 mesh. `0032c490` retains each section's prior transform, reads
+its attached node's world transform and composes its local mesh transform. The
+port now follows those animated section transforms. This repairs the missing
+physical interaction but
+does not establish original PS2 impulse equivalence or a scripted suction/lift
+force. No extra wind force has been invented. Bounds, per-part transforms and
+counts are validated; nonidentity compound local transforms remain unsupported.
+Focused verification uses `test_engine_actor_collision.mjs` (FREE06 contacts and
+moving bodies, upward velocity and angular disturbance, plus the existing windmill regression). Physical-phone performance
+and original-hardware visual parity remain unmeasured.

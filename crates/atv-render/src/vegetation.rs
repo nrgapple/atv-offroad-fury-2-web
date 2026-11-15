@@ -154,7 +154,12 @@ impl VegetationPass {
                             blend as u8 as f32,
                             0.,
                         ],
-                        flags: [pass.texture.is_some() as u8 as f32, 0., 0., 0.],
+                        flags: [
+                            pass.texture.is_some() as u8 as f32,
+                            vegetation.mx_alpha_margin as u8 as f32,
+                            0.,
+                            0.,
+                        ],
                     }),
                     blend,
                     depth_write: state.is_none_or(|p| p.depth_write),

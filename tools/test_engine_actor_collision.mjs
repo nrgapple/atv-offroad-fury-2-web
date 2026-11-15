@@ -54,7 +54,40 @@ try {
   assert.ok(contacts > 0, 'the quad touches the windmill body');
   if (Number.isFinite(closest)) assert.ok(closest > 1, `the quad passed through the tower (${closest})`);
   assertNoErrors(errors);
-  console.log('actor collision: ok');
+  // Ventura County: all three animated funnels carry ten collision sections.
+  await page.goto(url('/play.html?venue=free06&uiDiagnostics=1&weather=off&actorPlace=twister3'));
+  await page.waitForFunction(() => {
+    const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+    return s.step > 5 && s.actors;
+  }, null, { timeout: 120000 });
+  s = await state(page);
+  assert.equal(s.actors.collision.length, 30);
+  assert.equal(s.actors.collisionUnresolved, 0);
+  const before = s.actors.collision;
+  // Stay parked in the funnel's path: its motion must supply the launch.
+  await page.mouse.click(100, 100);
+  let tornadoContacts = 0;
+  let upwardSpeed = 0;
+  let spinSpeed = 0;
+  for (let i = 0; i < 160; i++) {
+    await page.waitForTimeout(50);
+    s = await state(page);
+    tornadoContacts += Number(s.actors.dynamicContacts > 0);
+    if (tornadoContacts > 0) {
+      upwardSpeed = Math.max(upwardSpeed, s.actors.velocity[1]);
+      spinSpeed = Math.max(spinSpeed, Math.hypot(...s.actors.angularVelocity));
+    }
+  }
+  await page.keyboard.up('ArrowUp');
+  assert.ok(s.actors.collision.some((b, i) =>
+    Math.hypot(...b.position.map((v, k) => v - before[i].position[k])) > 1), 'funnel collision moves');
+  assert.ok(tornadoContacts > 0, 'ATV contacts the animated funnel');
+  console.log(JSON.stringify({ tornadoContacts, upwardSpeed, spinSpeed }));
+  assert.ok(upwardSpeed > 8, `funnel must lift the ATV, observed ${upwardSpeed} ft/s`);
+  assert.ok(spinSpeed > 1, `funnel must disturb the ATV orientation, observed ${spinSpeed} rad/s`);
+  await optionalScreenshot(page, 'ATV_ACTOR_COLLISION_SCREENSHOT', 'tornado');
+  assertNoErrors(errors);
+  console.log(`actor collision: windmill and tornado ok (${tornadoContacts} tornado contact samples)`);
 } finally {
   await browser.close();
 }

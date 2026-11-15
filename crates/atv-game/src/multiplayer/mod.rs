@@ -149,6 +149,9 @@ pub struct Serves {
     /// `chat`: relays quick chat (research/QUICK_CHAT.md) to builds that
     /// say [`atv_net::signal::CHAT`].
     pub chat: bool,
+    /// `rewards`: a Quick Play room that sends the podium's rewards to
+    /// builds that say [`atv_net::signal::REWARDS`].
+    pub rewards: bool,
     /// `roomloop`: runs a private room's host-run loop (research/QUICK_PLAY.md
     /// "Private rooms") for builds that say [`atv_net::signal::LOOP`].
     pub roomloop: bool,
@@ -165,6 +168,7 @@ impl Serves {
             motorcycles: claim["motorcycles"].as_bool() == Some(true),
             quickplay: claim["quickplay"].as_bool() == Some(true),
             chat: claim["chat"].as_bool() == Some(true),
+            rewards: claim["rewards"].as_bool() == Some(true),
             roomloop: claim["roomloop"].as_bool() == Some(true),
         }
     }
@@ -233,6 +237,9 @@ pub struct Session {
     pub hub: Vec<HubMessage>,
     /// The server-run room loop (`Packet::RoomLoop`) and when it came.
     pub room_loop: Option<(atv_net::quickplay::RoomLoop, u64)>,
+    /// The latest Quick Play podium rewards (`Packet::Rewards`; only sent
+    /// to a build that said [`atv_net::signal::REWARDS`]).
+    pub rewards: Option<atv_net::quickplay::Rewards>,
     /// The room-race host's CPU riders (`Packet::Cpus`): the race serial,
     /// each CPU's pose history by index and its latest progress.
     pub cpu_serial: u32,
@@ -408,13 +415,19 @@ impl Session {
         if serves.chat {
             flags |= atv_net::signal::CHAT;
         }
-        // The second flags byte: a private room's loop, only to a server
-        // that runs one.
-        let data = if serves.roomloop {
-            vec![flags, atv_net::signal::LOOP]
-        } else {
-            vec![flags]
-        };
+        // The second flags byte, only for a server that takes it: a
+        // private room's loop and Quick Play's podium rewards.
+        let mut second = 0;
+        if serves.roomloop {
+            second |= atv_net::signal::LOOP;
+        }
+        if serves.rewards {
+            second |= atv_net::signal::REWARDS;
+        }
+        let mut data = vec![flags];
+        if second != 0 {
+            data.push(second);
+        }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
@@ -724,6 +737,7 @@ impl Session {
                 }
             }
             Packet::RoomLoop(state) => self.room_loop = Some((*state, now_ms)),
+            Packet::Rewards(rewards) => self.rewards = Some(*rewards),
             _ => return Err("unexpected relay packet".into()),
         }
         Ok(())
@@ -1714,6 +1728,7 @@ mod tests {
         motorcycles: false,
         quickplay: false,
         chat: false,
+        rewards: false,
         roomloop: false,
     };
 
@@ -2591,6 +2606,16 @@ mod tests {
         s.ready().unwrap();
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
         assert!(s.link_commands(10_000).is_empty());
+        // A Quick Play claim with rewards adds the second flags byte.
+        let quick = Serves::from_claim(
+            &serde_json::json!({"frames": true, "quickplay": true, "rewards": true}),
+        );
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+        let Packet::Signal(m) = atv_net::decode(&s.hello(quick, false).unwrap()).unwrap() else {
+            panic!("hello")
+        };
+        assert_eq!(m.data, vec![CPU_SOUNDS | FRAMES, atv_net::signal::REWARDS]);
     }
 
     #[test]

@@ -86,3 +86,59 @@ fn a_quad_driven_into_the_rockbridge_windmill_hits_its_collision() {
         }
     });
 }
+
+#[test]
+#[ignore = "requires the private hosted content package (FURY_CONTENT)"]
+fn a_moving_tornado_launches_a_stationary_quad_only_in_its_path() {
+    let dir = std::env::var_os("FURY_CONTENT").expect("set FURY_CONTENT");
+    block_on(async {
+        let content = Content::open(Store::Directory(dir.into())).await.unwrap();
+        for offset in [[-100., 6., 0.], [-100., 6., -40.], [-100., 6., 40.]] {
+            let venue = atv_game::venue::load(&content, "free06", false)
+                .await
+                .unwrap();
+            let actors = venue.actors.clone().unwrap();
+            let m = actors.borrow().collision[0].world_matrix;
+            let mut ride = atv_game::ride::load(&content, &venue, 1, 0, |_| {})
+                .await
+                .unwrap();
+            ride.place_beside(
+                [m[12] + offset[0], m[13] + offset[1], m[14] + offset[2]],
+                std::f32::consts::FRAC_PI_2,
+                [0.; 3],
+            )
+            .unwrap();
+            let (mut contacts, mut up, mut spin) = (0, 0f32, 0f32);
+            for _ in 0..240 {
+                actors.borrow_mut().step();
+                ride.step(&Controls::default(), 0.).unwrap();
+                let f = ride.frame();
+                contacts += usize::from(f.dynamic_contact_count + f.dynamic_secondary_contacts > 0);
+                if contacts > 0 {
+                    up = up.max(f.linear_velocity[1]);
+                    spin = spin.max(
+                        f.local_angular_velocity
+                            .iter()
+                            .map(|v| v * v)
+                            .sum::<f32>()
+                            .sqrt(),
+                    );
+                }
+                assert!(
+                    f.origin
+                        .iter()
+                        .chain(f.linear_velocity.iter())
+                        .all(|v| v.is_finite())
+                );
+            }
+            eprintln!("offset {offset:?}: contacts={contacts} up={up} spin={spin}");
+            if offset[2] == 40. {
+                assert_eq!(contacts, 0, "outside the funnel path");
+            } else {
+                assert!(contacts > 0, "the moving funnel must reach the parked quad");
+                assert!(up > 20., "the funnel must launch the quad: {up} ft/s");
+                assert!(spin > 1., "contact must disturb its rotation: {spin} rad/s");
+            }
+        }
+    });
+}

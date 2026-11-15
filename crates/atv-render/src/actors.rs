@@ -18,6 +18,7 @@ struct MaterialUniform {
     flags: [f32; 4],
     // alpha cutoff, fog enabled
     params: [f32; 4],
+    uv_offset: [f32; 4],
 }
 
 #[repr(C)]
@@ -76,6 +77,8 @@ pub struct ActorPass {
     visible: Vec<(usize, u32)>,
     clocks: Vec<(atv_core::scenery_material::TextureClock, usize)>,
     tick: u64,
+    materials: wgpu::Buffer,
+    scrolls: Vec<(u64, atv_core::scenery_material::Scroll, [f32; 4])>,
 }
 
 const STRIDE: u64 = 40;
@@ -95,6 +98,7 @@ impl ActorPass {
         let mut material_bytes = Vec::new();
         let (mut bytes, mut indices) = (Vec::<u8>::new(), Vec::<u32>::new());
         let mut clocks = Vec::new();
+        let mut scrolls = Vec::new();
         let mut models = Vec::with_capacity(actors.models.len());
         for source in &actors.models {
             let mut chunks = Vec::new();
@@ -145,6 +149,9 @@ impl ActorPass {
                 };
                 let prelit = state.is_some_and(|p| p.prelit);
                 let at = material_bytes.len();
+                if let Some(scroll) = state.and_then(|p| p.uv_scroll.clone()) {
+                    scrolls.push((at as u64, scroll, [0.; 4]));
+                }
                 material_bytes.extend_from_slice(bytemuck::bytes_of(&MaterialUniform {
                     flags: [
                         pass.texture.is_some() as u8 as f32,
@@ -153,6 +160,7 @@ impl ActorPass {
                         0.,
                     ],
                     params: [pass.scene_alpha_cutoff, pass.fog() as u8 as f32, 0., 0.],
+                    uv_offset: [0.; 4],
                 }));
                 material_bytes.resize(at + material_slot as usize, 0);
                 let base = (bytes.len() as u64 / STRIDE) as u32;
@@ -197,7 +205,7 @@ impl ActorPass {
         let materials = init(
             "actor materials",
             &material_bytes,
-            wgpu::BufferUsages::UNIFORM,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let instance_slot = world.slot(std::mem::size_of::<Instance>());
         let instances = device.create_buffer(&wgpu::BufferDescriptor {
@@ -234,6 +242,8 @@ impl ActorPass {
             visible: Vec::new(),
             clocks,
             tick: 0,
+            materials,
+            scrolls,
         }
     }
 
@@ -242,6 +252,11 @@ impl ActorPass {
     pub fn step(&mut self) {
         let milliseconds = (self.tick * 1000 / 60) as u32;
         self.tick += 1;
+        for (_, scroll, offset) in &mut self.scrolls {
+            if let Ok([u, v]) = scroll.step(1. / 60.) {
+                *offset = [u, v, 0., 0.];
+            }
+        }
         for (clock, frame) in &mut self.clocks {
             *frame = clock.tick(milliseconds);
         }
@@ -252,11 +267,21 @@ impl ActorPass {
         if old.clocks.len() == self.clocks.len() {
             self.clocks = old.clocks;
             self.tick = old.tick;
+            if old.scrolls.len() == self.scrolls.len() {
+                self.scrolls = old.scrolls;
+            }
         }
     }
 
     /// Poses and uploads the actors inside the view.
     pub fn prepare(&mut self, gpu: &Gpu, actors: &Actors, cull_planes: &[[f32; 4]]) -> Stats {
+        for (at, _, offset) in &self.scrolls {
+            gpu.queue.write_buffer(
+                &self.materials,
+                at + std::mem::offset_of!(MaterialUniform, uv_offset) as u64,
+                bytemuck::bytes_of(offset),
+            );
+        }
         self.visible.clear();
         self.staging.clear();
         let mut stats = Stats::default();
