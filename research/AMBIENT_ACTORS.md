@@ -402,3 +402,29 @@ counts are validated; nonidentity compound local transforms remain unsupported.
 Focused verification uses `test_engine_actor_collision.mjs` (FREE06 contacts and
 moving bodies, upward velocity and angular disturbance, plus the existing windmill regression). Physical-phone performance
 and original-hardware visual parity remain unmeasured.
+
+
+### Verified player effect
+
+Runtime PR #681 merged as `b291f49d`. The focused browser test passed on
+checked PR artifact `be6957e`: the existing windmill regression recorded 28
+contacts with a closest distance of 6.814 ft. The FREE06 tornado recorded one
+sampled contact, peak upward ATV velocity of 75.1276855 ft/s and angular
+velocity of 30.6833 rad/s, exceeding the 8 ft/s and 1 rad/s acceptance thresholds.
+The corrected fixture parks in the westbound funnel path without throttle;
+the earlier northbound approach missed the moving funnel.
+
+A host-only native fixture at tornado-relative offset `[-100, 6, 0]` recorded
+17 contact steps, peak upward velocity 76.600716 ft/s and peak angular velocity
+26.073776 rad/s. Offset `[-100, 6, -40]` recorded seven contacts, 29.401508 ft/s
+upward velocity and 6.081401 rad/s angular velocity; `[-100, 6, 40]` missed with
+zero contacts. Assertions were verified against those recorded outputs. A
+duplicate queued native rerun was canceled before execution.
+
+Fixed-camera screenshots from checked artifact `8409c9f7` were inspected and
+show the complete funnel with changing position and texture pattern. Animated
+node deformation also changes, so the screenshots alone do not isolate UV
+scrolling. These are host results; exact PS2 impulse/response parity,
+original-hardware visual parity and physical-phone behavior/performance remain
+unverified. Public deployment `b291f49d` is verified; gallery publication awaits
+a retry after Cloudflare HTTP 429 rate limiting.
