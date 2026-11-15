@@ -208,9 +208,9 @@ const GOLD: Color = Color::hex("#f1d84e");
 const ON_GOLD: Color = Color::hex("#3a2e00");
 const SHADOW: Color = Color::hex("#000c");
 /// The overlay's unselected lettering (`UnselectedColor = 200,200,200`).
-const CLASSIC_TEXT: Color = Color::hex("#c8c8c8");
+pub(crate) const CLASSIC_TEXT: Color = Color::hex("#c8c8c8");
 /// `overlay_bkg01` tinted 10,10,10: its interior is alpha 122 of 255.
-const PANEL_FILL: Color = Color::hex("#0a0a0a7a");
+pub(crate) const PANEL_FILL: Color = Color::hex("#0a0a0a7a");
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
     Font::display(size, weight, italic)
@@ -1368,7 +1368,18 @@ fn classic_heading(look: &Look, c: Classic) -> El {
         padding: sides(size * 0.06, 28. * c.s, size * 0.04, 14. * c.s),
         ..Default::default()
     })
-    .paint(Paint::fill(Fill::Linear(Gradient::new(
+    .paint(Paint::fill(title_strip()))
+    .content(Content::Text {
+        text: name.into(),
+        style,
+        line_height: size * 1.05,
+        wrap: false,
+    })
+}
+
+/// `overlay_titlebkg` tinted 200 grey at alpha 64, fading out to the right.
+pub(crate) fn title_strip() -> Fill {
+    Fill::Linear(Gradient::new(
         90.,
         &[
             (0., Color::hex("#c8c8c840")),
@@ -1376,13 +1387,7 @@ fn classic_heading(look: &Look, c: Classic) -> El {
             (0.75, Color::hex("#c8c8c816")),
             (1., Color::hex("#c8c8c800")),
         ],
-    ))))
-    .content(Content::Text {
-        text: name.into(),
-        style,
-        line_height: size * 1.05,
-        wrap: false,
-    })
+    ))
 }
 
 /// An entry in the overlay's navigation pill (where the source shows its
@@ -1421,7 +1426,7 @@ fn nav_item(look: &Look, label: &str, id: u32, selected: bool, hovered: bool, ba
 /// `menuhighlight`: the overlay's olive-gold capsule, shaded top to bottom
 /// as the source texture is (a dark rim, a bright gloss line, a darker
 /// middle that lightens again, then a black lower edge).
-fn capsule() -> Fill {
+pub(crate) fn capsule() -> Fill {
     Fill::Linear(Gradient::new(
         180.,
         &[

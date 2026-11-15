@@ -1,15 +1,17 @@
-//! The race-over results (web/race.js `RaceOverlay`; game.css + hud.css
-//! `.race-results`, `.race-show`): Race Results with the summary and the
-//! standings, the original race-over menu (Continue opens Restart / Quit
-//! Event, Hide Menu toggles the results while the riders drive on) and the
-//! Show Results button. Keys, controller buttons and pointers drive it as
-//! race.js does.
+//! The race-over results: Race Results with the summary and the standings,
+//! the original race-over menu (Continue opens Restart / Quit Event, Hide
+//! Menu toggles the results while the riders drive on) and Unhide Menu.
+//! Keys, controller buttons and pointers drive it as web/race.js did.
+//!
+//! The look is the exact-build `Overlays.pb [RaceOver Menu]` page and its
+//! kin (`[ChampionshipRaceOver Menu]`, `[Objective Results Menu]`, the
+//! `Quit?` page, `[NameEntry Menu]`): the pause overlay's panel, title strip
+//! and navigation pill (crate::menu), the standings in its ruled columns.
 use super::Viewport;
 use crate::{
-    color::{Color, Gradient},
+    color::Color,
     layout::{Content, El, Paint, margins, sides},
-    menu::gold_pill,
-    paint::BoxShadow,
+    menu,
     text::{Font, Fonts, TextStyle},
 };
 use taffy::prelude::*;
@@ -148,67 +150,6 @@ pub struct Results {
 
 /// Seconds the results' medal takes to pop in.
 pub const MEDAL_REVEAL_SECONDS: f32 = 0.45;
-
-/// The results' medal row: its coin popping in, the medal's name and NEW
-/// when it beat the course's medal before. A fixed height, so the panel
-/// does not move while the coin grows.
-fn medal_row(medal: atv_core::medals::Medal, new: bool, reveal: f32) -> El {
-    let size = 34. * crate::medal::pop(reveal);
-    let color = Color::hex(medal.color());
-    let mut row = El::new(Style {
-        display: Display::Flex,
-        align_items: AlignItems::CENTER,
-        gap: Size {
-            width: length(10.),
-            height: length(0.),
-        },
-        min_size: Size {
-            width: auto(),
-            height: length(42.),
-        },
-        margin: margins(0., 0., 8., 0.),
-        ..Default::default()
-    })
-    .child(
-        El::new(Style {
-            size: Size {
-                width: length(42.),
-                height: length(42.),
-            },
-            display: Display::Flex,
-            align_items: AlignItems::CENTER,
-            justify_content: JustifyContent::CENTER,
-            flex_shrink: 0.,
-            ..Default::default()
-        })
-        .child(crate::medal::coin(medal, size)),
-    )
-    .child(text(
-        medal.label(),
-        TextStyle::new(display(22., 800, true), color).shadow(2., 2., 0., Color::hex("#000a")),
-        24.,
-    ));
-    if new {
-        row = row.child(
-            El::new(Style {
-                padding: sides(2., 8., 2., 8.),
-                ..Default::default()
-            })
-            .paint(
-                Paint::fill(gold_pill())
-                    .radius(5.)
-                    .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")))
-                    .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009"))),
-            )
-            .child(text(
-                "NEW",
-                TextStyle::new(display(13., 800, false), Color::hex("#0d0b00")).spacing(0.8),
-                15.,
-            )),
-        );
-    }
-    row
-}
 
 impl Results {
     /// The race finished: show the results once (`draw`'s first finished
@@ -675,49 +616,452 @@ fn text(value: &str, style: TextStyle, line_height: f32) -> El {
     })
 }
 
-fn button(id: u32, label: &str, primary: bool, focused: bool) -> El {
-    let paint = if primary {
-        Paint::fill(gold_pill())
-            .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#fffbe0")))
-            .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009")))
-    } else {
-        Paint::fill(Color::hex("#ffffff14"))
-    };
-    let mut paint = paint.radius(5.);
-    if focused {
-        paint = paint.shadow(BoxShadow {
-            spread: 3.,
-            ..BoxShadow::outer(0., 0., 0., Color::hex("#f6e061b3"))
-        });
+/// The `[RaceOver Menu]` page's geometry in CSS px. The source lays it out
+/// on a 640x448 screen; `s` scales its numbers, as Pause's overlay does.
+#[derive(Clone, Copy)]
+struct Look {
+    s: f32,
+    /// The panel's width (source 59..581: 522).
+    panel: f32,
+    /// A phone on its side.
+    short: bool,
+    /// The overlay lettering (`tradegothic_boldcondensed_22s`).
+    font: f32,
+    /// A table row (source rows 24 apart).
+    row: f32,
+    /// Where the lettering starts inside the panel (source x 75 - 59).
+    inset: f32,
+    /// The navigation pill's height: 32 at source scale, a touch target.
+    nav: f32,
+}
+
+impl Look {
+    fn new(view: &Viewport) -> Self {
+        let (w, h) = (view.width, view.height);
+        let room = w - view.safe[1] - view.safe[3];
+        let narrow = h > w || room < 560.;
+        let short = !narrow && h <= 500.;
+        let s = (w / 640.).min(h / 448.).clamp(0.8, 1.6);
+        let panel = if narrow {
+            room - 20.
+        } else {
+            (522. * (h / 448.).clamp(0.8, 1.6)).min(room - 2. * (w * 0.032).clamp(16., 44.))
+        };
+        let font = (22. * s * 0.8).clamp(15., 24.);
+        Self {
+            s,
+            panel,
+            short,
+            font,
+            row: (24. * s).max(font * 1.25),
+            inset: (16. * s).max(12.),
+            nav: (32. * s).max(44.),
+        }
     }
-    let color = if primary {
-        Color::hex("#0d0b00")
+}
+
+/// The overlay's unselected lettering: 200 grey with its drop shadow; black
+/// on the capsule.
+fn lettering(size: f32, color: Color, selected: bool) -> TextStyle {
+    let style = TextStyle::new(
+        display(size, 700, false),
+        if selected { Color::BLACK } else { color },
+    )
+    .spacing(size * 0.05);
+    if selected {
+        style
     } else {
-        Color::hex("#f2f2f2")
+        style.shadow(1., 2., 0., Color::hex("#000c"))
+    }
+}
+
+/// The overlay's gold lettering (the name entry's prompt, 218,192,31): the
+/// player's own row, which the source does not mark.
+const OVERLAY_GOLD: Color = Color::rgb(218, 192, 31);
+
+/// The page title (`tradegothic_bci_neg1fs_32ds`) on `overlay_titlebkg`'s
+/// faint strip, as Pause draws it.
+fn heading(look: &Look, title: &str) -> El {
+    let size = (32. * look.s).clamp(24., 46.) * if look.short { 0.85 } else { 1. };
+    El::new(Style {
+        align_self: Some(AlignSelf::START),
+        flex_shrink: 0.,
+        size: Size {
+            width: percent(0.49),
+            height: auto(),
+        },
+        min_size: Size {
+            width: auto(),
+            height: auto(),
+        },
+        margin: margins(0., 0., if look.short { 4. } else { 8. * look.s }, 0.),
+        padding: sides(size * 0.06, 28. * look.s, size * 0.04, 14. * look.s),
+        ..Default::default()
+    })
+    .paint(Paint::fill(menu::title_strip()))
+    .content(Content::Text {
+        text: title.into(),
+        style: TextStyle::new(display(size, 800, true), Color::hex("#e0e0e0"))
+            .spacing(size * 0.01)
+            .shadow(2., 2., 0., Color::hex("#000d")),
+        line_height: size * 1.05,
+        wrap: false,
+    })
+}
+
+/// The results' medal row: its coin popping in, the medal's name and NEW on
+/// the gold pill when it beat the course's medal before. A fixed height, so
+/// the panel does not move while the coin grows.
+fn medal_row(look: &Look, medal: atv_core::medals::Medal, new: bool, reveal: f32) -> El {
+    let size = 34. * crate::medal::pop(reveal);
+    let color = Color::hex(medal.color());
+    let mut row = El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        flex_shrink: 0.,
+        gap: Size {
+            width: length(10.),
+            height: length(0.),
+        },
+        min_size: Size {
+            width: auto(),
+            height: length(42.),
+        },
+        padding: sides(0., look.inset, 0., look.inset),
+        margin: margins(0., 0., 4., 0.),
+        ..Default::default()
+    })
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(42.),
+                height: length(42.),
+            },
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            justify_content: JustifyContent::CENTER,
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .child(crate::medal::coin(medal, size)),
+    )
+    .child(text(
+        medal.label(),
+        TextStyle::new(display(22., 800, true), color).shadow(2., 2., 0., Color::hex("#000c")),
+        24.,
+    ));
+    if new {
+        row = row.child(
+            El::new(Style {
+                padding: sides(2., 8., 2., 8.),
+                ..Default::default()
+            })
+            .paint(Paint::fill(menu::capsule()).radius(9.))
+            .child(text(
+                "NEW",
+                TextStyle::new(display(13., 800, false), Color::BLACK).spacing(0.8),
+                15.,
+            )),
+        );
+    }
+    row
+}
+
+/// The standings as `[RaceOver Menu]` sets them: the places (x 70) and
+/// names (x 92), then Total Time, Best Lap, Stunt Score and Profile Points
+/// centred in four columns under two-line labels, each column's left edge a
+/// faint white rule (`white` at alpha 64, 2 px). Rows are 24 apart.
+fn table(look: &Look, state: &Results, fonts: &mut Fonts) -> El {
+    let s = look.s;
+    let cell = lettering(look.font, menu::CLASSIC_TEXT, false);
+    let mine = lettering(look.font, OVERLAY_GOLD, false);
+    let header_line = look.font * 1.05;
+    // Two label lines (source 146 and 166), then the rows from 198.
+    let header = 2. * header_line + 8. * s;
+    let labels: [[&str; 2]; 4] = [
+        ["Total", "Time"],
+        ["Best", "Lap"],
+        ["Stunt", "Score"],
+        ["Profile", "Points"],
+    ];
+    // The columns are 92 wide at source scale; a narrow panel shares what
+    // the names leave, never less than the widest value.
+    let inner = look.panel - 4. - 2. * (11. * s).max(8.);
+    let mut widest = 0f32;
+    for row in &state.rows {
+        for value in &row[1..] {
+            widest = widest.max(fonts.measure(value, &cell.font, cell.letter_spacing).width);
+        }
+    }
+    for pair in labels {
+        for label in pair {
+            widest = widest.max(fonts.measure(label, &cell.font, cell.letter_spacing).width);
+        }
+    }
+    let column = (92. * s).min((inner - 96.) / 4.).max(widest + 8.);
+    let place = (22. * s).max(fonts.measure("5.", &cell.font, cell.letter_spacing).width + 4.);
+    let row_box = || {
+        El::new(Style {
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            flex_shrink: 0.,
+            size: Size {
+                width: auto(),
+                height: length(look.row),
+            },
+            ..Default::default()
+        })
     };
+    let style_for = |r: usize| {
+        if state.player_row == Some(r) {
+            mine.clone()
+        } else {
+            cell.clone()
+        }
+    };
+    let mut names = El::new(Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        flex_grow: 1.,
+        flex_shrink: 1.,
+        min_size: Size {
+            width: length(0.),
+            height: auto(),
+        },
+        padding: sides(header, 6., 0., 0.),
+        ..Default::default()
+    });
+    for (r, row) in state.rows.iter().enumerate() {
+        let style = style_for(r);
+        let (number, name) = row[0]
+            .split_once(". ")
+            .map_or((String::new(), row[0].as_str()), |(n, rest)| {
+                (format!("{n}."), rest)
+            });
+        names = names.child(
+            row_box()
+                .child(
+                    El::new(Style {
+                        flex_shrink: 0.,
+                        size: Size {
+                            width: length(place),
+                            height: auto(),
+                        },
+                        ..Default::default()
+                    })
+                    .child(text(&number, style.clone(), look.font)),
+                )
+                .child(super::classic::ellipsis(name, style, look.font)),
+        );
+    }
+    let mut table = El::new(Style {
+        display: Display::Flex,
+        flex_shrink: 0.,
+        padding: sides(0., (11. * s).max(8.), 0., (11. * s).max(8.)),
+        margin: margins(0., 0., 4., 0.),
+        ..Default::default()
+    })
+    .child(names);
+    let centred = |child: El, height: f32| {
+        El::new(Style {
+            display: Display::Flex,
+            justify_content: JustifyContent::CENTER,
+            align_items: AlignItems::CENTER,
+            flex_shrink: 0.,
+            size: Size {
+                width: auto(),
+                height: length(height),
+            },
+            ..Default::default()
+        })
+        .child(child)
+    };
+    for (c, pair) in labels.iter().enumerate() {
+        let mut col = El::new(Style {
+            position: Position::Relative,
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            flex_shrink: 0.,
+            size: Size {
+                width: length(column),
+                height: auto(),
+            },
+            padding: sides(0., 0., 0., 2.),
+            ..Default::default()
+        })
+        .child(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(0.),
+                    top: LengthPercentageAuto::length(-4. * s),
+                    right: LengthPercentageAuto::auto(),
+                    bottom: LengthPercentageAuto::length(-4. * s),
+                },
+                size: Size {
+                    width: length(2.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .paint(Paint::fill(Color::hex("#ffffff40"))),
+        );
+        for label in pair {
+            col = col.child(centred(text(label, cell.clone(), header_line), header_line));
+        }
+        col = col.child(El::new(Style {
+            flex_shrink: 0.,
+            size: Size {
+                width: auto(),
+                height: length(8. * s),
+            },
+            ..Default::default()
+        }));
+        for (r, row) in state.rows.iter().enumerate() {
+            col = col.child(centred(
+                text(&row[c + 1], style_for(r), look.font),
+                look.row,
+            ));
+        }
+        table = table.child(col);
+    }
+    table
+}
+
+/// A choice in the navigation pill (`overlay_navbar`, where the source
+/// shows its X Continue and Square Hide Menu hints): 200 grey, on the
+/// capsule while focused.
+fn nav_item(look: &Look, id: u32, label: &str, focused: bool) -> El {
+    let size = (22. * look.s * 0.8).clamp(15., 21.);
     El::new(Style {
         display: Display::Flex,
         align_items: AlignItems::CENTER,
         justify_content: JustifyContent::CENTER,
+        flex_shrink: 0.,
         min_size: Size {
-            width: auto(),
-            height: length(46.),
+            width: length(44.),
+            height: length(look.nav),
         },
-        margin: margins(6., 6., 0., 0.),
-        padding: sides(0., 22., 0., 22.),
+        padding: sides(0., 12. * look.s.max(1.), 0., 12. * look.s.max(1.)),
         ..Default::default()
     })
     .id(id)
-    .paint(paint)
+    .paint(if focused {
+        Paint::fill(menu::capsule()).radius(look.nav / 2.)
+    } else {
+        Paint::default()
+    })
     .child(text(
         label,
-        TextStyle::new(display(17., 700, false), color).spacing(0.51),
-        17.,
+        lettering(size, menu::CLASSIC_TEXT, focused),
+        size,
     ))
 }
 
-/// The panel, or the Show Results button while hidden.
+/// The navigation pill: black, a grey outline, round ends.
+fn nav(look: &Look, max: f32, items: Vec<El>) -> El {
+    El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        flex_wrap: FlexWrap::Wrap,
+        justify_content: JustifyContent::CENTER,
+        gap: Size {
+            width: length(4.),
+            height: length(0.),
+        },
+        flex_shrink: 0.,
+        max_size: Size {
+            width: length(max),
+            height: auto(),
+        },
+        padding: sides(0., 12. * look.s, 0., 12. * look.s),
+        border: sides(2., 2., 2., 2.),
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [look.nav / 2. + 2.; 4],
+        fill: Some(Color::hex("#000000f2").into()),
+        border: [2.; 4],
+        border_color: Color::hex("#a6a6a6"),
+        ..Default::default()
+    })
+    .children(items)
+}
+
+/// A row of the `Quit?` page (Restart, Quit Event at x 134, 25 apart):
+/// the gold `menuhighlight` capsule behind the focused one.
+fn row(look: &Look, id: u32, label: &str, focused: bool) -> El {
+    let height = look.nav.max(25. * look.s);
+    let size = (22. * look.s * 0.85).clamp(16., 24.);
+    let mut el = El::new(Style {
+        position: Position::Relative,
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        flex_shrink: 0.,
+        min_size: Size {
+            width: length(0.),
+            height: length(height),
+        },
+        padding: sides(0., 32. * look.s + 14., 0., 75. * look.s),
+        ..Default::default()
+    })
+    .id(id);
+    if focused {
+        let pill = (size * 1.55).min(height - 2.);
+        el = el.child(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::length(33. * look.s),
+                    top: LengthPercentageAuto::length((height - pill) / 2.),
+                    right: LengthPercentageAuto::length(32. * look.s),
+                    bottom: LengthPercentageAuto::auto(),
+                },
+                size: Size {
+                    width: auto(),
+                    height: length(pill),
+                },
+                ..Default::default()
+            })
+            .paint(Paint::fill(menu::capsule()).radius(pill / 2.)),
+        );
+    }
+    el.child(text(
+        label,
+        lettering(size, menu::CLASSIC_TEXT, focused),
+        size,
+    ))
+}
+
+/// A choice's label.
+fn label(state: &Results, id: u32) -> &'static str {
+    match id {
+        CONTINUE => "Continue",
+        HIDE => "Hide Menu",
+        REPLAY => "Replay",
+        SHOW => "Unhide Menu",
+        RETRY if state.game.is_some() => "Restart Game",
+        RETRY if state.classic => "Restart Event",
+        RETRY if state.objective.is_some() => "Restart Objective",
+        RETRY => "Restart",
+        NEXT_ROUND => "Continue Championship",
+        FAME_SELECT => "Select",
+        _ if state.game_continue => "Continue",
+        // Treasure Hunt / King of the Hills return to Games (Continue).
+        _ if state.game.as_deref() == Some("Race Results") => "Continue",
+        _ if state.game.is_some() => "Quit to Main Menu",
+        _ if state.objective.is_some() => "Continue",
+        _ if state.championship.is_some() => "Quit to Championship Menu",
+        _ => "Quit Event",
+    }
+}
+
+/// The overlay page (`[RaceOver Menu]` and its kin) over the riders who
+/// drive on, or Unhide Menu's pill while it is hidden. The panel is the
+/// pause overlay's (`overlay_bkg01` tinted 10,10,10 in a black rim); the
+/// host centres it vertically once laid out.
 pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Fonts) -> El {
+    let look = Look::new(view);
     let root = |child: El| {
         El::new(Style {
             size: Size {
@@ -728,271 +1072,245 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         })
         .child(child)
     };
+    let focused = state.focused();
     if state.hidden {
-        let label = "Show Results";
-        let style = TextStyle::new(display(16., 700, false), Color::hex("#f2f2f2")).spacing(0.48);
-        let width = fonts
-            .measure(label, &style.font, style.letter_spacing)
-            .width
-            + 40.;
-        let mut paint = Paint::fill(Color::hex("#0c0c0cdb"))
-            .radius(5.)
-            .shadow(BoxShadow::outer(0., 4., 0., Color::hex("#0009")));
-        if state.focus_visible {
-            paint = paint.shadow(BoxShadow {
-                spread: 3.,
-                ..BoxShadow::outer(0., 0., 0., Color::hex("#f6e061b3"))
-            });
-        }
+        // The source shows Square "Unhide Menu" where the pill was; the pill
+        // keeps it a touch target over the ride, centred clear of the speed
+        // meter: at the bottom, or on a touch screen (whose ride coaching
+        // and lap time hold the bottom) at the top under the toolbar.
+        let (top, bottom) = if view.coarse {
+            (
+                LengthPercentageAuto::length(view.safe[0] + 12.),
+                LengthPercentageAuto::auto(),
+            )
+        } else {
+            (
+                LengthPercentageAuto::auto(),
+                LengthPercentageAuto::length(18f32.max(view.safe[2] + 12.)),
+            )
+        };
+        let pill = nav(
+            &look,
+            view.width - 16.,
+            vec![nav_item(
+                &look,
+                SHOW,
+                label(state, SHOW),
+                state.focus_visible,
+            )],
+        );
         return root(
             El::new(Style {
                 position: Position::Absolute,
                 inset: taffy::Rect {
-                    left: LengthPercentageAuto::length((view.width - width) / 2.),
-                    bottom: LengthPercentageAuto::length(18f32.max(view.safe[2] + 12.)),
-                    top: LengthPercentageAuto::auto(),
-                    right: LengthPercentageAuto::auto(),
+                    left: LengthPercentageAuto::length(0.),
+                    top,
+                    right: LengthPercentageAuto::length(0.),
+                    bottom,
                 },
                 display: Display::Flex,
-                align_items: AlignItems::CENTER,
-                min_size: Size {
-                    width: auto(),
-                    height: length(44.),
-                },
-                padding: sides(0., 20., 0., 20.),
+                justify_content: JustifyContent::CENTER,
                 ..Default::default()
             })
-            .id(SHOW)
-            .paint(paint)
-            .child(text(label, style, 16.)),
+            .child(pill),
         );
     }
-    let width = 620f32.min(view.width - 32.);
-    let congratulations;
     let naming = state
         .fame
         .as_ref()
         .filter(|_| state.menu == Menu::NameEntry);
-    let heading = TextStyle::new(display(26., 800, true), Color::hex("#f6f6f6"))
-        .spacing(0.39)
-        .shadow(2., 3., 0., Color::hex("#000a"));
-    // The table: CSS auto layout shares the width by each column's
-    // max-content width (cells pad 6px each side).
-    let cell = TextStyle::new(display(16., 700, false), Color::hex("#e8e8e8"));
-    let head = TextStyle::new(display(13., 700, false), Color::hex("#bdbdbd")).spacing(0.52);
-    let headers = [
-        "RIDER",
-        "TOTAL TIME",
-        "BEST LAP",
-        "STUNT SCORE",
-        "PROFILE POINTS",
-    ];
-    let mut widths = [0f32; 5];
-    for (c, label) in headers.iter().enumerate() {
-        widths[c] = fonts.measure(label, &head.font, head.letter_spacing).width + 12.;
-    }
-    for row in &state.rows {
-        for (c, value) in row.iter().enumerate() {
-            widths[c] = widths[c].max(fonts.measure(value, &cell.font, 0.).width + 12.);
-        }
-    }
-    let cell_el = |value: &str, style: TextStyle, line: f32, right: bool| {
+    let congratulations;
+    let title = if let Some(player) = naming.and_then(|f| f.player) {
+        congratulations = format!("Congratulations Player {player}");
+        congratulations.as_str()
+    } else if naming.is_some() {
+        "Congratulations"
+    } else if let Some(title) = &state.game {
+        title.as_str()
+    } else if state.classic {
+        "Classic Freestyle"
+    } else if state.objective.is_some() {
+        "Objectives"
+    } else if state.menu == Menu::Quit && state.championship.is_none() {
+        // `[Quit Menu]`: "Quit?" over Restart / Quit Event.
+        "Quit?"
+    } else if state.championship.is_some() {
+        "Championship Race Results"
+    } else {
+        "Race Results"
+    };
+    let s = look.s;
+    // The race-over page keeps its choices in the navigation pill; the
+    // `Quit?` page and the name entry list theirs as capsule rows.
+    let in_nav = state.menu == Menu::Results;
+    let half = look.nav / 2.;
+    let summary_size = (16. * s * 0.85).clamp(14., 18.);
+    let mut medal = state
+        .medal
+        .filter(|_| naming.is_none() && state.objective.is_none())
+        .map(|(medal, new)| medal_row(&look, medal, new, state.medal_reveal));
+    let mut panel =
         El::new(Style {
-            display: Display::Flex,
-            justify_content: if right {
-                JustifyContent::END
-            } else {
-                JustifyContent::START
+            position: Position::Absolute,
+            inset: taffy::Rect {
+                left: LengthPercentageAuto::length((view.width - look.panel) / 2.),
+                top: LengthPercentageAuto::length(view.height / 2.),
+                right: LengthPercentageAuto::auto(),
+                bottom: LengthPercentageAuto::auto(),
             },
-            align_items: AlignItems::CENTER,
-            padding: sides(0., 6., 0., 6.),
-            min_size: Size {
-                width: length(0.),
+            size: Size {
+                width: length(look.panel),
                 height: auto(),
             },
+            padding: sides(
+                if look.short { 4. } else { 12. * s },
+                0.,
+                if in_nav { half + 8. } else { 10. * s },
+                0.,
+            ),
+            border: sides(2., 2., 2., 2.),
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
             ..Default::default()
         })
-        .child(text(value, style, line))
-    };
-    let mut cells = Vec::new();
-    for (c, label) in headers.iter().enumerate() {
-        cells.push(cell_el(label, head.clone(), 22.1, c > 0));
-    }
-    for (r, row) in state.rows.iter().enumerate() {
-        let style = if state.player_row == Some(r) {
-            TextStyle::new(cell.font, Color::hex("#f1d84e"))
+        .paint(Paint {
+            radii: [10. * s; 4],
+            fill: Some(menu::PANEL_FILL.into()),
+            border: [2.; 4],
+            border_color: Color::BLACK,
+            ..Default::default()
+        })
+        .child(if look.short && medal.is_some() {
+            // A phone on its side: the medal beside the title strip, not on a
+            // line of its own.
+            let mut head = El::new(Style {
+                display: Display::Flex,
+                align_items: AlignItems::CENTER,
+                justify_content: JustifyContent::SPACE_BETWEEN,
+                flex_shrink: 0.,
+                margin: margins(0., 0., 4., 0.),
+                ..Default::default()
+            })
+            .child(heading(&look, title))
+            .children(medal.take());
+            head.children[0].style.margin = margins(0., 0., 0., 0.);
+            head
         } else {
-            cell.clone()
-        };
-        for (c, value) in row.iter().enumerate() {
-            cells.push(cell_el(value, style.clone(), 27.2, c > 0));
-        }
+            heading(&look, title)
+        })
+        .children(naming.is_none().then(|| {
+            El::new(Style {
+                flex_shrink: 0.,
+                margin: margins(0., 0., 6. * s, 0.),
+                padding: sides(0., look.inset, 0., look.inset),
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: summary.into(),
+                style: TextStyle::new(display(summary_size, 600, false), Color::hex("#dcdcdc"))
+                    .shadow(1., 2., 0., Color::hex("#000c")),
+                line_height: summary_size * 1.35,
+                wrap: true,
+            })
+        }))
+        .children(medal)
+        .children(naming.into_iter().flat_map(|fame| fame_lines(&look, fame)))
+        .children(naming.map(|fame| name_field(&look, &fame.name)));
+    // The standings belong to Race Results; `Quit?` and the objectives'
+    // pages show none.
+    if state.objective.is_none() && naming.is_none() && state.menu == Menu::Results {
+        panel = panel.child(table(&look, state, fonts));
     }
-    let table = El::new(Style {
-        display: Display::Grid,
-        grid_template_columns: widths.iter().map(|w| minmax(length(*w), fr(*w))).collect(),
-        ..Default::default()
-    })
-    .children(cells);
-    let focused = state.focus_visible.then(|| state.focused());
-    let buttons: Vec<El> = state
-        .buttons()
-        .into_iter()
-        .map(|id| {
-            let label = match id {
-                CONTINUE => "Continue",
-                HIDE => "Hide Menu",
-                REPLAY => "Replay",
-                RETRY if state.game.is_some() => "Restart Game",
-                RETRY if state.classic => "Restart Event",
-                RETRY if state.objective.is_some() => "Restart Objective",
-                RETRY => "Restart",
-                NEXT_ROUND => "Continue Championship",
-                FAME_SELECT => "Select",
-                _ if state.game_continue => "Continue",
-                // Treasure Hunt / King of the Hills return to Games (Continue).
-                _ if state.game.as_deref() == Some("Race Results") => "Continue",
-                _ if state.game.is_some() => "Quit to Main Menu",
-                _ if state.objective.is_some() => "Continue",
-                _ if state.championship.is_some() => "Quit to Championship Menu",
-                _ => "Quit Event",
-            };
-            button(
-                id,
-                label,
-                matches!(id, CONTINUE | RETRY | NEXT_ROUND | FAME_SELECT),
-                focused == Some(id),
-            )
-        })
-        .collect();
-    let menu = El::new(Style {
-        display: Display::Flex,
-        flex_wrap: FlexWrap::Wrap,
-        margin: margins(10., 0., 0., 0.),
-        ..Default::default()
-    })
-    .children(buttons);
-    let summary_style = TextStyle::new(display(16., 600, false), Color::hex("#d8d8d8"));
-    let panel = El::new(Style {
-        position: Position::Absolute,
-        inset: taffy::Rect {
-            left: LengthPercentageAuto::length((view.width - width) / 2.),
-            top: LengthPercentageAuto::length(view.height / 2.),
-            right: LengthPercentageAuto::auto(),
-            bottom: LengthPercentageAuto::auto(),
-        },
-        size: Size {
-            width: length(width),
-            height: auto(),
-        },
-        padding: sides(0., 20., 18., 20.),
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        ..Default::default()
-    })
-    .paint(
-        Paint::fill(Color::hex("#0c0c0cdb"))
-            .radius(5.)
-            .shadow(BoxShadow::outer(0., 6., 0., Color::hex("#0009")))
-            .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#ffffff1a"))),
-    )
-    .child(
-        El::new(Style {
-            margin: margins(0., -20., 12., -20.),
-            padding: sides(6., 20., 8., 20.),
-            ..Default::default()
-        })
-        .paint(Paint::fill(Gradient::new(
-            90.,
-            &[
-                (0., Color::hex("#ffffff38")),
-                (0.55, Color::hex("#ffffff14")),
-                (1., Color::hex("#fff0")),
-            ],
-        )))
-        .child(text(
-            if let Some(player) = naming.and_then(|f| f.player) {
-                congratulations = format!("Congratulations Player {player}");
-                congratulations.as_str()
-            } else if naming.is_some() {
-                "Congratulations"
-            } else if let Some(title) = &state.game {
-                title.as_str()
-            } else if state.classic {
-                "Classic Freestyle"
-            } else if state.objective.is_some() {
-                "Objectives"
-            } else {
-                "Race Results"
-            },
-            heading,
-            28.6,
-        )),
-    )
-    .children(naming.is_none().then(|| {
-        El::new(Style {
-            // The paragraph's 16px margins, collapsed with the heading's 12px.
-            margin: margins(4., 0., 16., 0.),
-            ..Default::default()
-        })
-        .content(Content::Text {
-            text: summary.into(),
-            style: summary_style,
-            line_height: 22.4,
-            wrap: true,
-        })
-    }))
-    .children(
-        state
-            .medal
-            .filter(|_| naming.is_none() && state.objective.is_none())
-            .map(|(medal, new)| medal_row(medal, new, state.medal_reveal)),
-    )
-    .children(naming.into_iter().flat_map(fame_lines))
-    .children(naming.map(|fame| name_field(&fame.name)))
-    .children((state.objective.is_none() && naming.is_none()).then_some(table))
-    .child(menu);
+    // The focused choice sits on the capsule, as Pause's selection does.
+    let focus = |id: u32| id == focused;
+    if in_nav {
+        let items = state
+            .buttons()
+            .into_iter()
+            .map(|id| nav_item(&look, id, label(state, id), focus(id)))
+            .collect();
+        // Source 276..610 on a panel ending at 581: the pill runs past the
+        // panel's right edge where the screen has room.
+        let room = (view.width - view.safe[1] - view.safe[3] - look.panel) / 2.;
+        let past = (29. * s).min(room - 6.).max(-14.);
+        let mut pill = nav(&look, look.panel + past - 8., items);
+        pill.style.position = Position::Absolute;
+        pill.style.inset = taffy::Rect {
+            left: LengthPercentageAuto::auto(),
+            top: LengthPercentageAuto::auto(),
+            right: LengthPercentageAuto::length(-past - 2.),
+            bottom: LengthPercentageAuto::length(-half - 4.),
+        };
+        panel = panel.child(pill);
+    } else {
+        panel = panel.children(
+            state
+                .buttons()
+                .into_iter()
+                .map(|id| row(&look, id, label(state, id), focus(id))),
+        );
+    }
     root(panel)
 }
 
 /// `[NameEntry Menu]` Text5–Text11: the broken records and the prompt
 /// (the prompt in the overlay's gold, 218,192,31).
-fn fame_lines(fame: &Fame) -> Vec<El> {
-    let plain = TextStyle::new(display(17., 700, false), Color::hex("#e8e8e8"));
-    let record = TextStyle::new(display(17., 700, false), Color::hex("#f1d84e"));
-    let gold = TextStyle::new(display(17., 700, false), Color::rgb(218, 192, 31));
-    let mut lines = vec![text("You Have Broken These Records:", plain, 24.)];
+fn fame_lines(look: &Look, fame: &Fame) -> Vec<El> {
+    let size = look.font;
+    let plain = lettering(size, menu::CLASSIC_TEXT, false);
+    let record = lettering(size, Color::WHITE, false);
+    let gold = lettering(size, OVERLAY_GOLD, false);
+    let line = |child: El, top: f32| {
+        El::new(Style {
+            flex_shrink: 0.,
+            margin: margins(top, 0., 0., 0.),
+            padding: sides(0., look.inset, 0., look.inset),
+            ..Default::default()
+        })
+        .child(child)
+    };
+    let mut lines = vec![line(
+        text("You Have Broken These Records:", plain, size * 1.3),
+        0.,
+    )];
     lines.extend(
         fame.broken
             .iter()
             .take(5)
-            .map(|line| text(&format!("  {line}"), record.clone(), 24.)),
+            .map(|l| line(text(&format!("  {l}"), record.clone(), size * 1.3), 0.)),
     );
-    lines.push(
-        El::new(Style {
-            margin: margins(10., 0., 4., 0.),
-            ..Default::default()
-        })
-        .child(text("Enter your name for the Hall of Fame:", gold, 24.)),
-    );
+    lines.push(line(
+        text("Enter your name for the Hall of Fame:", gold, size * 1.3),
+        8.,
+    ));
     lines
 }
 
-/// The name cell (Text2, nine bytes) with its caret.
-fn name_field(name: &str) -> El {
+/// The name cell (Text2, nine bytes) with its caret, on the overlay's
+/// navigation pill.
+fn name_field(look: &Look, name: &str) -> El {
     El::new(Style {
-        margin: margins(0., 0., 6., 0.),
-        padding: sides(6., 12., 6., 12.),
+        flex_shrink: 0.,
+        margin: margins(4., look.inset, 6., look.inset),
+        padding: sides(6., 14., 6., 14.),
+        align_self: Some(AlignSelf::START),
+        min_size: Size {
+            width: length(180.),
+            height: auto(),
+        },
+        border: sides(2., 2., 2., 2.),
         ..Default::default()
     })
-    .paint(
-        Paint::fill(Color::hex("#ffffff14"))
-            .radius(4.)
-            .shadow(BoxShadow::inset(0., 0., 0., Color::hex("#f6e06180"))),
-    )
+    .paint(Paint {
+        radii: [20.; 4],
+        fill: Some(Color::hex("#000000f2").into()),
+        border: [2.; 4],
+        border_color: Color::hex("#a6a6a6"),
+        ..Default::default()
+    })
     .child(text(
         &format!("{name}_"),
-        TextStyle::new(display(22., 700, false), Color::hex("#dac01f")).spacing(1.),
+        TextStyle::new(display(22., 700, false), OVERLAY_GOLD).spacing(1.),
         26.,
     ))
 }
@@ -1196,5 +1514,80 @@ mod tests {
         p.can_quit = false;
         assert_eq!(p.buttons(), vec![RETRY]);
         assert_eq!(p.focused(), RETRY);
+    }
+
+    /// The race-over page on a desktop, a phone on its side and a phone held
+    /// upright: every choice is a 44 px touch target on screen, the standings
+    /// and the medal fit, and the panel (centred by the host, never above
+    /// the top) ends above the screen's bottom with its pill.
+    #[test]
+    fn race_over_page_fits_phones_and_desktop() {
+        use crate::paint::{DisplayList, Item};
+        let rows: Vec<[String; 5]> = (1..=5)
+            .map(|p| {
+                [
+                    format!("{p}. Rider With A Long Name {p}"),
+                    "12:05.43".into(),
+                    "1:48.96".into(),
+                    "123456".into(),
+                    if p == 2 { "1234".into() } else { "-".into() },
+                ]
+            })
+            .collect();
+        let summary = "Place 2 of 5 · 6:05.43 · Best 1:48.96 · +1234 Profile Points (98765 total) · World #3 Fastest Lap!";
+        for (w, h, safe) in [
+            (1280., 720., [0.; 4]),
+            (844., 390., [0., 47., 21., 47.]),
+            (390., 844., [47., 0., 34., 0.]),
+            (360., 640., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for menu in [Menu::Results, Menu::Quit] {
+                let state = Results {
+                    shown: true,
+                    can_quit: true,
+                    replay: true,
+                    rows: rows.clone(),
+                    player_row: Some(1),
+                    menu,
+                    medal: Some((atv_core::medals::Medal::Gold, true)),
+                    medal_reveal: 1.,
+                    ..Default::default()
+                };
+                let el = element(&view, &state, summary, &mut Fonts::new());
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                crate::layout::render(&el, &mut Fonts::new(), w, h, &mut list, &mut hits);
+                let Some(Item::Box(panel)) = list.items.first() else {
+                    panic!("the panel is drawn first");
+                };
+                let dy = (-panel.rect.h / 2.).max(safe[0] + 6. - panel.rect.y);
+                let bottom = panel.rect.y + dy + panel.rect.h;
+                for id in state.buttons() {
+                    let (rect, _) = hits.iter().find(|(_, i)| *i == id).expect("choice drawn");
+                    assert!(
+                        rect.h >= 44. && rect.w >= 44.,
+                        "{w}x{h} {menu:?} {id}: {rect:?}"
+                    );
+                    assert!(
+                        rect.x >= safe[3] && rect.right() <= w - safe[1] + 0.5,
+                        "{w}x{h} {menu:?} {id}: {rect:?}"
+                    );
+                    assert!(
+                        rect.y + dy + rect.h <= h - safe[2] + 0.5,
+                        "{w}x{h} {menu:?} {id} below the screen: {rect:?} dy {dy}"
+                    );
+                }
+                assert!(
+                    bottom <= h - safe[2],
+                    "{w}x{h} {menu:?}: panel ends at {bottom}"
+                );
+            }
+        }
     }
 }
