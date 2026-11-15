@@ -2180,6 +2180,9 @@ fn row_value<'a>(s: &Screen, action: &str, label: &'a str) -> (&'a str, Option<(
 /// A die showing five pips (holes cut by drawing the pips the other way).
 const DICE_ICON: &str = "M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2H4a2 2 0 0 1 -2 -2V4a2 2 0 0 1 2 -2zM6 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM10 8.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM6 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3z";
 
+/// The text fields' ink (the web build's own input takes it too).
+pub const INPUT_INK: &str = "#111111";
+
 fn form(m: &Metrics, s: &Screen) -> El {
     let mut fields = El::new(column(12.));
     fields.style.flex_shrink = 0.;
@@ -2191,9 +2194,33 @@ fn form(m: &Metrics, s: &Screen) -> El {
         let mut field = El::new(column(6.));
         field = field.child(text(
             label.clone(),
-            TextStyle::new(display(15., 700, false), Color::hex("#eeeeee")).spacing(0.6),
+            TextStyle::new(display(15., 700, false), Color::hex("#eeeeee"))
+                .spacing(0.6)
+                .shadow(1., 2., 0., Color::hex("#000c")),
             18.,
         ));
+        // The classic stage's silver well; the field being typed in turns
+        // to the gold pill with the focused white ring (the original Lobby
+        // chat entry is an amber box on a dark rim). Dark ink on both.
+        let mut paint = if *focused {
+            let mut paint = pill_shadows(Paint::fill(gold_pill()).radius(5.));
+            paint.shadows.insert(
+                0,
+                BoxShadow {
+                    spread: 3.,
+                    ..BoxShadow::outer(0., 0., 0., Color::WHITE)
+                },
+            );
+            paint
+        } else {
+            Paint::fill(silver()).radius(5.).shadow(BoxShadow::outer(
+                0.,
+                2.,
+                0.,
+                Color::hex("#0009"),
+            ))
+        };
+        paint = paint.shadow(BoxShadow::inset(0., 2., 3., Color::hex("#0000004d")));
         let mut input = El::new(Style {
             display: Display::Flex,
             align_items: AlignItems::CENTER,
@@ -2205,19 +2232,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
             ..Default::default()
         })
         .id(FIELD + index as u32)
-        .paint(
-            Paint::fill(Color::hex("#0000008c"))
-                .radius(8.)
-                .shadow(BoxShadow {
-                    spread: 1.,
-                    ..BoxShadow::inset(
-                        0.,
-                        0.,
-                        0.,
-                        Color::hex(if *focused { "#e8c832" } else { "#ffffff26" }),
-                    )
-                }),
-        );
+        .paint(paint);
         // The browser's own input draws the text over this box.
         let shown = if cfg!(target_arch = "wasm32") {
             String::new()
@@ -2228,7 +2243,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
         };
         input = input.child(text(
             shown,
-            TextStyle::new(display(19., 700, false), Color::hex("#f4f4f4")).spacing(1.14),
+            TextStyle::new(display(19., 700, false), Color::hex(INPUT_INK)).spacing(1.14),
             23.,
         ));
         if label == "Rider name" && !s.typing {

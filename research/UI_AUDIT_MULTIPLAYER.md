@@ -34,11 +34,25 @@ The before set is the deployed main build 6ea3dfd5.
 | Medal coins (course list, Profile Overview strip, results) | Flat linear-gradient coins and flat badge pills | The menus' glossy bullet shading (radial highlight, dark rim, short hard shadow) in the medal's colour |
 | Single Race → Ghost row | Already a `stepper_row` | Unchanged |
 | Host/Join Game name dice | White die on a dark `#0000008c` square | Dark die on a small gold pill (as Ride and Done) |
+| Text fields (Host/Join Game, Profile Name entry, Add Code, Enter Pass Key, Enter Cheats, waypoint course name) | Dark translucent `#0000008c` box, 8px corners, white text, gold hairline when focused | The stage's silver well with dark ink; the field being typed in takes the gold pill with the focused white ring. The web build's real input takes the same dark ink and caret (`atv-app/src/text_inputs.rs`) |
+
+## Original entry screens
+
+- The exact build's Lobby chat page (`Lobby`, approximate private
+  composite) puts its text entry in an amber box with a dark rounded rim
+  under the message panel, which the gold focused field follows.
+- `Profile_NameEntry` (PAGE21) enters a name in eight cells with
+  `namenumber_highlightbkg`, a red rounded cell with up/down arrows, on the
+  letter being picked. The port takes typed text and a phone's keyboard,
+  so it keeps one field; the cell picker is not reproduced.
+- The composite's tints are inferred, so the colours are matched to the
+  port's existing gold and silver, not sampled from it.
 
 ## Open items
 
-- The Host/Join text fields keep the port's dark input boxes, which predate
-  the online work and are shared with Profile Name entry and Enter Cheats.
-- The Author medal stays green (`atv_core::medals::Medal::color`); the colour
-  identifies the medal on results and lists.
+- The Author medal stays green (`atv_core::medals::Medal::color`); no
+  original evidence gives it another colour.
+- Dark glass that predates the online work stays: the course photo's
+  arrows and All Courses button, the garage list's unselected rows and the
+  Back/hint pill (the original's black hint pill).
 - Host Chromium only; physical phones were not checked.
