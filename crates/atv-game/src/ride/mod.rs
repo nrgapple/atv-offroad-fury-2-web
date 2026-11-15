@@ -997,6 +997,25 @@ impl Ride {
         contacts: &mut dyn FnMut(&mut Ride),
     ) -> Result<()> {
         self.apply_game_settings()?;
+        if let Some(actors) = &self.sim.actors {
+            let actors = actors.borrow();
+            let offset = self
+                .sim
+                .train
+                .as_ref()
+                .map_or(0, |t| t.borrow().collision.len());
+            let scene = match &mut self.mount {
+                Mount::Quad { vehicle, .. } => vehicle.scene_collision_mut(),
+                Mount::Bike(bike) => bike.scene_collision_mut(),
+            };
+            if let Some(scene) = scene {
+                for (i, body) in actors.collision.iter().enumerate() {
+                    if body.node.is_some() {
+                        scene.update_dynamic(offset + i, body.obstacle().motion)?;
+                    }
+                }
+            }
+        }
         if self.is_motorcycle() {
             contacts(self);
             self.step_bike(controls)?;

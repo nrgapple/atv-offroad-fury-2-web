@@ -1,0 +1,14 @@
+{
+  "id": "ventura-county-tornado-motion-and-contacts-915c7e19823f4bb293c8a6b89c5341c2",
+  "timestamp": "2026-11-15T01:35:23.418309+00:00",
+  "recorded_at": "2026-11-15T01:35:23.418309+00:00",
+  "kind": "build",
+  "title": "Ventura County tornado motion and contacts",
+  "summary": "Restore the recovered tornado material scrolling and decode the twister compound collision sections in the shared Rust engine.",
+  "details": [
+    "The actor shader now applies the three distinct UV-scroll rates declared by the FREE06 twister materials.",
+    "A bounded decoder reads ten type-0 sections of each twister3 compound placement, creating thirty collision bodies across the three placements. Moving-body contacts follow current and prior MOT node transforms.",
+    "Checkpoint awaiting verification and publication: precheck is in progress; CI, focused FREE06 browser contact checks and visual inspection remain pending. No screenshot has been captured for this entry."
+  ],
+  "limitation": "The collision node binding is inferred from the exact resource structure, rather than recovered instructions. Original PS2 impulse equivalence and scripted suction remain unverified."
+}

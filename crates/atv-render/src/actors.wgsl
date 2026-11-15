@@ -19,6 +19,7 @@ struct Material {
   flags: vec4<f32>,
   // alpha cutoff, fog enabled
   params: vec4<f32>,
+  uv_offset: vec4<f32>,
 };
 struct Instance {
   model: mat4x4<f32>,
@@ -49,7 +50,7 @@ fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @locatio
   let world = pose * vec4<f32>(position, 1.0);
   var out: Varyings;
   out.clip = g.view_projection * world;
-  out.uv = uv;
+  out.uv = uv + m.uv_offset.xy;
   out.normal = (pose * vec4<f32>(normal, 0.0)).xyz;
   out.color = color * 255.0;
   let fogged = g.fog.z > 0.5 && m.params.y > 0.5;

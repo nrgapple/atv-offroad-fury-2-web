@@ -1545,23 +1545,30 @@ async fn prepare_inner(
         // `?actorPlace=windmill` (tools/test_engine_actor_collision.mjs): the
         // quad 40 ft south of that UseCollision actor's body, heading at it.
         if let Some(actors) = &venue.actors
-            && let Some(m) = ["windmill", "litehous", "bigwindmill", "waterwheel", "snake"]
-                .iter()
-                .find(|name| url_flag(&format!("actorPlace={name}")))
-                .and_then(|name| {
-                    let actors = actors.borrow();
-                    let mcf = format!("{name}.mcf");
-                    actors
-                        .collision
-                        .iter()
-                        .find(|b| {
-                            actors.actors[b.actor]
-                                .definition
-                                .mcf
-                                .eq_ignore_ascii_case(&mcf)
-                        })
-                        .map(|b| b.world_matrix)
-                })
+            && let Some(m) = [
+                "windmill",
+                "litehous",
+                "bigwindmill",
+                "waterwheel",
+                "snake",
+                "twister3",
+            ]
+            .iter()
+            .find(|name| url_flag(&format!("actorPlace={name}")))
+            .and_then(|name| {
+                let actors = actors.borrow();
+                let mcf = format!("{name}.mcf");
+                actors
+                    .collision
+                    .iter()
+                    .find(|b| {
+                        actors.actors[b.actor]
+                            .definition
+                            .mcf
+                            .eq_ignore_ascii_case(&mcf)
+                    })
+                    .map(|b| b.world_matrix)
+            })
             && let Err(error) =
                 riding
                     .ride
