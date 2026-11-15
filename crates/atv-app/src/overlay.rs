@@ -770,16 +770,20 @@ impl Overlay {
                 if let Some(button) = atv_ui::hud::viewer::Button::from_id(p.button) {
                     return Some(Some(Action::Viewer(button)));
                 }
+                // The room loop's panel and the Free Ride hub share hit ids
+                // 80-85; they never show together (the hub is only in
+                // shared rooms), so the panel on screen takes them (#673).
+                if self.quickplay.is_some()
+                    && (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LEAVE)
+                        .contains(&p.button)
+                {
+                    return Some(Some(Action::QuickPlay(p.button)));
+                }
                 if let Some(button) = atv_ui::hud::hub::Button::from_id(p.button) {
                     return Some(Some(Action::Hub(button)));
                 }
                 if let Some(pick) = self.chat.hit(p.button) {
                     return Some(pick);
-                }
-                if (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LEAVE)
-                    .contains(&p.button)
-                {
-                    return Some(Some(Action::QuickPlay(p.button)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
