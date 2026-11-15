@@ -693,57 +693,59 @@ pub(super) fn popover(m: &Metrics, pop: &Popover, anchor: f32) -> El {
     .child(panel)
 }
 
-/// A notice ("Unlocked Everything!", "Not enough Profile Points…") as a
-/// toast under the bar, where it is seen without scrolling (`#menu-notice`
-/// sat under the rows): a dark pill with the menus' gold rule, centred.
+/// A notice ("Unlocked Everything!", "Not enough Profile Points…") in the
+/// original's help box, where it is seen without scrolling (`#menu-notice`
+/// sat under the rows).
 pub(super) fn toast(m: &Metrics, notice: &str) -> El {
-    let width = (m.w - 24. - m.safe[1] - m.safe[3]).min(460.);
+    // The original's help box (`mmoverlay`: about #3f3f3f at 70%, a dark
+    // rim, rounded on the right and running off the left edge) in its
+    // place at the lower left, above the hint row, clear of the title.
+    let hint_row = if m.short { 44. } else { 50. }
+        + if m.portrait {
+            6.
+        } else if m.short {
+            6.
+        } else {
+            (m.h * 0.014).clamp(6., 14.)
+        }
+        + m.safe[2];
+    let width = if m.portrait {
+        m.w - m.gutter - m.safe[1]
+    } else {
+        (m.w * 0.44).min(460. + m.safe[3])
+    };
+    let mut paint = Paint::fill(Color::hex("#3f3f3fb3")).radius(10.);
+    paint.radii = [0., 10., 10., 0.];
+    paint.border = [2., 2., 2., 0.];
+    paint.border_color = Color::hex("#000000b3");
     El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
             left: LengthPercentageAuto::length(0.),
-            top: LengthPercentageAuto::length(total_height(m) + 4.),
+            top: LengthPercentageAuto::auto(),
             right: LengthPercentageAuto::auto(),
-            bottom: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::length(hint_row + 8.),
         },
         size: Size {
-            width: length(m.w),
+            width: length(width),
             height: auto(),
         },
-        display: Display::Flex,
-        justify_content: JustifyContent::CENTER,
+        padding: sides(10., 16., 10., m.gutter + m.safe[3]),
+        border: sides(2., 2., 2., 0.),
         ..Default::default()
     })
-    .child(
-        El::new(Style {
-            max_size: Size {
-                width: length(width),
-                height: auto(),
-            },
-            padding: sides(10., 16., 10., 14.),
-            border: sides(0., 0., 0., 3.),
-            ..Default::default()
-        })
-        .paint({
-            let mut paint = Paint::fill(Color::hex("#0c0c0cf2"))
-                .radius(6.)
-                .shadow(BoxShadow::outer(0., 6., 18., Color::hex("#000a")));
-            paint.border = [0., 0., 0., 3.];
-            paint.border_color = Color::hex("#f1d84e");
-            paint
-        })
-        .content(Content::Text {
-            text: notice.to_string(),
-            style: TextStyle::new(display(15., 700, false), Color::hex("#f6f6f6")).shadow(
-                0.,
-                1.,
-                2.,
-                Color::BLACK,
-            ),
-            line_height: 20.,
-            wrap: true,
-        }),
-    )
+    .paint(paint)
+    .content(Content::Text {
+        text: notice.to_string(),
+        style: TextStyle::new(display(15., 600, false), Color::hex("#ececec")).shadow(
+            0.,
+            1.,
+            2.,
+            Color::BLACK,
+        ),
+        line_height: 20.,
+        wrap: true,
+    })
 }
 
 #[cfg(test)]

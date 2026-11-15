@@ -172,7 +172,7 @@ try {
     await onPage(page, 'garage');
     front = await read(page);
     assert.equal(front.quad, 22, 'locked ATV01 replaced by the original default');
-    assert.match(front.notice, /is locked/);
+    assert.match(front.notice, /ATV Locked/);
     // Left steps only through owned ATVs: Honda 250EX (14), Bombardier
     // DS650 (11), then the bought Patriot (8).
     const visited = [];

@@ -230,8 +230,12 @@ points and progress no longer sit in text under the rows:
   Profile Points") and the Profile Store; the store keeps the item's cost or
   unlock rule, and the no-profile warning stays.
 - Notices ("Unlocked Everything!", "Invalid cheat!", a locked vehicle) show
-  as a toast under the bar (fade in 150 ms, hold 3 s, fade 300 ms) instead of
-  under the rows, where phone portrait needed a scroll to see them. The coin
+  in the original's help box (`mmoverlay`, about #3f3f3f at 70%, a dark rim,
+  rounded on the right, off the left edge) at the lower left above the hint
+  row (fade in 150 ms, hold 3 s, fade 300 ms), instead of under the rows,
+  where phone portrait needed a scroll to see them; it never covers the
+  title. The garage's own lock notices are one short line ("ATV Locked ·
+  Unlock Items"). The coin
   chip also glows for 700 ms when the profile's unlocks change (Unlock
   Everything, a purchase) even when the points do not.
 - The trophy chip draws the original lit gold trophy (`trophy_goldon`, from
