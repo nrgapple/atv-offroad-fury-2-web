@@ -55,14 +55,20 @@ try {
     assert.ok(maxSpeed >= 1 && travelled >= 1, `${course.id}: movement from spawn`);
     // The trace is published before the first drawn frame. Its initial
     // diagnostics may still contain zeroed render counters; wait for the
-    // actual completed scenery frame, then keep the venue/geometry assertions.
+    // actual completed visibility pass, then keep venue/upload assertions.
+    // NAT01's final view legitimately culls every prop; terrain/vegetation
+    // still render. Do not disable source culling just to force a visible prop.
     await page.waitForFunction(() => {
       const state = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
-      return state.ride?.environment && state.scenery?.triangles > 0;
+      const scenery = state.scenery;
+      return state.ride?.environment && scenery &&
+        (scenery.draws + scenery.culled + scenery.farCulled) > 0;
     }, null, { timeout: 120000 });
     const state = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
     assert.equal(state.ride?.environment, course.id, `${course.id}: actual loaded venue`);
-    assert.ok(state.scenery?.triangles > 0, `${course.id}: scenery renders`);
+    assert.ok(state.scenery?.modelLevels.length > 0, `${course.id}: uploaded scenery instances`);
+    assert.ok(state.scenery.draws + state.scenery.culled + state.scenery.farCulled > 0,
+      `${course.id}: completed scenery visibility pass`);
     const scriptedMs = Date.now() - started;
     await optionalScreenshot(page, 'ATV_MX_SCREENSHOT', course.id);
     // Scripted parity steps run synchronously and hold the final pose. Measure
@@ -88,6 +94,7 @@ try {
     const observation = { id: course.id, quad, host_load_and_360_steps_ms: scriptedMs,
       host_live_load_and_360_steps_ms: Date.now() - liveStarted, host_live_benchmark: live,
       scenery_draws: state.scenery.draws, scenery_triangles: state.scenery.triangles,
+      scenery_culled: state.scenery.culled, scenery_far_culled: state.scenery.farCulled,
       host_frame_samples: samples.length, host_frame_interval_p50_ms: percentile(0, 0.5),
       host_frame_interval_p95_ms: percentile(0, 0.95), host_raf_callback_p95_ms: percentile(1, 0.95),
       // JS heap excludes GPU allocations and is not total process/Wasm memory.

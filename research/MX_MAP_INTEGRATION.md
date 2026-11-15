@@ -219,3 +219,12 @@ passes on `nat05_window` (NAT04/NAT05) and `SM02_DiaPlat` (SM01–03). Their
 primary diffuse passes remain present; the loader does not drop those models.
 NAT04 water uses the separately supported XZ-reflection path. Screenshot
 inspection still needs to establish the visible impact in the actual venues.
+
+Browser timing inspection found that the scripted trace can precede the first
+completed render, so acceptance waits for initialized visibility counters.
+NAT01's final scripted camera legitimately culls all 692 scenery instances;
+its captured terrain, vegetation, rider and sky remain rendered. Requiring
+a visible prop at every final pose would conflict with preserved frustum/fog
+culling. The gate therefore requires uploaded scene instances and a completed
+draw/cull pass, records all culled counts, and retains image inspection alongside
+actual venue identity, finite simulation, contact and movement assertions.
