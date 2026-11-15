@@ -61,6 +61,8 @@ pub struct Online {
     secret_at: Option<Instant>,
     /// The launch's site and game server, for rides without the menus.
     pub endpoints: Option<(String, String)>,
+    /// The rider name a ride opened from a room link rides under.
+    pub name: Option<String>,
     /// Consecutive failed registrations (backs off).
     failures: u32,
     retry_at: Option<Instant>,
@@ -154,6 +156,7 @@ impl App {
             .front
             .as_ref()
             .map(|f| f.borrow().state.player_name.clone())
+            .or_else(|| self.online.name.clone())
             .unwrap_or_default();
         self.online.registering = true;
         self.online.registered = Some(secret.clone());

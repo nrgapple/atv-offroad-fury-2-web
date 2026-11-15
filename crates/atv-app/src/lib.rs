@@ -5756,6 +5756,7 @@ impl ApplicationHandler<Message> for App {
                 .clone()
                 .unwrap_or_else(|| server_for(&site, None));
             self.online.endpoints = Some((site, server));
+            self.online.name = options.room.as_ref().map(|r| r.name.clone());
         }
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
