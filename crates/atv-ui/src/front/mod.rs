@@ -49,6 +49,8 @@ pub const PASSKEY: u32 = 2413;
 /// The stage panel and its text table (layout checks only; not targets).
 pub const STAGE: u32 = 2414;
 pub const DETAILS: u32 = 2415;
+/// Local lineup card bounds (layout checks only).
+pub const PLAYER_CARD: u32 = 2470;
 /// Single Race: the photo, the course name and its "All courses" button
 /// open the course picker.
 pub const COURSES: u32 = 2416;
@@ -2552,10 +2554,11 @@ fn vehicle_portrait(s: &Screen, id: u16, height: f32) -> El {
     }
 }
 
-fn player_lineup(m: &Metrics, s: &Screen) -> El {
+fn player_lineup(_m: &Metrics, s: &Screen) -> El {
     let mut grid = El::new(Style {
         display: Display::Grid,
         grid_template_columns: vec![minmax(length(0.), fr(1.)); 2],
+        grid_template_rows: vec![minmax(length(0.), fr(1.)); 2],
         gap: Size {
             width: px(8.),
             height: px(8.),
@@ -2573,6 +2576,7 @@ fn player_lineup(m: &Metrics, s: &Screen) -> El {
         style.padding = sides(8., 8., 8., 8.);
         style.justify_content = JustifyContent::CENTER;
         let mut card = El::new(style)
+            .id(PLAYER_CARD + i as u32)
             .paint(Paint::fill(Color::hex(color)).radius(5.))
             .child(text(
                 format!(
@@ -2590,22 +2594,24 @@ fn player_lineup(m: &Metrics, s: &Screen) -> El {
                 17.,
             ));
         if *joined {
-            card = card
-                .child(vehicle_portrait(
-                    s,
-                    *id,
-                    if m.portrait {
-                        (m.h * 0.09).clamp(40., 78.)
-                    } else {
-                        (m.h * 0.20).clamp(64., 180.)
+            let mut portrait = vehicle_portrait(s, *id, 0.);
+            portrait.style.flex_grow = 1.;
+            portrait.style.min_size.height = length(0.);
+            card = card.child(portrait).child(
+                El::new(Style {
+                    min_size: Size {
+                        width: length(0.),
+                        height: length(17.),
                     },
-                ))
-                .child(El::new(Style::default()).content(Content::Text {
+                    flex_shrink: 0.,
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
                     text: name.clone(),
                     style: TextStyle::new(display(14., 700, false), Color::WHITE),
                     line_height: 17.,
-                    wrap: true,
-                }));
+                }),
+            );
         }
         grid = grid.child(card);
     }
@@ -4212,6 +4218,32 @@ mod tests {
                 if h >= 844. {
                     assert!(drawn.is_some(), "{page} {w}x{h}: no wordmark");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn four_joined_player_cards_fit_phone_and_desktop() {
+        let mut fonts = Fonts::new();
+        for (w, h) in [(320., 568.), (390., 664.), (844., 330.), (1280., 720.)] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                ..Default::default()
+            };
+            let mut s = screen("splitseats");
+            s.lineup = (1..=4)
+                .map(|id| (id, "Honda 400EX Yellow".into(), true, false))
+                .collect();
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+            for id in PLAYER_CARD..PLAYER_CARD + 4 {
+                let r = hits.iter().find(|(_, i)| *i == id).unwrap().0;
+                assert!(
+                    r.x >= 0. && r.y >= 0. && r.right() <= w + 0.5 && r.bottom() <= h + 0.5,
+                    "{w}x{h}: {r:?}"
+                );
+                assert!(r.h >= 70. && r.w >= 70., "{w}x{h}: {r:?}");
             }
         }
     }

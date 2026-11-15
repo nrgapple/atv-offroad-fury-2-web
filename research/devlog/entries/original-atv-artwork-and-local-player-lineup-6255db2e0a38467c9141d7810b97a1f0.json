@@ -7,7 +7,9 @@
   "summary": "The garage picker uses the recovered QUADINFO multi_atv artwork, while local split-screen setup gains a colored, side-by-side Players lineup.",
   "details": [
     "The lineup draws on recovered PAGE08 MultiATVRiderSelect evidence. The original reference is an approximate composite assembled from recovered assets, not a hardware capture.",
-    "This checkpoint records the intended implementation slice; CI and focused browser verification remain pending with the implementation owner."
+    "PR #692 at 98b72f7 passed required CI and desktop/Android compilation. The exact artifact from CI run 43672863282 passed test_engine_split_seats.mjs in 25.1 seconds.",
+    "Inspected local two-player and three-player Players screenshots: the colored lineup shows selected ATV artwork and join slots. These first-iteration screenshots are not attached or published.",
+    "The phone-layout test timed out on an obsolete assertion expecting a single 3D preview on the Players page. The implementation owner is replacing that assertion with checks for all four player-card bounds and trimming transparent portrait padding; phone-layout retesting remains pending."
   ],
-  "limitation": "Original-game visual fidelity is not established by the approximate composite reference. No screenshot or passing test result is claimed in this entry."
+  "limitation": "Original-game visual fidelity is not established by the approximate composite reference. Verification above applies to 98b72f7; the portrait-padding and phone-test follow-up changes still require verification. Browser checks ran on the host, not physical phones."
 }

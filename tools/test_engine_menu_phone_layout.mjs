@@ -130,11 +130,20 @@ try {
     for (const p of ['games', 'split', 'splitseats']) {
       await page.goto(url(`/play.html?uiDiagnostics=1&front=${p}`));
       await onPage(page, p);
-      await page.waitForFunction(
-        () => JSON.parse(document.querySelector('#ui-state').textContent).front.modelTargets?.[0],
-        null,
-        { timeout: 60000 }
-      );
+      if (p === 'splitseats') {
+        const cards = (await front(page)).hits.filter(h => h.id >= 2470 && h.id < 2474);
+        assert.equal(cards.length, 4, `${name}: four player cards replace the single model`);
+        for (const card of cards) assert.ok(inside(card, viewport), `${name}: player card stays on screen ${JSON.stringify(card)}`);
+        for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
+          assert.ok(!overlaps(cards[i], cards[j]), `${name}: player cards do not overlap`);
+        }
+        if (shots) await page.screenshot({ path: `${shots}/${name}-lineup.png` });
+      } else {
+        await page.waitForFunction(
+          () => JSON.parse(document.querySelector('#ui-state').textContent).front.modelTargets?.[0],
+          null, { timeout: 60000 }
+        );
+      }
       assertFixed(await front(page), `${name} ${p}`, viewport);
     }
     // Single Player: its modes fit without scrolling on every phone.

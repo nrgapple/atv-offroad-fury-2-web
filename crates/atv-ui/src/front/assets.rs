@@ -427,7 +427,7 @@ pub async fn quad_catalog(content: &Content) -> Result<QuadCatalog, String> {
         if let Some(index) = archive.named(&format!("multi_atv{id:02}.pst"))
             && let Ok(image) = pst(&archive.member(index).await?)
         {
-            portraits.insert(id, image);
+            portraits.insert(id, image.trim_clear().unwrap_or(image));
         }
         atv_content::yield_frame().await;
     }
