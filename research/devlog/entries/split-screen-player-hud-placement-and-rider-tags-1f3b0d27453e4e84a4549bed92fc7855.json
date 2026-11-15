@@ -1,0 +1,12 @@
+{
+  "id": "split-screen-player-hud-placement-and-rider-tags-1f3b0d27453e4e84a4549bed92fc7855",
+  "timestamp": "2026-11-15T01:48:19.436840+00:00",
+  "recorded_at": "2026-11-15T01:48:19.436840+00:00",
+  "kind": "build",
+  "title": "Split-screen player HUD placement and rider tags",
+  "summary": "Anchor and rotate the shared toolbar into player 1\u2019s view, and show the other local riders through colored per-view name, distance and direction tags.",
+  "details": [
+    "Toolbar touch hit coordinates follow the same view transform as its rendering. Local rider tags reuse the existing peer projector for each player view. This is an authored split-screen usability adaptation; it does not establish original-game fidelity."
+  ],
+  "limitation": "CI and the focused split-facing browser test are pending. Physical phones remain unverified. No screenshots have been captured or attached to this checkpoint."
+}
