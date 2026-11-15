@@ -210,20 +210,22 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
         let mut panel =
             classic::panel(width).child(classic::heading("Next Map", Some(timer(clock, false))));
         for (i, option) in options.iter().enumerate() {
-            let votes = classic::hud_text(
-                option.votes.to_string(),
-                22.,
-                if option.mine {
-                    classic::INK
-                } else {
-                    classic::GOLD
-                },
-            );
+            let votes = (option.votes > 0).then(|| {
+                classic::hud_text(
+                    option.votes.to_string(),
+                    22.,
+                    if option.mine {
+                        classic::INK
+                    } else {
+                        classic::GOLD
+                    },
+                )
+            });
             panel = panel.child(classic::course(
                 Some(VOTE + i as u32),
                 &option.name,
                 "",
-                Some(votes),
+                votes,
                 option.mine,
                 false,
             ));

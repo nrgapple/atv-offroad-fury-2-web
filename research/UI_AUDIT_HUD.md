@@ -42,10 +42,11 @@ These are existing port components, reused rather than restyled:
 | Free Ride hub: GOAL / JOIN / HILL world tags | Already drawn as peer name tags (hud::peers, the event marker slot) | Unchanged |
 | Free Ride hub: join circle | Gold ground dots in the world, not a panel | Unchanged |
 | Quick chat: bubbles over riders | A dark `#101010d9` pill with a coloured border | Name-tag lettering above the rider's tag, with no box; emotes drawn bare |
-| Quick chat: feed | Already outlined italic lettering; the player's own name in an invented orange-gold | Unchanged apart from the player's name, which now uses the HUD player gold `#f1d84e` |
+| Quick chat: feed | Already outlined italic lettering, but the player's own name was an invented orange-gold, and the feed was printed over the Quick Play / private-room panel's title (the room's lobby shows while riders chat) | The player's name uses the HUD player gold `#f1d84e`; the feed starts under the panel when one shows |
 | Quick chat: wheel | A `#080808b0` disc behind dark `#1a1a1ae6` pills with white borders, lit in flat yellow | The pause menu's darkening behind Show Results tiles (`#0c0c0cdb`, radius 5); the lit target sits on the gold menu pill with dark lettering |
 | Quick chat: CHAT toolbar button | Already the classic toolbar control (hud::toolbar) | Unchanged |
 | Ghost challenges: medal reveal on the results screen | Inside Race Results; the NEW tag was a flat `#f6e061` chip | The NEW tag sits on the menu's gold pill |
+| Follow camera (#671, watching a round) | The watched rider's own tag floated mid-screen under the Watch button and ran into the other riders' tags (in one capture another rider's tag lay on the followed quad). Tags were ranked by distance from the parked spectator, not the camera. The touch controls and "HOLD ANYWHERE TO RIDE" coaching showed although a spectator cannot ride | The Watch button names the followed rider, whose tag is hidden (it keeps its map marker). Tags are ranked from the camera, and a farther tag that would cover a nearer one stacks above it (this also fixes bunched start grids). The touch controls are hidden while watching |
 | Quick Play and private-room panel | See the section below | See the section below |
 
 ## Quick Play and private-room panel
@@ -62,3 +63,4 @@ restyled after that PR lands. Its audit:
 | Podium and rewards | Gold, silver and bronze blocks with rounded corners, plus green points chips | The Race Results standings: place and rider, then time or points |
 | Rematch / Leave, Start / Mode / CPUs, Ready, Skip | `#ffffff1f` buttons with radius 8 | Race-over buttons |
 | Spectator "Next round" chip | A `#000000a6` pill | A race HUD sign in gold, with no box; Watch is a race-over button |
+| Placement on a phone | The panel at the top covered the minimap at 360 px portrait | Below the minimap when the screen is tall enough; the vote leaves out the seat table on a phone (the cards' counts show the votes) |
