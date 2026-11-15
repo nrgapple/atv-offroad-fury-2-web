@@ -7,6 +7,12 @@
 // rival's ghost. Single Player → Weekly Challenge shows the week's pick, the
 // rider's best and its band from the cron's cuts.
 //
+// Friend ghosts (issue #666): the rider holds an online rider secret, so the
+// race's new personal best ghost goes up as their friend ghost under the tag
+// of their player id; the game server (mocked here, never production)
+// lists a friend whose ghost tag has a stored ghost, and the Ghost row then
+// offers Friend, which starts Lap Attack against that friend's ghost.
+//
 // Production is never touched: the game's /api/boards and /api/ghosts
 // requests go to the Worker itself (cloudflare/worker.mjs, run in this
 // process) over a local SQLite D1 with the production migrations
@@ -15,13 +21,15 @@
 // format the game reads (atv_core::world_ghost).
 //
 // ATV_GHOST_CHALLENGE_SHOTS=<dir> saves the medal reveal, the course list,
-// the ghost picker, the race against the rival and the weekly page.
+// the ghost picker, the race against the rival, the weekly page and the
+// Friend choice and race.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { assertNoErrors, base, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const { default: worker } = await import('../cloudflare/worker.mjs');
 const { d1 } = await import('../cloudflare/testing.mjs');
-const { GHOST_HEADER, GHOST_KEY, GHOST_STRIDE } = await import('../cloudflare/ghosts.mjs');
+const { GHOST_HEADER, GHOST_KEY, GHOST_STRIDE, ghostTag } = await import('../cloudflare/ghosts.mjs');
 const { isoWeekOf, refreshWeekly, weeklyPick } = await import('../cloudflare/weekly.mjs');
 
 const open = { limit: async () => ({ success: true }) };
@@ -40,6 +48,28 @@ async function api(route) {
   calls.push({ method: request.method(), path, sent: request.postData(), status: response.status, body });
   await route.fulfill({ status: response.status, headers: { 'content-type': response.headers.get('Content-Type') ?? 'application/json' }, body });
 }
+// The online rider (atv_ui::cloud::rider_pid, players::codes::pid) and a
+// friend whose ghost tag the mocked game server hands out.
+const SECRET = '0123456789abcdef0123456789abcdef';
+const PID = createHash('sha256').update(`fury-rider:${SECRET}`).digest('hex').slice(0, 32);
+const FRIEND_TAG = await ghostTag('f'.repeat(32));
+const served = [];
+async function gameServer(route) {
+  const request = route.request(), path = new URL(request.url()).pathname;
+  served.push(path);
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+  if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+  const answers = {
+    '/multiplayer/players/register': { token: `r1.${PID}.1.00`, code: 'KQ7M-3XPZ', created: false, expires: 4_000_000_000 },
+    '/multiplayer/friends': {
+      friends: [{ id: 'aa00bb11cc22', name: 'Pal', level: 3, tier: 'Silver', online: false, room: null, ghost: FRIEND_TAG }],
+      requests: [], sent: [], recent: [], blocked: [], max: 100,
+    },
+  };
+  const body = answers[path];
+  await route.fulfill({ status: body ? 200 : 404, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify(body ?? { error: 'Not here' }) });
+}
+
 const log = () => calls.map(c => `${c.method} ${c.path} ${c.status}`).join(', ');
 
 // A synthetic lap of `lapMs` round a circle of `feet` (the Worker's checks
@@ -106,16 +136,18 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await context.route('**/api/boards/**', api);
   await context.route('**/api/ghosts/**', api);
+  await context.route('**/multiplayer/**', gameServer);
   const errors = [];
   const page = await newPage(context, {}, errors);
   await unlockStore(page);
-  await page.addInitScript(([week, best]) => {
+  await page.addInitScript(([week, best, secret]) => {
     if (sessionStorage.getItem('ghost-challenges-test')) return;
     sessionStorage.setItem('ghost-challenges-test', '1');
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     for (const key of ['fury-hall-of-fame', 'atv-player-selection']) localStorage.removeItem(key);
     localStorage.setItem('fury-medals', JSON.stringify({ weeks: { [week]: { value: best } } }));
-  }, [week, weeklyBest]);
+    localStorage.setItem('fury-rider-secret', secret);
+  }, [week, weeklyBest, SECRET]);
   await page.goto(url('/play.html?uiDiagnostics=1&autopilot=1&weather=off'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);
@@ -151,12 +183,25 @@ try {
   assert.equal(book.ghosts[course], lapMs, 'and its personal best ghost');
   assert.equal(book.weeks[week].value, weeklyBest, 'the seeded weekly best survives');
   assert.ok(await page.evaluate(c => Boolean(localStorage.getItem(`fury-pb-ghost:${c}`)), course));
+  // The new personal best went up as this rider's friend ghost, under the
+  // tag of their player id (never the id itself).
+  await until(page, () => calls.some(c => c.path === `/api/ghosts/${BOARD}/friends` && c.method === 'POST'), 30000, 'the friend ghost upload');
+  const friendUp = calls.find(c => c.path === `/api/ghosts/${BOARD}/friends` && c.method === 'POST');
+  assert.equal(friendUp.status, 200, friendUp.body);
+  assert.equal(JSON.parse(friendUp.sent).rider, PID);
+  assert.deepEqual(JSON.parse(friendUp.body), { board: BOARD, kept: true, value: lapMs });
+  const mine = env.SAVES.db.prepare('SELECT tag, value FROM friend_ghosts WHERE board = ?').all(BOARD).map(r => ({ ...r }));
+  assert.deepEqual(mine, [{ tag: await ghostTag(PID), value: lapMs }]);
 
   // Other riders ahead of ACE on the lap board, with ghosts: a rival just
   // ahead and a leader far ahead.
   seed(BOARD, course, 'RIVAL', lapMs - 1_500, true);
   seed(BOARD, course, 'LEADER', Math.round(lapMs * 0.8), true);
   seed(BOARD, course, 'NOGHOST', lapMs - 800, false);
+  // The friend's personal best ghost, not on the board's rows.
+  const friendMs = lapMs - 1_100;
+  env.SAVES.db.prepare('INSERT INTO friend_ghosts (board, tag, name, value, vehicle, updated_at, data) VALUES (?, ?, ?, ?, 3, ?, ?)')
+    .run(BOARD, FRIEND_TAG, 'PAL', friendMs, Date.now(), ghost(course, 3, friendMs));
 
   // Continue → Quit: back to Single Race's setup.
   const CONTINUE = 30, QUIT = 33;
@@ -183,9 +228,10 @@ try {
   assert.equal(label(await front(page), 'raceevent'), 'Event: Lap Attack');
   assert.equal((await front(page)).race.course, course);
   await until(page, () => calls.some(c => c.method === 'GET' && c.path === `/api/boards/${BOARD}`), 15000, 'the lap board');
+  await until(page, () => calls.some(c => c.method === 'GET' && c.path === `/api/ghosts/${BOARD}/friends` && c.status === 200), 30000, 'the friend ghosts');
   await focus(page, 'raceghost');
   const labels = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     labels.push(label(await front(page), 'raceghost'));
     await key(page, 'ArrowRight');
   }
@@ -194,6 +240,7 @@ try {
   assert.ok(offered.includes(`Ghost: PB ${clock(lapMs)}`), offered.join());
   assert.ok(offered.includes(`Ghost: Rival ${clock(lapMs - 1_500)}`), offered.join());
   assert.ok(offered.includes(`Ghost: #1 ${clock(Math.round(lapMs * 0.8))}`), offered.join());
+  assert.ok(offered.includes(`Ghost: Friend Pal ${clock(friendMs)}`), offered.join());
   // The next medal's ghost: one of the stored ghosts, "~" when not within 1 %.
   assert.ok(offered.some(l => /^Ghost: ~?(Bronze|Silver|Gold|Author) /.test(l)) || medal === 'Author', offered.join());
   for (let i = 0; i < 8 && label(await front(page), 'raceghost') !== `Ghost: Rival ${clock(lapMs - 1_500)}`; i++) await key(page, 'ArrowRight');
@@ -235,8 +282,26 @@ try {
   assert.ok(lines.some(l => l.endsWith('· No CPUs')), lines.join('\n'));
   assert.ok(lines.includes(`Your Best:|${clock(weeklyBest)} · Top 50% · 20 riders`), lines.join('\n'));
   await shot(page, 'weekly-page');
+
+  // Back to Lap Attack: Friend starts against the friend's ghost.
+  await key(page, 'Escape'); await onPage(page, 'single');
+  await choose(page, 'race'); await onPage(page, 'race');
+  await focus(page, 'raceevent');
+  for (let i = 0; i < 4 && label(await front(page), 'raceevent') !== 'Event: Lap Attack'; i++) await key(page, 'ArrowLeft');
+  await focus(page, 'raceghost');
+  const FRIEND = `Ghost: Friend Pal ${clock(friendMs)}`;
+  for (let i = 0; i < 8 && label(await front(page), 'raceghost') !== FRIEND; i++) await key(page, 'ArrowRight');
+  assert.equal(label(await front(page), 'raceghost'), FRIEND);
+  await shot(page, 'friend-picker');
+  await choose(page, 'racestart');
+  s = await until(page, s => s.ride?.ghost?.playing === true && s.ride?.ghost?.rival === 'PAL', 240000, 'the friend ghost playing');
+  assert.ok(Math.abs(s.ride.ghost.best - friendMs / 1000) < 1e-3, `friend lap ${s.ride.ghost.best}`);
+  assert.ok(calls.some(c => c.method === 'GET' && c.path === `/api/ghosts/${BOARD}/friends/${FRIEND_TAG}/${friendMs}` && c.status === 200), log());
+  assert.ok(served.includes('/multiplayer/friends'), served.join());
+  await nextFrames(page, 60);
+  await shot(page, 'friend-race');
   assertNoErrors(errors);
-  console.log(`ghost challenges: ${course} lap ${clock(lapMs)} earned ${medal}; picker offered ${offered.join(' / ')}; Rival raced; weekly ${week} on ${pick.course}`);
+  console.log(`ghost challenges: ${course} lap ${clock(lapMs)} earned ${medal}; picker offered ${offered.join(' / ')}; Rival and Friend raced; weekly ${week} on ${pick.course}`);
 } finally {
   await browser.close();
 }

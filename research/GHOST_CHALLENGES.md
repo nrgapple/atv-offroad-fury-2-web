@@ -29,7 +29,8 @@ competition, §8 light anti-cheat).
   earns a better medal; Single Race's course list shows each course's coin;
   Profile Overview shows a strip of coins and weekly badges with counts.
   The rider's best lap per course is kept on this device (`fury-medals`,
-  `atv_core::medals::MedalBook`); it is not part of the Pass Key cloud save.
+  `atv_core::medals::MedalBook`) and travels in the Pass Key save
+  (CLOUD_SAVE.md "Medals", issue #666).
 - **Where a medal is earned.** Any single-player lap the world boards could
   take or that Lap Attack judges for its best lap. Assisted runs, Kid Mode,
   Practice, split screen and online races earn none (the world boards'
@@ -68,20 +69,50 @@ Lap Attack's setup offers a **Ghost** row: PB, a medal ghost, Rival and #1
   the board does not have them). Without a time, the slowest stored ghost.
 - **#1**: the board's best stored ghost.
 
-### Friend ghosts (hook only; slice D)
+### Friend ghosts (issue #666)
 
-Not implemented. When slice D's friend codes land (ONLINE_IDENTITY.md), a
-friend's ghost is found by friend code, not by name:
+The picker's last choice, **Friend**, is the quickest friend with a stored
+ghost on the course: "Friend ANN 00:47.25" (the friend's online name, at most
+eight characters). It shows only once the friend list and the friends' ghosts
+are loaded and at least one friend has a ghost there.
 
-- `GET /api/ghosts/<lap board>/friends?codes=<code>,<code>…` (at most 20
-  public friend codes, never a Pass Key) answers
-  `{board, ghosts: [{code, name, value, vehicle}]}` for the friends whose
-  current row on the board has a kept ghost; cached like a board read.
-- The ghost itself downloads through the existing
-  `GET /api/ghosts/<board>/<name>/<ms>`.
-- The game adds a **Friend** choice to the picker, stepping through the
-  answer's rows. A ghost upload would need to carry the friend code with the
-  name; D owns how a code is bound to a board name.
+- **Who uploads.** A rider who has used something online (holds a rider
+  secret, ONLINE_IDENTITY.md) sends each new personal best ghost (the
+  device's `fury-pb-ghost:<course>`, replaced only by a quicker lap, from Lap
+  Attack or a race) as `POST /api/ghosts/<board>/friends {rider, name,
+  ghost}`. `rider` is the rider's player id (computed on the device from the
+  secret, as the game server does); `name` is the loaded profile's name as a
+  board name. Nothing is sent before that first online use, and personal
+  bests set before it are not sent until they improve [J: no backfill burst].
+- **Where.** Per course, on its Normal lap board (`lap:<course>:n`): Lap
+  Attack has no CPUs, so difficulty changes nothing, and the personal best
+  ghost is per course too.
+- **Tag, not code or name.** The Worker stores the ghost under the rider's
+  ghost tag, the first 16 bytes of SHA-256(`fury-ghost-tag:` + player id) in
+  hex, and never stores the id. The game server gives each friend row its
+  friend's tag (`ghost` in `/multiplayer/friends`). So only the rider (who
+  knows their id) can store a ghost under their tag, a friend who knows the
+  tag cannot, and a tag does not reveal the id. The documented hook used
+  friend codes; codes are public and change with New Code, so anyone holding
+  a code could have uploaded as its owner [J]. The Worker needs no secret
+  shared with the game server. `atv-server players::codes::ghost_tag` and
+  `cloudflare/ghosts.mjs ghostTag` are pinned to the same pair in tests.
+- **Checks.** The upload is checked like a board ghost (`checkGhost`:
+  format, length against the lap time, motion a vehicle can ride, the
+  board's course) plus the course's lap floor and a valid vehicle. It needs
+  no board row. Plausibility, not proof, as everywhere on the boards.
+- **Kept.** One a tag a board; a slower lap keeps the quicker one. Each board
+  keeps the 32 most recent uploads (`FRIEND_GHOST_LIMIT`; migration
+  `0007_friend_ghosts.sql`), the oldest dropped first [J: at about 150
+  riders online, 32 recent riders a course covers most friend pairs].
+- **Read.** `GET /api/ghosts/<board>/friends?tags=<tag>,…` (at most 100, the
+  friend cap) answers `{board, ghosts: [{tag, name, value, vehicle}]}`,
+  quickest first, cached at the edge for a minute like a board.
+  `GET /api/ghosts/<board>/friends/<tag>/<ms>` answers the ghost in the
+  board download's shape, cached for an hour (the address names the time).
+- **The game.** Lap Attack's setup reads the friend list every 60 s while it
+  shows (only for a rider with a token), asks the Worker once for each new
+  set of friends, and races the chosen ghost like a board one.
 
 ## Weekly challenge
 
@@ -128,6 +159,16 @@ friend's ghost is found by friend code, not by name:
 
 ## Budget (free plan)
 
+- **Friend ghost storage.** At most 32 × 128 lap boards (only Normal boards
+  are used, so 64 in practice): 31 MB at the measured 15.2 kB a ghost, 92 MB
+  at the longest measured lap's 45 kB, 179 MB at the 64 KiB cap. With the
+  board ghosts' 31-92 MB the ghosts stay under about 185 MB at measured
+  lengths of the 500 MB database.
+- **Friend ghost writes.** One upsert, one prune (deletes at most the rows
+  past 32) and one read per upload, only when a rider's personal best gets
+  quicker. Reads: one indexed query of at most 100 keys per new friend set,
+  cached a minute per location; ghosts are cached an hour.
+
 Cloudflare's published D1 free limits (assumed current): 5 M rows read and
 100 k rows written a day, 500 MB a database. Not measured on real D1.
 
@@ -164,6 +205,11 @@ Cloudflare's published D1 free limits (assumed current): 5 M rows read and
 - `cloudflare/weekly.test.mjs` and `ghosts.test.mjs`: weeks, the pick, the
   weekly checks, every finisher kept, the percentile, the cron's cuts,
   freezing and deletion; the ghost bands.
+- Friend ghosts: `cloudflare/ghosts.test.mjs` (the tag pinned to the game
+  server's, upload, quicker wins, list, download, refusals, the 32 cap),
+  `atv-server` `friends_carry_their_ghost_tag`, `atv_core::world_ghost`
+  paths, `atv_ui` `lap_attack_offers_the_quickest_friend_s_ghost`, `atv_ui`
+  cloud `the_player_id_is_the_game_server_s`.
 - `tools/test_engine_ghost_challenges.mjs` (the Worker in the test process
   over SQLite D1, as `test_engine_world_ghosts.mjs`): a two-lap race by the
   race path driver reveals its medal and keeps the PB ghost, Lap Attack's
@@ -175,7 +221,13 @@ Cloudflare's published D1 free limits (assumed current): 5 M rows read and
 
 - No human lap was measured, so how hard the medals are for a person is
   untested; the author times are the game's own driver's.
-- Medals, weekly results and the PB ghost live on one device.
+- Medals and weekly results travel in the Pass Key save (CLOUD_SAVE.md
+  "Medals"); the PB ghosts stay on the device that rode them, so a second
+  device on the key shows the medal but offers no PB ghost until it rides one.
+- A friend's ghost is their newest personal best upload; a board keeps 32,
+  so on a busy course a friend who has not improved for a while may drop out.
+  The tags reach friends only through the game server; without it (offline)
+  there is no Friend choice.
 - A weekly race's "no CPUs" is the client's: the server cannot tell.
 - The browser test runs on host Chromium only (no phone, no desktop app) and
   never against production D1.

@@ -127,6 +127,9 @@ pub struct Net {
     pub hub: crate::hub::Hub,
     /// Quick chat (research/QUICK_CHAT.md).
     pub chat: crate::quick_chat::QuickChat,
+    /// The other riders' slots last asked about, and when
+    /// ([`Net::room_riders_due`]).
+    riders_asked: Option<(Vec<u8>, Instant)>,
 }
 
 /// What the app does after a room tick.
@@ -471,6 +474,7 @@ impl Net {
             held_accumulator: 0.,
             hub: Default::default(),
             chat: crate::quick_chat::QuickChat::load(&atv_ui::settings::Settings::load()),
+            riders_asked: None,
         };
         let deadline = Instant::now();
         let mut set_up = false;
@@ -1416,11 +1420,16 @@ impl Net {
             freestyle: !lobby.public,
             chat: self.chat_available(),
             mute_all: self.chat.mute_all,
-            muted: self.chat.muted.iter().copied().collect(),
+            muted: lobby
+                .players
+                .iter()
+                .filter(|p| self.chat.muted_slot(p.id))
+                .map(|p| p.id)
+                .collect(),
             blocked: lobby
                 .players
                 .iter()
-                .filter(|p| Some(p.id) != me && self.chat.blocked(&p.name, None))
+                .filter(|p| Some(p.id) != me && self.chat.blocked_slot(p.id, &p.name))
                 .map(|p| p.id)
                 .collect(),
             players: lobby
@@ -1538,6 +1547,26 @@ impl Net {
         };
         self.chat.update(available, position, ready, now as f64);
         horn
+    }
+
+    /// The room code `/multiplayer/room/riders` should be asked about: when
+    /// the room's other riders changed, or a minute passed (research/
+    /// QUICK_CHAT.md "Block"). Chat rooms only.
+    pub fn room_riders_due(&mut self, now: Instant) -> Option<String> {
+        if !self.chat_available() {
+            return None;
+        }
+        let mut peers: Vec<u8> = self.session.others().map(|p| p.id).collect();
+        peers.sort_unstable();
+        if peers.is_empty()
+            || self.riders_asked.as_ref().is_some_and(|(asked, at)| {
+                *asked == peers && now.duration_since(*at).as_secs() < 60
+            })
+        {
+            return None;
+        }
+        self.riders_asked = Some((peers, now));
+        Some(self.session.code.clone())
     }
 
     /// A rider's shown name, by slot.
@@ -1668,6 +1697,7 @@ impl Net {
                 "bubbles": self.chat.view.bubbles.len(), "feed": self.chat.view.feed.len(),
                 "muted": self.chat.muted.iter().collect::<Vec<_>>(),
                 "muteAll": self.chat.mute_all, "blocked": self.chat.blocked.len(),
+                "ids": self.chat.ids.keys().collect::<Vec<_>>(),
             },
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,

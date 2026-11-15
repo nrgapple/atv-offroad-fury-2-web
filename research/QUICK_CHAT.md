@@ -62,8 +62,27 @@ positive or neutral.
 - **Mute all chat** (setting `atv-chat-mute-all`): hides every rider's lines
   and emotes and keeps horns, which carry no words.
 - **Block** (setting `atv-chat-blocked`, at most 100 riders): hides the
-  rider's chat in every room. The list is keyed by the verified player id
-  when slice D provides one, otherwise by the shown name (case-folded).
+  rider's chat in every room. The list is keyed by the rider's verified id
+  when the room gives one, otherwise by the shown name (case-folded).
+- **Verified ids** (issue #666). A rider with a token asks
+  `POST /multiplayer/room/riders {token, room}` when the room's other riders
+  change and once a minute: `{riders: [{slot, id, blocked}]}` for every
+  verified rider in the room. `id` is the identity slice's per-viewer
+  reference (the same `id` the Friends lists use), not the player id, so no
+  rider learns another's id; it stays the same across rooms and renames.
+  Only a rider whose own verified socket is in the room may ask. Mute keys
+  on the slot and the id (a rider who rejoins in another slot stays muted
+  for the session); block keys on the id, so a renamed rider stays blocked
+  and another rider who takes the name is not.
+- **One block list.** Blocking a verified rider here is also the identity
+  block (`/multiplayer/friends/block`, which also ends friendship and
+  requests and stops recent-rider meetings), and unblocking unblocks there.
+  A name-only block that matches a verified rider takes on its id and is
+  sent to the server. A rider the server says this player blocked is
+  blocked here. When the Friends lists load, **the identity list wins** for
+  riders with an id (a block or unblock on the Friends page or another
+  device on the Pass Key reaches quick chat); name-only blocks of
+  unverified riders stay on the device.
   `quick_chat::is_blocked(name, pid)` (and `QuickChat::blocked` on a room's
   copy) is the API for the Free Ride hub, which declines challenges from
   blocked riders.
@@ -100,8 +119,11 @@ exhaustive check found no flagged combination in the current lists.
 
 ## Limitations
 
-- A room's rider pages key blocks by shown name until slice D gives verified
-  ids on the wire. A renamed rider is no longer blocked.
+- Riders without a token (older builds, or before their first
+  registration) are still blocked by shown name. Chat from a blocked rider
+  is hidden on the client; the server still relays it.
+- A block made in a room while its block request fails is undone at the
+  next Friends lists load (the identity list wins).
 - The horn is a synthesized two-tone sound (`atv_game::audio::synth::horn`).
   No original sample fits.
 - The rider's own bubble is not drawn over their own quad; their own events

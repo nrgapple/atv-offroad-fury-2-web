@@ -18,6 +18,10 @@ enum Purpose {
     GhostUpload(String),
     /// A board row's ghost to race.
     Ghost(GhostRace),
+    /// Friends' ghosts on a friend board (research/GHOST_CHALLENGES.md).
+    FriendList(String),
+    /// A new personal best ghost, as the rider's friend ghost.
+    FriendUpload,
 }
 
 /// Race This Ghost (`Event::GhostRace`): the row and the Lap Attack to
@@ -351,11 +355,19 @@ impl App {
             for id in &wants {
                 f.state.world_loading(id);
             }
-            wants
+            let friends = f.state.friend_wants();
+            if let Some((board, tags, _)) = &friends {
+                f.state.friend_loading(board, tags.clone());
+            }
+            (wants, friends)
         };
+        let (wants, friends) = wants;
         for id in wants {
             let path = format!("/api/boards/{id}");
             self.world_send(Purpose::Board(id), "GET", path, None);
+        }
+        if let Some((board, _, path)) = friends {
+            self.world_send(Purpose::FriendList(board), "GET", path, None);
         }
     }
 
@@ -437,6 +449,19 @@ impl App {
                 self.world_ghost_answer(race, response);
                 return;
             }
+            Purpose::FriendList(board) => {
+                let ghosts = (response.status == 200)
+                    .then(|| serde_json::from_str::<world_ghost::FriendGhosts>(&response.body).ok())
+                    .flatten()
+                    .map(|answer| answer.ghosts)
+                    .unwrap_or_default();
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    let view = f.view;
+                    f.state.friend_answer(&board, ghosts, &view);
+                }
+            }
+            Purpose::FriendUpload => return,
         }
         self.wake();
         if let Some(window) = &self.window {
@@ -506,12 +531,55 @@ impl App {
         self.medals_reload();
     }
 
-    /// The menus' copy of the medal book, after the host saved it.
+    /// The menus' copy of the medal book, after the host saved it. A
+    /// course whose personal best ghost got quicker sends it up as the
+    /// rider's friend ghost.
     pub(crate) fn medals_reload(&mut self) {
-        if let Some(front) = &self.front {
-            let settings = atv_ui::settings::Settings::load();
-            front.borrow_mut().state.medals = atv_ui::settings::load_medals(&settings);
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let settings = atv_ui::settings::Settings::load();
+        let book = atv_ui::settings::load_medals(&settings);
+        let quicker: Vec<String> = {
+            let mut f = front.borrow_mut();
+            let before = std::mem::replace(&mut f.state.medals, book);
+            f.state
+                .medals
+                .ghosts
+                .iter()
+                .filter(|(course, ms)| before.ghosts.get(*course).is_none_or(|was| *ms < was))
+                .map(|(course, _)| course.clone())
+                .collect()
+        };
+        for course in quicker {
+            self.friend_ghost_upload(&settings, &course);
         }
+    }
+
+    /// Friend ghosts (research/GHOST_CHALLENGES.md): a rider who has gone
+    /// online (holds a rider secret) stores each new personal best ghost
+    /// under their player id, so friends can race it. Nothing is sent
+    /// before that first use.
+    fn friend_ghost_upload(&mut self, settings: &atv_ui::settings::Settings, course: &str) {
+        let Some(secret) = atv_ui::cloud::rider_secret(settings) else {
+            return;
+        };
+        let Some(ghost) = settings.get(&format!("{}{course}", atv_ui::settings::PB_GHOST_PREFIX))
+        else {
+            return;
+        };
+        let profile = atv_ui::settings::load_book(settings)
+            .current_profile()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let body = serde_json::to_string(&world_ghost::FriendUpload {
+            rider: &atv_ui::cloud::rider_pid(&secret),
+            name: &board_name(&profile),
+            ghost: &ghost,
+        })
+        .unwrap_or_default();
+        let path = format!("/api/ghosts/{}/friends", world_ghost::friend_board(course));
+        self.world_send(Purpose::FriendUpload, "POST", path, Some(body));
     }
 
     /// Lap Attack against the course's personal best ghost
@@ -574,6 +642,21 @@ impl App {
     }
 }
 
+/// A world board name (`A-Z 0-9 . _ ! -` and spaces, at most 8) for a
+/// profile name.
+fn board_name(name: &str) -> String {
+    let name: String = name
+        .to_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || " ._!-".contains(*c))
+        .take(8)
+        .collect();
+    match name.trim() {
+        "" => atv_core::profile::DEFAULT_NAME.into(),
+        name => name.into(),
+    }
+}
+
 /// Why a ghost download did not start its race, for the menu.
 fn ghost_refusal(status: u16) -> &'static str {
     match status {
@@ -594,7 +677,11 @@ impl App {
         if self.world.pending.iter().any(waiting) {
             return;
         }
-        let path = world_ghost::download_path(&race.board, &race.name, race.value);
+        let path = match race.name.strip_prefix('@') {
+            // A friend's ghost, by tag.
+            Some(tag) => world_ghost::friend_download_path(&race.board, tag, race.value),
+            None => world_ghost::download_path(&race.board, &race.name, race.value),
+        };
         self.world_send(Purpose::Ghost(race), "GET", path, None);
     }
 
@@ -621,8 +708,13 @@ impl App {
             Err(message) => {
                 let mut f = front.borrow_mut();
                 if response.status == 404 {
-                    // The board changed: read it again.
-                    f.state.world.boards.remove(&race.board);
+                    // The board (or the friend's best) changed: read it
+                    // again.
+                    if race.name.starts_with('@') {
+                        f.state.world.friends.remove(&race.board);
+                    } else {
+                        f.state.world.boards.remove(&race.board);
+                    }
                 }
                 let view = f.view;
                 f.state.ghost_failed(&message, &view);
@@ -740,5 +832,12 @@ mod tests {
         assert_eq!(ghost_refusal(0), "Offline: a ghost needs the network.");
         assert_eq!(ghost_refusal(404), "This ghost is no longer on the board.");
         assert_eq!(ghost_refusal(503), "The ghost could not be loaded.");
+    }
+
+    #[test]
+    fn friend_ghosts_go_up_under_a_board_name() {
+        assert_eq!(board_name("Dusty Fox!"), "DUSTY FO");
+        assert_eq!(board_name("é@ä"), "PLAYER1");
+        assert_eq!(board_name("ace_1"), "ACE_1");
     }
 }

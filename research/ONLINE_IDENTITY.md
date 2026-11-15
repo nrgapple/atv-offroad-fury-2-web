@@ -86,7 +86,11 @@ register, add and other writes) and 503 (rider cap reached). Room claims and
 | `/multiplayer/friends/add` | `token`, `code` or `id` (a recent rider) | `state`: `sent` or `friends` |
 | `/multiplayer/friends/{accept,decline,cancel,remove,block,unblock}` | `token`, `id` | `state` |
 | `/multiplayer/league` | `token?` | `week`, `endsMs`, `riders`, `top[]` (20: `rank, name, points, level, tier, me`), `me {rank, top}` |
+| `/multiplayer/room/riders` | `token`, `room` | `riders[]` (`slot, id, blocked`) for the verified riders in a room the rider's own verified socket is in, else 404 (QUICK_CHAT.md "Verified ids") |
 
+Friend rows also carry `ghost`, the friend's ghost tag
+(GHOST_CHALLENGES.md "Friend ghosts"): a hash of their player id, given
+only to friends, under which the Worker keeps their personal best ghosts.
 `id`s are per-viewer references (12 hex digits of an HMAC of viewer and
 rider), so no list hands out a stable player id. `POST /multiplayer/freeride`
 also takes `{"room": "FREERDnn"}`: a friend's Join tries that shared room
@@ -105,6 +109,8 @@ first, then the usual lowest room with space.
   Recent, and stops them meeting you in rooms. A blocked rider's request
   answers `sent` but never arrives, and they never learn of the block. At
   most 200 blocks. `Players::blocks(a, b)` is there for quick chat (E).
+  Quick chat's Block on a verified rider is this block, and this list wins
+  over the device's quick-chat list for verified riders (QUICK_CHAT.md).
 - **Presence** is friends only. A friend is online while a verified socket is
   open or their client called the API within 90 s (the Friends page refreshes
   every 20 s). **Appear Offline** hides the dot and the room from everyone.
