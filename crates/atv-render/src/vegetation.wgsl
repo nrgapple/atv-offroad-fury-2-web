@@ -82,12 +82,12 @@ fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @lo
   var biased = vec4<f32>(8388608.0) + vec4<f32>(g.eco_ambient.xyz, alpha);
   biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
   let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
-  // The fully covered MX foliage texels use GS alpha 128. Modulation by the
-  // near mesh's alpha 64 produces exactly 64; GREATER at reference 64 would
-  // reject even those texels. Keep the distance fade, with one byte of room
-  // for a fully covered texel to survive quantization.
+  // A fully covered MX texel at GS alpha 128 modulated by near alpha 64
+  // reaches the same byte as its GREATER reference. Give this imported
+  // material a one-byte margin, while retaining ATV2's reference exactly.
+  // This is a visibility repair; native MX equivalence remains unverified.
   return finish(place(eco_position, rotation, scaled), uv, color,
-    max(m.params.x, (trunc(alpha) - m.flags.y) / 255.0));
+    select(trunc(alpha) / 255.0, (trunc(alpha) - 1.0) / 255.0, m.flags.y > 0.5));
 }
 
 // Remastered preset: near plants lean in a gusting wind, more with height.
@@ -116,7 +116,7 @@ fn vs_mesh_wind(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>
   biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
   let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
   return finish(place(eco_position, rotation, scaled) + sway(eco_position, scaled.y), uv, color,
-    max(m.params.x, (trunc(alpha) - m.flags.y) / 255.0));
+    select(trunc(alpha) / 255.0, (trunc(alpha) - 1.0) / 255.0, m.flags.y > 0.5));
 }
 
 @vertex
