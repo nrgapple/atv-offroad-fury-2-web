@@ -172,14 +172,88 @@ Two accepted deviations from the spec (epic owner, 2026-11-14):
 
 ## Private rooms (slice C)
 
-Not built here. Slice C reuses kinds 22/23 for private rooms. A private
-room's riders can be older builds, so there the capability travels in an
-optional **second HELLO data byte, bit 1 `signal::LOOP`**: the server sends
-`RoomLoop` only to sockets that said it. The codec and the server already
-accept a one- or two-byte HELLO (second byte at most `LOOP`;
-`crates/atv-net/tests/protocol.rs`, the engine's Quick Play test); no
-build sends it yet. The host keeps authority, `Vote::ready` becomes
-ready-up, the vote and `Vote::rematch` drive the host's next round, and
-seats and spectators show on the same panel. The private room's loop would
-be a host-run variant of `engine/quickplay.rs` (no records or server checks
-needed).
+Issue #634. A private room runs the same loop and panel with its host in
+charge: a **host-run** variant of `engine/quickplay.rs` (`Loop::hosted`).
+Nothing here is recovered behavior.
+
+### What a rider sees
+
+- **Lobby.** Seats with ready ticks, ping bars, a gold **HOST** tag and CPU
+  tags (only when the host fills with CPUs). Guests get **Ready**. The host
+  gets **Start**, a mode button (**Race ▸ / Hills ▸ / Treasure ▸ /
+  Stunts ▸**) and, for races, **CPUs ✓ / No CPUs**. A 10 s countdown runs
+  once every guest is ready; Start goes at once.
+- **Vote.** Three cards of the host's mode and **Random**, 12 s, early when
+  everyone voted, vote-weighted roulette as in Quick Play. The first card
+  is the room's own track when the mode has it (the original Select Track
+  choice; on a rematch, the track just played). The host's **Skip ▸** ends
+  the vote at once and the host's own card wins (Random draws one; no
+  card: the roulette spins).
+- **Countdown, round, podium.** As in Quick Play. Rematch (the default)
+  opens the next vote; **Leave** leaves the room (Pause → Leave Game's
+  path), not into a queue.
+- **Late joiners.** A rider who joins mid-round sees **Next round** and a
+  **▸ name** button: a follow camera behind a racer (26 ft back, 10 ft up,
+  eased), cycling the racers on each press. Meanwhile its own ATV is
+  parked (no input, no simulation steps) and the server relays its pose to
+  nobody (`Loop::watching`: in play and not a racer; frames, single poses
+  and arrival catch-ups alike), so racers neither draw nor collide with it.
+  This holds in Quick Play rooms too. It takes a seat at the next vote.
+- **Existing flows stay.** Pause host rows (Select Track, Play Race, the
+  games, Freestyle), invite links and room codes are unchanged. A round the
+  host starts from Pause is followed by the loop (straight to play, then
+  the podium and the vote); its host never restarts it.
+
+### Rules (`Loop::hosted`)
+
+| Rule | Value | Why |
+| --- | --- | --- |
+| Lobby | until Start, or 10 s after every guest is ready (the host's own Ready does not count; older builds are not waited for) | spec |
+| Vote | 12 s, early when every rider that follows voted; Skip ends it | spec |
+| Rounds | the host's mode only (`quickplay::mode_pool`) | spec |
+| Laps, minutes | the host's Race menu laps and Games Prep minutes | host authority |
+| CPU fill | the host's toggle: race field to 6, at most 4 CPUs, Normal | Quick Play's fill |
+| Round numbers | above every game serial the host has run | a new round never reuses a serial guests already saw |
+| Results | the host's own table (race finish times, game scores); never `verified`; no match records | host authority, no server checks |
+
+- **Driver.** Always the room's host (`Lobby.host`); a host handoff passes
+  the loop with the room, as private rooms already pass rounds.
+- **Adoption.** A host `GameState` of a loop mode in an active phase (race
+  grid to racing, game countdown or play) with a serial the loop has not
+  played moves the loop straight to play on the room's map.
+
+### Protocol (compatible)
+
+- The room claim's JSON says `"roomloop": true`; such a client adds the
+  second HELLO byte **`signal::LOOP`**. A private room gets a loop when its
+  host's socket said it, and drops it when a host that did not is
+  connected (an absent host's held slot keeps it). `RoomLoop` goes only to
+  sockets that said `LOOP`; older builds in the same room keep today's
+  flow. Without the heartbeat for 6 s a client hides the panel.
+- `RoomLoop` gains an optional 2-byte tail, **`Hosted`** (mode, flags:
+  `CPUS`); `Vote` gains an optional 4-byte tail, **`Hosting`** (mode, flags
+  `CPUS`/`START`/`SKIP`, laps 1-5, minutes 1-20), sent by the host only.
+  Quick Play packets carry neither, so they are byte for byte as before.
+  Start counts only in the lobby and Skip only for the current vote, so a
+  late resend never starts or skips the next one.
+
+### Code
+
+- `atv-net` `quickplay.rs`: `Hosted`, `Hosting`, `host_flag`, `mode_pool`.
+- `atv-server` `engine/quickplay.rs`: `Loop::hosted`, `hosted_lobby`,
+  `adopt`; `engine.rs`: `Room::private_loop`, `sync_private_loop`, the
+  `loop_on` socket flag; `http.rs`: `"roomloop"`.
+- `atv-ui` `hud/quickplay.rs`: `START`, `MODE`, `CPUS`, `SKIP`, `WATCH`.
+- `atv-app` `quick_play.rs`: host choices, `follow`; `lib.rs`: the panel
+  from `Multiplayer::private_loop`, the follow camera, Leave.
+- Browser gate: `tools/test_engine_private_loop.mjs` (multiplayer group).
+
+### Limits
+
+- Rooms still seat four humans (`RACE_RIDERS`); 8 riders needs the wider
+  `GameState` (#670 may widen it).
+- The follow camera does not recentre the fine terrain patch on the watched
+  rider, so a far-away racer is seen over coarser ground.
+- The host's laps and minutes are read from its menus each frame; changing
+  them mid-vote changes the coming round.
+- Not measured on production or physical phones.

@@ -169,6 +169,9 @@ struct Conn {
     /// Decodes motorcycle poses ([`signal::MOTORCYCLES`]); builds without
     /// it are never sent one (they would reject the whole frame).
     motorcycles: bool,
+    /// Follows a private room's loop ([`signal::LOOP`], the second HELLO
+    /// byte): only such builds get its `RoomLoop`.
+    loop_on: bool,
     /// Takes quick chat, and its quick-chat budget.
     chat_on: bool,
     chat: atv_net::chat::Limits,
@@ -256,6 +259,9 @@ pub struct Room {
     hub: Option<hub::Hub>,
     /// A Quick Play room's server-run loop (research/QUICK_PLAY.md).
     qp: Option<quickplay::Loop>,
+    /// A private room's host-run loop (research/QUICK_PLAY.md "Private
+    /// rooms"), while its host's build follows one.
+    private_loop: Option<quickplay::Loop>,
     /// Each slot's verified player id (`?rider=` token,
     /// research/ONLINE_IDENTITY.md), for Quick Play's match records.
     pids: Vec<(u8, String)>,
@@ -301,6 +307,7 @@ impl Room {
             uncounted: Vec::new(),
             hub: new_hub(&code, public, now),
             qp: None,
+            private_loop: None,
             pids: Vec::new(),
             loop_sent_ms: 0,
             loop_dirty: false,
@@ -573,6 +580,7 @@ impl Room {
             frames: false,
             hub: false,
             motorcycles: false,
+            loop_on: false,
             chat_on: false,
             chat: Default::default(),
             last_seen_ms: now,
@@ -784,6 +792,7 @@ impl Room {
                     for other in &self.conns {
                         if other.id != id
                             && other.ready_map == map
+                            && !self.watching(other.peer)
                             && let Some(pose) = other.current_pose()
                             && self.conns[i].takes(pose)
                         {
@@ -807,6 +816,7 @@ impl Room {
                     conn.hub = self.public && flags & signal::HUB != 0;
                     conn.motorcycles = flags & signal::MOTORCYCLES != 0;
                     conn.chat_on = chat::said_chat(flags);
+                    conn.loop_on = message.data.get(1).is_some_and(|b| b & signal::LOOP != 0);
                 }
                 // Session descriptions and link reports: no links here.
             }
@@ -863,8 +873,8 @@ impl Room {
                 let race = state.game == atv_net::game_kind::RACE;
                 let game = state.game >= atv_net::game_kind::KING_OF_THE_HILLS;
                 let freestyle = state.game == atv_net::game_kind::FREESTYLE;
-                if let Some(qp) = &mut self.qp {
-                    qp.game(&state, now);
+                if let Some(l) = self.room_loop() {
+                    l.game(&state, now);
                 }
                 let packet = Packet::Game(state);
                 let Ok(bytes) = atv_net::encode(&packet) else {
@@ -911,8 +921,8 @@ impl Room {
                 self.conns[i].races = true;
                 if progress.serial != 0 && !self.public && on_map {
                     progress.peer = self.conns[i].peer;
-                    if let Some(qp) = &mut self.qp {
-                        qp.progress(progress.peer, &progress, now);
+                    if let Some(l) = self.room_loop() {
+                        l.progress(progress.peer, &progress, now);
                     }
                     let Ok(bytes) = atv_net::encode(&Packet::Progress(progress)) else {
                         return;
@@ -934,8 +944,8 @@ impl Room {
                 self.conns[i].freestyle |= freestyle;
                 if claim.serial != 0 && !self.public && on_map && host != peer {
                     claim.peer = peer;
-                    if let Some(qp) = &mut self.qp {
-                        qp.claim(peer, &claim);
+                    if let Some(l) = self.room_loop() {
+                        l.claim(peer, &claim);
                     }
                     for c in &self.conns {
                         if c.peer == host
@@ -971,8 +981,9 @@ impl Room {
             // A rider's loop choices; rooms without a loop ignore them.
             Packet::Vote(vote) if joined => {
                 let peer = self.conns[i].peer;
-                if let Some(qp) = &mut self.qp {
-                    self.loop_dirty |= qp.vote(peer, vote);
+                if let Some(l) = self.room_loop() {
+                    let changed = l.vote(peer, vote);
+                    self.loop_dirty |= changed;
                 }
             }
             Packet::Chat(message) if joined => self.chat(i, message, now, out),
@@ -1042,7 +1053,9 @@ impl Room {
     /// its current vehicle.
     fn forward(&mut self, i: usize, poses: &[Bytes], out: &mut Vec<Out>) {
         let sender = &self.conns[i];
-        if !(self.started && sender.ready_map == self.map && sender.current_pose().is_some()) {
+        if !(self.started && sender.ready_map == self.map && sender.current_pose().is_some())
+            || self.watching(sender.peer)
+        {
             return;
         }
         let alone = !self
@@ -1080,7 +1093,7 @@ impl Room {
         let senders: Vec<(u8, Pose)> = self
             .conns
             .iter()
-            .filter(|c| c.ready_map == map)
+            .filter(|c| c.ready_map == map && !self.watching(c.peer))
             .filter_map(|c| c.current_pose().map(|p| (c.peer, p.clone())))
             .collect();
         if senders.is_empty() {
@@ -1121,6 +1134,46 @@ impl Room {
         }
     }
 
+    /// The room's loop: Quick Play's, else a private room's.
+    fn room_loop(&mut self) -> Option<&mut quickplay::Loop> {
+        self.qp.as_mut().or(self.private_loop.as_mut())
+    }
+
+    /// `peer` watches the room loop's round under way: a parked spectator
+    /// whose pose nobody gets (racers would draw it and collide with it).
+    fn watching(&self, peer: u8) -> bool {
+        self.qp
+            .as_ref()
+            .or(self.private_loop.as_ref())
+            .is_some_and(|l| l.watching(peer))
+    }
+
+    /// A private room has a loop while its host's build follows one: made
+    /// when such a host is connected, dropped when a host that does not is
+    /// (an absent host's held slot keeps it).
+    fn sync_private_loop(&mut self, now: u64) {
+        if self.public || self.qp.is_some() {
+            return;
+        }
+        let host = self
+            .conns
+            .iter()
+            .find(|c| c.peer == self.host && c.player.is_some())
+            .map(|c| c.loop_on);
+        match (host, self.private_loop.is_some()) {
+            (Some(true), false) => {
+                self.private_loop = Some(quickplay::Loop::hosted(
+                    self.host,
+                    self.map,
+                    self.created_ms ^ now,
+                ));
+                self.loop_dirty = true;
+            }
+            (Some(false), true) => self.private_loop = None,
+            _ => {}
+        }
+    }
+
     /// Joined riders as the hub sees them.
     fn hub_riders(&self) -> Vec<hub::Rider> {
         self.conns
@@ -1139,7 +1192,7 @@ impl Room {
             .collect()
     }
 
-    /// Connected riders, for the Quick Play loop.
+    /// Connected riders, for the room's loop.
     fn humans(&self) -> Vec<quickplay::Human> {
         self.conns
             .iter()
@@ -1154,6 +1207,7 @@ impl Room {
                         .find(|(p, _)| *p == c.peer)
                         .map(|(_, pid)| pid.clone()),
                     can_drive: true,
+                    follows: self.qp.is_some() || c.loop_on,
                 })
             })
             .collect()
@@ -1187,18 +1241,27 @@ impl Room {
         self.map
     }
 
-    /// Steps a Quick Play room's loop: the map and driver it picks, and the
-    /// loop state for riders that follow it, on change and as a heartbeat.
+    /// Steps the room's loop: the map and driver it picks, and the loop
+    /// state for riders that follow it, on change and as a heartbeat. A
+    /// private room's host stays its host; its loop goes only to builds
+    /// that said [`signal::LOOP`].
     fn run_loop(&mut self, now: u64, out: &mut Vec<Out>) {
-        let Some(mut qp) = self.qp.take() else {
-            return;
-        };
         if self.closed {
-            self.qp = Some(qp);
             return;
         }
+        self.sync_private_loop(now);
+        let private = self.qp.is_none();
+        let taken = if private {
+            self.private_loop.take()
+        } else {
+            self.qp.take()
+        };
+        let Some(mut qp) = taken else {
+            return;
+        };
         let humans = self.humans();
         let code = String::from_utf8_lossy(&self.code).into_owned();
+        qp.set_room(self.host, self.map);
         let fx = qp.step(now, &humans, &code);
         let mut moved = false;
         if let Some(map) = fx.map.filter(|m| *m != self.map) {
@@ -1206,7 +1269,7 @@ impl Room {
             moved = true;
         }
         let driver = qp.driver();
-        if driver != atv_net::NO_PEER && driver != self.host {
+        if !private && driver != atv_net::NO_PEER && driver != self.host {
             self.host = driver;
             moved = true;
         }
@@ -1223,13 +1286,17 @@ impl Room {
                 let bytes = Bytes::from(bytes);
                 for c in &self.conns {
                     // Only new builds reach a Quick Play room: no flag.
-                    if c.player.is_some() {
+                    if c.player.is_some() && (!private || c.loop_on) {
                         out.push(Out::Send(c.id, bytes.clone()));
                     }
                 }
             }
         }
-        self.qp = Some(qp);
+        if private {
+            self.private_loop = Some(qp);
+        } else {
+            self.qp = Some(qp);
+        }
     }
 
     /// Once a second: idle sockets, expired holds, room expiry. Returns why
@@ -1366,6 +1433,7 @@ impl Room {
                 .quickplay
                 .filter(|p| atv_net::quickplay::playlist::name(*p).is_some())
                 .map(|p| quickplay::Loop::new(p, saved.created_ms ^ now)),
+            private_loop: None,
             pids: Vec::new(),
             loop_sent_ms: 0,
             loop_dirty: false,

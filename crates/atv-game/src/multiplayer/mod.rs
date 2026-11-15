@@ -149,6 +149,9 @@ pub struct Serves {
     /// `chat`: relays quick chat (research/QUICK_CHAT.md) to builds that
     /// say [`atv_net::signal::CHAT`].
     pub chat: bool,
+    /// `roomloop`: runs a private room's host-run loop (research/QUICK_PLAY.md
+    /// "Private rooms") for builds that say [`atv_net::signal::LOOP`].
+    pub roomloop: bool,
 }
 
 impl Serves {
@@ -162,6 +165,7 @@ impl Serves {
             motorcycles: claim["motorcycles"].as_bool() == Some(true),
             quickplay: claim["quickplay"].as_bool() == Some(true),
             chat: claim["chat"].as_bool() == Some(true),
+            roomloop: claim["roomloop"].as_bool() == Some(true),
         }
     }
 
@@ -404,10 +408,17 @@ impl Session {
         if serves.chat {
             flags |= atv_net::signal::CHAT;
         }
+        // The second flags byte: a private room's loop, only to a server
+        // that runs one.
+        let data = if serves.roomloop {
+            vec![flags, atv_net::signal::LOOP]
+        } else {
+            vec![flags]
+        };
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
-            data: vec![flags],
+            data,
         }))
     }
 
@@ -1703,6 +1714,7 @@ mod tests {
         motorcycles: false,
         quickplay: false,
         chat: false,
+        roomloop: false,
     };
 
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
@@ -2579,6 +2591,23 @@ mod tests {
         s.ready().unwrap();
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
         assert!(s.link_commands(10_000).is_empty());
+    }
+
+    #[test]
+    fn a_server_that_runs_private_room_loops_hears_the_second_hello_byte() {
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+        let serves = Serves {
+            frames: true,
+            roomloop: true,
+            ..Default::default()
+        };
+        let hello = atv_net::decode(&s.hello(serves, false).unwrap()).unwrap();
+        assert!(matches!(
+            hello,
+            Packet::Signal(m) if m.data == [atv_net::signal::CPU_SOUNDS | atv_net::signal::FRAMES, atv_net::signal::LOOP]
+        ));
+        assert!(Serves::from_claim(&serde_json::json!({"roomloop": true})).roomloop);
     }
 
     #[test]

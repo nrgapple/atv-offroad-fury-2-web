@@ -712,10 +712,11 @@ pub mod signal {
     /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
     /// Optional second hello flags byte (`data[1]`; the first byte's bits
-    /// are all allocated) bit, reserved for private rooms' room loop
+    /// are all allocated) bit for private rooms' room loop
     /// (research/QUICK_PLAY.md "Private rooms (slice C)"): the build follows
-    /// [`super::Packet::RoomLoop`]. Quick Play rooms need no flag (only new
-    /// builds reach them); no build sends it yet.
+    /// [`super::Packet::RoomLoop`]. Sent only to a server whose room claim
+    /// says `roomloop`. Quick Play rooms need no flag (only new builds reach
+    /// them).
     pub const LOOP: u8 = 1;
     /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
     /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
