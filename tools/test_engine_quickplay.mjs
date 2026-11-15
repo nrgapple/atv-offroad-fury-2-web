@@ -167,8 +167,14 @@ try {
   }
 
   // 6. Rematch from both: the next vote, same room.
-  await tap(one, REMATCH);
-  await tap(two, REMATCH);
+  // Each press registers on the panel at once (Rematch ✓), not only when
+  // the next vote follows: the podium also ends on its 8 s timer.
+  for (const p of [one, two]) {
+    await tap(p, REMATCH);
+    const chose = await panel(p);
+    assert.equal(chose.stay, true, `Rematch recorded: ${JSON.stringify({ phase: chose.phase, stay: chose.stay })}`);
+    assert.equal(chose.leaving, false);
+  }
   for (const p of [one, two]) {
     await until(p, loop, x => x.phase === 1 && x.setup.number === 1, 30000, 'next vote');
   }

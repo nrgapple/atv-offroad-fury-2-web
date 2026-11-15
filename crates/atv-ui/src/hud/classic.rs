@@ -362,3 +362,56 @@ pub fn course(
     }
     el
 }
+
+/// The menu sliders' track (`.atv-range` without its thumb): an 8 px bar,
+/// gold to `fill` (0-1), dark after it, `width` wide.
+pub fn meter(fill: f32, width: f32) -> El {
+    let fill = fill.clamp(0., 1.);
+    El::new(Style {
+        size: Size {
+            width: length(width),
+            height: length(8.),
+        },
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .paint(Paint {
+        radii: [4.; 4],
+        fill: Some(
+            Gradient::new(
+                90.,
+                &[
+                    (0., Color::hex("#e5d360")),
+                    (fill, Color::hex("#e5d360")),
+                    (fill, Color::hex("#080808")),
+                    (1., Color::hex("#080808")),
+                ],
+            )
+            .into(),
+        ),
+        border: [1.; 4],
+        border_color: Color::hex("#b9b9b98c"),
+        shadows: vec![BoxShadow::inset(0., 1., 2., Color::BLACK)],
+        ..Default::default()
+    })
+}
+
+/// Small gold capitals: a Select Track entry's kind line.
+pub fn caps(value: impl Into<String>, color: Color) -> El {
+    text(
+        value.into().to_uppercase(),
+        TextStyle::new(display(12., 700, false), color).spacing(1.44),
+        15.6,
+    )
+}
+
+/// A button the rider has chosen: the course list's white inset ring.
+pub fn chosen(mut button: El, on: bool) -> El {
+    if on {
+        button.paint = button.paint.shadow(BoxShadow {
+            spread: 3.,
+            ..BoxShadow::inset(0., 0., 0., Color::WHITE)
+        });
+    }
+    button
+}

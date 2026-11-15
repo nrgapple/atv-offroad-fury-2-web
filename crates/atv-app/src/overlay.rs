@@ -2541,6 +2541,9 @@ impl Overlay {
                     "levelUp": l.level_up, "tierUp": l.tier_up,
                 })),
                 "spectating": q.spectating,
+                // The podium's Rematch / Leave choice as the panel shows it.
+                "stay": q.stay,
+                "leaving": q.leaving,
                 "private": q.private,
                 "host": q.host,
                 "cpus": q.cpus,

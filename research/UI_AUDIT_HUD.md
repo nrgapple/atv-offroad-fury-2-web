@@ -51,8 +51,8 @@ These are existing port components, reused rather than restyled:
 
 ## Quick Play and private-room panel
 
-PR #672 (podium rewards) also changes `hud/quickplay.rs`, so this panel is
-restyled after that PR lands. Its audit:
+Restyled after PR #672 (podium rewards) merged, so its rewards are
+included.
 
 | Part | What deviated (before) | Classic replacement |
 | --- | --- | --- |
@@ -60,7 +60,9 @@ restyled after that PR lands. Its audit:
 | Lobby seats | `#0000008c` rounded chips, a blue `#5b8def` CPU pill, a gold HOST pill and coloured ping bars | Race Results standings rows (RIDER / PING / READY): HOST and CPU as small column-label capitals, the ping in milliseconds, a gold tick for ready, the player's row in gold and open seats dimmed |
 | Vote cards | `#000000a6` cards with invented per-mode colours | Select Track entries: the track name with the mode in small gold capitals, the votes in HUD gold and the rider's choice on the gold pill |
 | Countdown card | A big version of the vote card | The picked Select Track entry on the gold pill under the title band and timer |
-| Podium and rewards | Gold, silver and bronze blocks with rounded corners, plus green points chips | The Race Results standings: place and rider, then time or points |
+| Podium | Gold, silver and bronze blocks with rounded corners | The Race Results standings: place and rider, then the time or points |
+| Rewards (#672) | Green `+points` pills, a `#ffffff26` bar, green `+XP` and a ◆ tier | League points as a LEAGUE column (where Race Results has PROFILE POINTS); "Lv n" in HUD gold, the menu sliders' gold track as the XP bar, `+XP` in HUD silver, the tier in small gold capitals; confetti in gold and silver |
+| Rematch press | Nothing changed when pressed (the view's `stay` was unused), so the podium's 8 s timer looked like the only effect | "Rematch ✓" on the gold pill with the course list's white ring; Leave likewise. The UI state reports `stay`/`leaving`, and both loop tests check it right after the tap |
 | Rematch / Leave, Start / Mode / CPUs, Ready, Skip | `#ffffff1f` buttons with radius 8 | Race-over buttons |
 | Spectator "Next round" chip | A `#000000a6` pill | A race HUD sign in gold, with no box; Watch is a race-over button |
 | Placement on a phone | The panel at the top covered the minimap at 360 px portrait | Below the minimap when the screen is tall enough; the vote leaves out the seat table on a phone (the cards' counts show the votes) |
