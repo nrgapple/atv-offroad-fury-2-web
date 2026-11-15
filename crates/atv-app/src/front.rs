@@ -2241,6 +2241,15 @@ impl Front {
         // Keep preview diagnostics outside the large page macro so nested
         // menu hit objects stay within serde_json's default recursion limit.
         out["photoIds"] = serde_json::json!(self.art.photos.keys().collect::<Vec<_>>());
+        // Diagnostic sampling verifies the source preview is opaque before GPU upload.
+        out["mxPreviewAlpha"] = serde_json::json!(
+            self.state
+                .tracks
+                .get(self.state.track)
+                .filter(|track| track.id.starts_with("mx_"))
+                .and_then(|track| self.art.photos.get(&track.id))
+                .map(|photo| photo.data.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0))
+        );
         out["photoTextures"] = serde_json::json!(
             self.images
                 .keys()
