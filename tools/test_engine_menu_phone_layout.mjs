@@ -207,7 +207,9 @@ try {
     assert.equal(f.vehicleSheet, true, `${name}: a tap on the vehicle opens the picker`);
     const vehicles = hit(f, LIST);
     const items = f.hits.filter(h => h.id >= VEHICLE && h.id < VEHICLE + 100 && h.y >= vehicles.y && h.y + h.height <= vehicles.y + vehicles.height);
-    assert.ok(items.length >= least, `${name}: at least ${least} whole vehicles in the picker (${items.length})`);
+    assert.ok(items.length >= 2, `${name}: two whole picture cards in the picker (${items.length})`);
+    assert.ok(Math.abs(items[0].y - items[1].y) < 1, `${name}: vehicle pictures sit side by side`);
+    assert.ok(items[0].x + items[0].width <= items[1].x + 1, `${name}: picture cards do not overlap`);
     if (shots) await page.screenshot({ path: `${shots}/${name}-garage-picker.png` });
     const pick = items.find(h => h.id !== VEHICLE + quad);
     await tap(page, pick);

@@ -170,6 +170,9 @@ pub struct Badge {
 /// Everything a page draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Screen {
+    pub vehicle_portraits: std::collections::HashMap<u16, Img>,
+    /// Local player lineup: vehicle, label, joined, ready.
+    pub lineup: Vec<(u16, String, bool, bool)>,
     /// Single Race's course picker is open (the setup rows give way to the
     /// event tabs and the full course list).
     pub course_sheet: bool,
@@ -652,6 +655,7 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.36
                 }
             }
+            "splitseats" => 0.42,
             page if stage_page(page) => portrait_stage_share(m, s),
             // The vehicle and rider rows need little room; the picker, when
             // open, takes the rest under a smaller stage.
@@ -1120,6 +1124,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         );
     }
     match s.page.as_str() {
+        "splitseats" => return panel.child(player_lineup(m, s)),
         page if stage_page(page) => {
             if let Some(logo) = panel_logo(m, s) {
                 panel = panel.child(logo);
@@ -2525,6 +2530,88 @@ fn medal_strip(m: &Metrics, (medals, badges): &([u32; 4], [u32; 5])) -> El {
     strip
 }
 
+/// Source portraits keep the lineup cheap: no extra animated model passes.
+fn vehicle_portrait(s: &Screen, id: u16, height: f32) -> El {
+    let el = El::new(Style {
+        size: Size {
+            width: percent(1.),
+            height: length(height),
+        },
+        flex_shrink: 0.,
+        ..Default::default()
+    });
+    if let Some(image) = s.vehicle_portraits.get(&id) {
+        el.content(image.content(Fit::Contain))
+    } else {
+        el.content(Content::Text {
+            text: "Preview unavailable".into(),
+            style: TextStyle::new(display(13., 700, false), Color::hex("#d2d2d2")),
+            line_height: 16.,
+            wrap: true,
+        })
+    }
+}
+
+fn player_lineup(m: &Metrics, s: &Screen) -> El {
+    let mut grid = El::new(Style {
+        display: Display::Grid,
+        grid_template_columns: vec![minmax(length(0.), fr(1.)); 2],
+        gap: Size {
+            width: px(8.),
+            height: px(8.),
+        },
+        flex_grow: 1.,
+        min_size: Size {
+            width: length(0.),
+            height: length(0.),
+        },
+        ..Default::default()
+    });
+    for (i, (id, name, joined, ready)) in s.lineup.iter().enumerate() {
+        let color = ["#a92b17", "#12668a", "#487414", "#8d7908"][i];
+        let mut style = column(4.);
+        style.padding = sides(8., 8., 8., 8.);
+        style.justify_content = JustifyContent::CENTER;
+        let mut card = El::new(style)
+            .paint(Paint::fill(Color::hex(color)).radius(5.))
+            .child(text(
+                format!(
+                    "P{} · {}",
+                    i + 1,
+                    if *ready {
+                        "READY"
+                    } else if *joined {
+                        "SELECTING"
+                    } else {
+                        "JOIN"
+                    }
+                ),
+                TextStyle::new(display(14., 700, false), Color::WHITE),
+                17.,
+            ));
+        if *joined {
+            card = card
+                .child(vehicle_portrait(
+                    s,
+                    *id,
+                    if m.portrait {
+                        (m.h * 0.09).clamp(40., 78.)
+                    } else {
+                        (m.h * 0.20).clamp(64., 180.)
+                    },
+                ))
+                .child(El::new(Style::default()).content(Content::Text {
+                    text: name.clone(),
+                    style: TextStyle::new(display(14., 700, false), Color::WHITE),
+                    line_height: 17.,
+                    wrap: true,
+                }));
+        }
+        grid = grid.child(card);
+    }
+    grid
+}
+
 fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     let selected_action = s.choices.get(s.selection).map(|(a, _)| a.as_str());
     let vehicle_selected = matches!(selected_action, Some("quadprev" | "quadnext"));
@@ -2747,6 +2834,15 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
             }),
         );
         group.style.flex_shrink = 0.;
+        let mut cards = El::new(Style {
+            display: Display::Grid,
+            grid_template_columns: vec![minmax(length(0.), fr(1.)); 2],
+            gap: Size {
+                width: px(8.),
+                height: px(8.),
+            },
+            ..Default::default()
+        });
         for vehicle in vehicles {
             let id = vehicle.id;
             let selected = id == s.quad_id;
@@ -2758,13 +2854,14 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
             } else if hovered {
                 paint.fill = Some(Color::hex("#ffffff14").into());
             }
-            let mut item = row(12.);
+            let mut item = column(6.);
             item.min_size.height = length(if m.short { 44. } else { 46. });
-            item.padding = sides(0., 14., 0., 14.);
+            item.padding = sides(8., 10., 10., 10.);
             item.flex_shrink = 0.;
             let mut el = El::new(item)
                 .paint(paint)
                 .id(VEHICLE + u32::from(id))
+                .child(vehicle_portrait(s, id, if m.short { 64. } else { 96. }))
                 .child(text(
                     vehicle.label.as_str(),
                     TextStyle::new(
@@ -2797,8 +2894,14 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
                     }),
                 );
             }
-            group = group.child(el);
+            if let Some(label) = el.children.get_mut(1)
+                && let Content::Text { wrap, .. } = &mut label.content
+            {
+                *wrap = true;
+            }
+            cards = cards.child(el);
         }
+        group = group.child(cards);
         list = list.child(group);
     }
     // The picker has the list; otherwise the rows and actions sit together.
@@ -4110,6 +4213,37 @@ mod tests {
                     assert!(drawn.is_some(), "{page} {w}x{h}: no wordmark");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn garage_picture_cards_are_side_by_side_and_touch_sized() {
+        let mut fonts = Fonts::new();
+        for (w, h) in [(320., 568.), (390., 844.), (844., 390.), (1280., 720.)] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                ..Default::default()
+            };
+            let mut s = screen("garage");
+            s.vehicle_sheet = true;
+            s.catalog = (1..=4)
+                .map(|id| Vehicle {
+                    id,
+                    label: "Honda 400EX Yellow".into(),
+                    motorcycle: false,
+                    class: String::new(),
+                })
+                .collect();
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+            let find = |id| hits.iter().find(|(_, i)| *i == id).unwrap().0;
+            let a = find(VEHICLE + 1);
+            let b = find(VEHICLE + 2);
+            assert!((a.y - b.y).abs() < 1., "{w}x{h}: {a:?} {b:?}");
+            assert!(a.right() <= b.x + 0.5);
+            assert!(a.w >= 44. && a.h >= 44.);
+            assert!(b.right() <= w);
         }
     }
 

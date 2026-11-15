@@ -1,0 +1,13 @@
+{
+  "id": "original-atv-artwork-and-local-player-lineup-6255db2e0a38467c9141d7810b97a1f0",
+  "timestamp": "2026-11-15T03:26:04.991961+00:00",
+  "recorded_at": "2026-11-15T03:26:04.991961+00:00",
+  "kind": "build",
+  "title": "Original ATV artwork and local player lineup",
+  "summary": "The garage picker uses the recovered QUADINFO multi_atv artwork, while local split-screen setup gains a colored, side-by-side Players lineup.",
+  "details": [
+    "The lineup draws on recovered PAGE08 MultiATVRiderSelect evidence. The original reference is an approximate composite assembled from recovered assets, not a hardware capture.",
+    "This checkpoint records the intended implementation slice; CI and focused browser verification remain pending with the implementation owner."
+  ],
+  "limitation": "Original-game visual fidelity is not established by the approximate composite reference. No screenshot or passing test result is claimed in this entry."
+}
