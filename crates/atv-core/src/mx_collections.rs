@@ -66,6 +66,7 @@ mod tests {
         matrix[12] = x;
         StaticModel {
             name: name.into(),
+            hidden: false,
             position: [x, 0., 0.],
             look: [0., 0., 1.],
             up: None,

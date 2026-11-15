@@ -460,7 +460,7 @@ impl SceneryPass {
                 atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47)
             }),
             reach,
-            hidden: Default::default(),
+            hidden: scenery.hidden_models.iter().copied().collect(),
             translations: {
                 let mut t = vec![[0.; 3]; scenery.lods.len()];
                 for draw in &scenery.draws {
