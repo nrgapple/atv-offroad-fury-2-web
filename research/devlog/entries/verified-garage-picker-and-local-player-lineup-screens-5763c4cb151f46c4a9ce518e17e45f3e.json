@@ -1,0 +1,14 @@
+{
+  "id": "verified-garage-picker-and-local-player-lineup-screens-5763c4cb151f46c4a9ce518e17e45f3e",
+  "timestamp": "2026-11-15T03:56:13.245303+00:00",
+  "recorded_at": "2026-11-15T04:05:49.644752+00:00",
+  "kind": "build",
+  "title": "Verified garage picker and local player lineup screenshots",
+  "summary": "Inspected screenshots from successful PR artifact 43673928019, code b853c1d, show the portrait ATV picker and three joined local players.",
+  "details": [
+    "Runtime PR692 merged ef75a951; verification PR696 merged 7ea36b06. Required web and desktop/Android CI passed. split_seats passed in 23.2s. Focused garage assertions passed at 390x664, 390x844, 844x330, 844x390, 820x1180 and 1280x800, including touch selection/reopen and keyboard dismissal."
+  ],
+  "limitation": "Local split ATVs only; motorcycle pictures and remote online roster previews remain unfinished. Broad phone Single Player scroll assertion reproduced identically at 135.86499px on unchanged deployed baseline fe0d904c at 390x664. Host browser checks do not establish physical-phone performance.",
+  "image": "/devlog-images/verified-garage-picker-and-local-player-lineup-screens-5763c4cb151f46c4a9ce518e17e45f3e.png",
+  "caption": "Local Players page with three joined ATV selections and an open fourth seat."
+}
