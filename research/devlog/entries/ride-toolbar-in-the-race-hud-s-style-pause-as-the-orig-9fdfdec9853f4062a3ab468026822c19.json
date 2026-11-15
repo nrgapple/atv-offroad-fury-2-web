@@ -1,0 +1,34 @@
+{
+  "id": "ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19",
+  "timestamp": "2026-11-15T03:37:33.958351+00:00",
+  "recorded_at": "2026-11-15T03:38:36.152118+00:00",
+  "kind": "build",
+  "title": "Ride toolbar in the race HUD's style; Pause as the original overlay",
+  "summary": "The ride toolbar is now bare Pause and Camera icons in the race HUD's style, and Pause and its Options pages over a ride use the original in-game overlay from Overlays.pb [Main Menu] (PR #694, issue #693).",
+  "details": [
+    "The ride toolbar is now bare Pause and Camera icons in the race HUD's overlay silver with its dark outline, gold while pressed. They have no labels or boxes, and the KEYS button is gone (H toggles the keyboard card). Each icon is still a 44px touch target.",
+    "Over a ride, Pause and its Options pages use the original in-game overlay from Overlays.pb [Main Menu]: a near-black rounded panel centred over the paused ride, the page name on a faint strip, an olive-gold capsule on the selected row, ◂▸ markers before value rows, and the outlined black navigation pill holding Back or Copy ride link / Dev log. On a landscape phone the pill sits beside the title so all seven Pause rows fit. Options from the main menu keeps the frontend page.",
+    "Verification: atv-ui unit tests (220) and focused host-Chromium browser tests pass (options layout, pause, menu transitions, settings, game settings, accessibility, ride link, HUD, touch, split facing)."
+  ],
+  "limitation": "Screenshots and tests are host Chromium, not physical phones. The port adds a light 20% veil behind the panel, which the original does not have. Rows sit further apart than the original's for 44px touch targets. test_engine_fps.mjs already fails (\"idle menu drew 2 frames\"), also on the deployed build 62c9cd5.",
+  "image": "/devlog-images/ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19.png",
+  "caption": "Phone ride: the Pause and Camera icons top-left in the race HUD's silver.",
+  "images": [
+    {
+      "path": "/devlog-images/ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19.png",
+      "caption": "Phone ride: the Pause and Camera icons top-left in the race HUD's silver."
+    },
+    {
+      "path": "/devlog-images/ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19-pause-desktop.png",
+      "caption": "Desktop (1280x720): the Pause panel over the paused ride."
+    },
+    {
+      "path": "/devlog-images/ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19-pause-phone.png",
+      "caption": "Landscape phone (844x390): Pause with Replay selected and the navigation pill beside the title."
+    },
+    {
+      "path": "/devlog-images/ride-toolbar-in-the-race-hud-s-style-pause-as-the-orig-9fdfdec9853f4062a3ab468026822c19-game-settings-phone.png",
+      "caption": "Landscape phone: the Game Settings page with the ◂▸ value markers."
+    }
+  ]
+}
