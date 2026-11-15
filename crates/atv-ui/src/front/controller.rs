@@ -118,6 +118,9 @@ pub enum Event {
         quad: u16,
         rider: u16,
         name: String,
+        /// A friend's Quick Play room to try first (Friends → Join): a
+        /// seat there, watching until its next round.
+        room: Option<String>,
     },
     /// Free Ride Lobby → Copy invite link (while joining).
     CopyInvite,
@@ -2609,6 +2612,7 @@ impl Frontend {
                     quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
                     rider: self.rider_id,
                     name,
+                    room: None,
                 });
             }
             "freeride" => {

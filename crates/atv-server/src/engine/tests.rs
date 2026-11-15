@@ -848,7 +848,7 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
         &Packet::Signal(atv_net::Signal {
             peer,
             kind: signal::HELLO,
-            data: vec![signal::FRAMES, signal::LOOP],
+            data: vec![signal::FRAMES, signal::LOOP | signal::REWARDS],
         }),
     );
     assert!(closes(&out).is_empty());
@@ -895,6 +895,20 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
     assert_eq!(loops(&out, 1)[0].phase, loop_phase::VOTE);
     // Names are filtered for strangers.
     assert!(f.room.lobby().players.iter().all(|p| !p.name.is_empty()));
+    // Podium rewards go only to builds that said REWARDS.
+    let rewards = atv_net::quickplay::Rewards {
+        round: 1,
+        rewards: Vec::new(),
+    };
+    let mut out = Vec::new();
+    f.room.send_rewards(&rewards, &mut out);
+    assert!(matches!(sent(&out, 1)[..], [Packet::Rewards(_)]));
+    assert!(sent(&out, 2).is_empty());
+    // The queue's view: in a vote, a seat is still free between rounds.
+    f.room.rate(|pid| (pid == "x").then_some(5.));
+    let info = f.room.quick_info().unwrap();
+    assert!(info.open && !info.lobby);
+    assert_eq!(info.rating, None);
     // A shut-down Quick Play room comes back as one.
     let mut out = Vec::new();
     let saved = f.room.shut_down(f.now, &mut out);

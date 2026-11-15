@@ -44,8 +44,9 @@ pub struct RoomStart {
     /// Arlington Free Ride: the relay reserves a slot in a shared room.
     pub freeride: bool,
     /// Quick Play (research/QUICK_PLAY.md): a seat in a server-run room of
-    /// this playlist, never the room code `avoid` (the room just left).
-    pub quickplay: Option<(u8, Option<String>)>,
+    /// this playlist, never the room code `avoid` (the room just left),
+    /// trying a friend's room first: (playlist, avoid, friend's room).
+    pub quickplay: Option<(u8, Option<String>, Option<String>)>,
     pub name: String,
     /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
     /// riding, exercising the slot-key reconnect.
@@ -222,6 +223,11 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
         .sqrt()
 }
 
+/// A Quick Play claim waits at most this many steps of this long for the
+/// rider's registration.
+const REGISTER_WAITS: u32 = 20;
+const REGISTER_WAIT_MS: u32 = 200;
+
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
@@ -268,11 +274,24 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
     if shared && start.host {
         return Err(RESERVED_CODE.into());
     }
-    if let Some((list, avoid)) = &start.quickplay {
+    if let Some((list, avoid, room)) = &start.quickplay {
+        // The rider's registration (asked for with this ride) gives the
+        // claim and the socket its token; a socket without one plays
+        // unverified and earns no podium rewards, stats or rating. Wait for
+        // it briefly (a first-time rider or a ride opened from a link).
+        for _ in 0..REGISTER_WAITS {
+            if crate::online::token().is_some() {
+                break;
+            }
+            net::sleep(REGISTER_WAIT_MS).await;
+        }
         let url = format!("{server}/multiplayer/quickplay");
         let body = serde_json::json!({
             "playlist": atv_game::multiplayer::quickplay::playlist::name(*list).unwrap_or("race"),
             "avoid": avoid,
+            // A friend's room first (Friends → Join).
+            "room": room,
+            "token": crate::online::token(),
         });
         let (status, text) = net::post(&url, &origin, &body.to_string()).await?;
         match status {
@@ -1098,6 +1117,11 @@ impl Net {
         self.session.room_loop.as_ref().map(|(l, _)| l)
     }
 
+    /// The latest Quick Play podium rewards.
+    pub fn rewards(&self) -> Option<&atv_game::multiplayer::quickplay::Rewards> {
+        self.session.rewards.as_ref()
+    }
+
     /// The room's server runs a Quick Play loop.
     pub fn quickplay(&self) -> bool {
         self.serves.quickplay
@@ -1677,6 +1701,7 @@ impl Net {
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
             "roomLoop": self.room_loop(),
+            "rewards": self.rewards(),
             "closed": self.closed,
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),
