@@ -1,0 +1,18 @@
+{
+  "id": "ghost-challenges-medals-rival-ghost-weekly-challenge-13e7be98f95740ef89e80a9eb2285ac8",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:51.235353+00:00",
+  "kind": "build",
+  "title": "Ghost challenges: medals, Rival ghost, weekly challenge",
+  "summary": "Lap Attack now has medals, a ghost picker (Off, PB, next medal, Rival, #1) and a Weekly Challenge with a live percentile.",
+  "details": [
+    "Medals: Bronze, Silver, Gold and Author at 150, 120, 106 and 100 percent of the author time. Results reveal the medal coin with NEW; course cards and the Profile show coins.",
+    "Ghost row: PB, the next medal's ghost, Rival (the stored ghost just above you) and #1. The Worker keeps the ten best ghosts plus one per band of five ranks down to rank 40.",
+    "Weekly Challenge: one seeded track per ISO week, full race, no CPUs. The page shows time left, your best, percentile and the top ten. Badges (Top 1/10/25/50 percent, Finished) are given once a week's cuts are final.",
+    "Note: research/GHOST_CHALLENGES.md. PRs #642 (Worker side) and #657 (game side), part of #631.",
+    "Verification: 76 Worker tests, focused game unit tests, and tools/test_engine_ghost_challenges.mjs against a local Worker over SQLite. Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "No human lap was measured, so how hard the medals are for a person is untested; author times come from the game's own driver. The weekly 'no CPUs' rule is enforced by the client only. Not run against production D1. The Rival-race capture showed no visible ghost, so it is not published.",
+  "image": "/devlog-images/ghost-challenges-medals-rival-ghost-weekly-challenge-13e7be98f95740ef89e80a9eb2285ac8.png",
+  "caption": "Race results revealing a new Gold medal"
+}

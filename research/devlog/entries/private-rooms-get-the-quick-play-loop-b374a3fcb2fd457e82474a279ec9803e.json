@@ -1,0 +1,17 @@
+{
+  "id": "private-rooms-get-the-quick-play-loop-b374a3fcb2fd457e82474a279ec9803e",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:51.952070+00:00",
+  "kind": "build",
+  "title": "Private rooms get the Quick Play loop",
+  "summary": "Host/Join private rooms now have ready-up, a map vote, rematch and spectating while waiting, reusing the Quick Play panel.",
+  "details": [
+    "Lobby: ready ticks, ping bars, HOST and CPU tags. The host gets Start, Mode and CPUs; guests get Ready. The room starts 10 s after every guest is ready.",
+    "Vote: cards from the host's mode with the room's own track first, plus Random. 12 s, ends early when everyone has voted; the host's Skip picks the host's card.",
+    "Podium is the host's own table (no server checks, no match records). Late joiners get a Next round banner and a follow camera, then take a seat at the next vote. Older builds keep today's flow. PR #671, part of #631.",
+    "Verification: protocol and server unit tests; new browser gate tools/test_engine_private_loop.mjs. The PR body does not record the browser run result. Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "The host drives each round and private rounds are not checked, so they add nothing to stats or the league.",
+  "image": "/devlog-images/private-rooms-get-the-quick-play-loop-b374a3fcb2fd457e82474a279ec9803e.png",
+  "caption": "Private room lobby: guest ready tick and the 10 s auto-start timer"
+}

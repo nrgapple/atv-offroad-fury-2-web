@@ -1,0 +1,17 @@
+{
+  "id": "online-identity-friend-codes-friends-league-and-levels-74382174fc4f4c4a9aa4f8413ae5659f",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:50.892435+00:00",
+  "kind": "build",
+  "title": "Online identity: friend codes, friends, league and levels",
+  "summary": "Riders get a stable online identity with no account: a friend code, mutual friends with online status and Join, stats, a hidden skill rating, a weekly league and levels.",
+  "details": [
+    "Profile > Online shows the friend code, level bar, league badge and stats. Multiplayer > Friends has Add Code, Recent riders, requests, blocks, an online dot and Join, which drops you into the friend's Free Ride room. Appear Offline hides presence.",
+    "The rider secret is never stored on the server; the Pass Key save carries it. Weekly league tiers only climb and reset Monday 00:00 UTC. Stats, rating and league come from server-checked Quick Play match records.",
+    "Note: research/ONLINE_IDENTITY.md, including the privacy notice text. PR #645, part of #631.",
+    "Verification: 48 server unit tests, 3 socket integration tests, and tools/test_engine_online_friends.mjs (register, add by code, accept, presence and Join, phone layout). Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones. The phone layout was checked in a 390x844 browser context."
+  ],
+  "limitation": "Stats stay zero until Quick Play records matches. Join into Quick Play and a results count-up wait for wave 2. No backup of the identity state is provisioned yet (a proposal is in the note). Presence is per server process. The level bar and league badge are text glyphs, not new art.",
+  "image": "/devlog-images/online-identity-friend-codes-friends-league-and-levels-74382174fc4f4c4a9aa4f8413ae5659f.png",
+  "caption": "Online card: friend code, level, league, races/wins/podiums"
+}

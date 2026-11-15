@@ -1,0 +1,18 @@
+{
+  "id": "free-ride-hub-challenges-pop-up-events-map-rotation-7d79513c6f9e458c9912cadf3f1f9be5",
+  "timestamp": "2026-11-15T01:07:49+00:00",
+  "recorded_at": "2026-11-15T01:07:50.165188+00:00",
+  "kind": "build",
+  "title": "Free Ride hub: challenges, pop-up events, map rotation",
+  "summary": "Shared Free Ride rooms now have opt-in challenges between nearby riders, pop-up events and a rotating map, all run and judged by the game server.",
+  "details": [
+    "Challenge: a button appears within 100 ft of another rider. They get 8 s to Accept or Decline, then sprint to a waypoint on spots riders actually rode (30-60 s). 60 s cooldown per pair.",
+    "Pop-up events every 4-6 minutes with a 45 s join circle: Sprint, Hill King or Stunt-Off, top 3 score points.",
+    "Map rotation every 20-25 minutes with a 60 s vote among three of the eight venues.",
+    "Muted or blocked riders are auto-declined. Keys G / Y / N / 1-3. The menu row is now Free Ride. Hub packets go only to clients that ask for them, so older builds are unchanged. Note: research/FREERIDE_HUB.md. PR #664, part of #631.",
+    "Verification: protocol and server state-machine tests plus tools/test_engine_freeride_hub.mjs (needs a server with short hub timers). Host-only evidence: browser tests on host Chromium against a local game server. Nothing was checked on physical phones."
+  ],
+  "limitation": "Stunt-Off scores are self-reported. Hub points last only for the session. Waypoints can fall off the course in a room nobody has ridden. The ground ring is dots in the HUD layer and does not hide behind hills. The main menu row did not yet show the room's current map when the note was written. No gamepad buttons for the hub yet.",
+  "image": "/devlog-images/free-ride-hub-challenges-pop-up-events-map-rotation-7d79513c6f9e458c9912cadf3f1f9be5.png",
+  "caption": "A Sprint event open for joining, with the ground marker and a Challenge button for a nearby rider"
+}
