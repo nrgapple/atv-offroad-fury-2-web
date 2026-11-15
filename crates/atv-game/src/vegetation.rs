@@ -48,6 +48,11 @@ pub fn load(
     let Some(index) = member_named(archive, &format!("{environment}.esb")) else {
         return Ok(None);
     };
+    // MX stadium scenes author both cutoffs as zero: no ecosystem draws.
+    // Avoid feeding a zero transition width to the shared fade calculation.
+    if scene.ecosystem_distances == [0., 0.] {
+        return Ok(None);
+    }
     let bytes = archive.extract(index)?;
     let data = ecosystem::decode(&bytes)?;
     let mut materials = Materials::default();
@@ -98,7 +103,12 @@ pub fn load(
             match &billboard {
                 None => {
                     let pass = &atlas_material.passes[0];
-                    if pass.texture.is_none() || pass.shader.as_deref() != Some("EcoSystemCode2D") {
+                    if pass.texture.is_none()
+                        || !pass.shader.as_deref().is_some_and(|shader| {
+                            shader.eq_ignore_ascii_case("EcoSystemCode2D")
+                                || shader.eq_ignore_ascii_case("Vu1Ecosystem2D.vuo")
+                        })
+                    {
                         return Err(format!("Original vegetation atlas is unavailable: {stem}"));
                     }
                     billboard = Some((

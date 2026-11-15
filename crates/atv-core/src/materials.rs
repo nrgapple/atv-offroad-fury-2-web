@@ -249,6 +249,10 @@ pub fn mx_surface_source(data: &[u8]) -> Result<SurfaceSource> {
                 .strip_prefix("[TerrainZone")
                 .and_then(|s| s.strip_suffix(']'))
             {
+                // The common TOY also has a plural [TerrainZones] summary.
+                if n == "s" {
+                    continue;
+                }
                 let n = n.parse::<usize>().map_err(|_| "invalid MX terrain zone")?;
                 if !(1..=16).contains(&n) || seen[n - 1] {
                     return Err("invalid or duplicate MX terrain zone".into());
@@ -278,7 +282,7 @@ mod mx_tests {
     use super::*;
     #[test]
     fn mx_friction_remaps_only_physics_and_keeps_sixteen_slots() {
-        let source=mx_surface_source(b"[Scene]\nnot a physics assignment\n[TerrainZone9]\nMapZoneFriction=3\nIsWater=T\n[TerrainZone16]\nResetTime=5").unwrap();
+        let source=mx_surface_source(b"[Scene]\nnot a physics assignment\n[TerrainZones]\nNumberOfZones=16\n[TerrainZone9]\nMapZoneFriction=3\nIsWater=T\n[TerrainZone16]\nResetTime=5").unwrap();
         assert_eq!(source.tire_zone(8), 2);
         assert_eq!(source.tire_zone(15), 15);
         assert_eq!(SurfaceSource::Atv2.tire_zone(8), 0);

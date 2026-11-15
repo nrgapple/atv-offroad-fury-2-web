@@ -29,6 +29,7 @@ pub struct MaterialPass {
     /// unsupported reflection program (skipped by the scene builder).
     pub texture: Option<Rc<MaterialImage>>,
     pub unsupported_reflection: bool,
+    pub uv_scale: [f32; 2],
 }
 
 impl MaterialPass {
@@ -44,6 +45,7 @@ impl MaterialPass {
             scene_alpha_cutoff: 0.,
             texture: None,
             unsupported_reflection: false,
+            uv_scale: [1.; 2],
         }
     }
     pub fn fog(&self) -> bool {
@@ -84,6 +86,7 @@ pub fn member_at(resource: &Resource, path: &str) -> Option<usize> {
 #[derive(Default)]
 pub struct Materials {
     cache: HashMap<String, Rc<Material>>,
+    mx: Option<bool>,
 }
 
 impl Materials {
@@ -96,26 +99,45 @@ impl Materials {
         if let Some(material) = self.cache.get(name) {
             return Ok(material.clone());
         }
-        let material = Rc::new(load(archive, name, multi_pass)?);
+        let mx = *self.mx.get_or_insert_with(|| {
+            archive
+                .members
+                .iter()
+                .any(|m| m.name.to_ascii_lowercase().ends_with(".ps2.trn"))
+        });
+        let material = Rc::new(load(archive, name, multi_pass, mx)?);
         self.cache.insert(name.to_string(), material.clone());
         Ok(material)
     }
 }
 
-fn load(archive: &Resource, name: &str, multi_pass: bool) -> Result<Material> {
+fn load(archive: &Resource, name: &str, multi_pass: bool, mx: bool) -> Result<Material> {
     let psm = member_named(archive, &format!("{name}.psm"));
     let text = match psm {
         Some(index) => String::from_utf8_lossy(&archive.extract(index)?).into_owned(),
         None => String::new(),
     };
     // Without an authored PSM, 001bf430 -> 001b5080 binds the material's own stem.
-    let described = scenery_material::describe(&text, multi_pass, psm.is_none().then_some(name))?;
+    let described = if mx {
+        scenery_material::describe_mx(&text, multi_pass, psm.is_none().then_some(name))?
+    } else {
+        scenery_material::describe(&text, multi_pass, psm.is_none().then_some(name))?
+    };
     let mut passes: Vec<Option<MaterialPass>> = Vec::with_capacity(described.len());
     for described in described {
-        let Some(binding) = described.binding.clone() else {
+        let Some(mut binding) = described.binding.clone() else {
             passes.push(None);
             continue;
         };
+        if mx {
+            // Explicit authored spelling repairs; original PSM bytes stay intact.
+            binding = match binding.to_ascii_lowercase().as_str() {
+                "nat05_liverystable_detail.dxm" => "Nat05_liverystable_detail".into(),
+                "nat12 _genericsandstone" => "Nat12_genericsandstone".into(),
+                "nat12 _pillara" => "Nat12_pillarA".into(),
+                _ => binding,
+            };
+        }
         let mut pass = MaterialPass {
             shader: described.shader,
             reflective: described.reflective,
@@ -125,9 +147,25 @@ fn load(archive: &Resource, name: &str, multi_pass: bool) -> Result<Material> {
             scene_alpha_cutoff: described.scene_alpha_cutoff as f32,
             texture: None,
             unsupported_reflection: described.unsupported_reflection,
+            uv_scale: described.uv_scale,
             pass: described.pass,
         };
         if pass.unsupported_reflection {
+            passes.push(Some(pass));
+            continue;
+        }
+        if mx && binding.eq_ignore_ascii_case("RenderTarget") {
+            // Source-generated stadium display, not a missing disc texture.
+            // Until a live screen camera is implemented, retain its geometry
+            // with an explicit black display instead of losing the whole model.
+            pass.texture = Some(Rc::new(MaterialImage {
+                image: Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0, 0, 0, 128],
+                },
+                frames: Vec::new(),
+            }));
             passes.push(Some(pass));
             continue;
         }

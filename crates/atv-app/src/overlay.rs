@@ -772,7 +772,7 @@ impl Overlay {
                 }
                 // The room loop's panel and the Free Ride hub share hit ids
                 // 80-85; they never show together (the hub is only in
-                // shared rooms), so the panel on screen takes them.
+                // shared rooms), so the panel on screen takes them (#673).
                 if self.quickplay.is_some()
                     && (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LAST)
                         .contains(&p.button)

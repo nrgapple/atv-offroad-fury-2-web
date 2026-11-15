@@ -4,6 +4,7 @@ use atv_core::{collision, mesh, resource::Resource, texture};
 
 fn main() -> Result<(), String> {
     let mut counts = [0usize; 5];
+    let mut failures = 0;
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
         let archive = Resource::parse(&bytes)?;
@@ -41,11 +42,20 @@ fn main() -> Result<(), String> {
                 // Type-2 movable actor rays are separate from static targets.
                 continue;
             };
-            result.map_err(|e| format!("{path}: {}: {e}", member.name))?;
+            if let Err(error) = result {
+                eprintln!("{path}: {}: {error}", member.name);
+                failures += 1;
+            }
         }
     }
     if counts[0] == 0 {
         return Err("provide private MX package paths".into());
+    }
+    if failures != 0 {
+        return Err(format!(
+            "{failures} source members failed across {} packages",
+            counts[0]
+        ));
     }
     println!(
         "Validated {} packages, {} PSTs, {} ATMs, {} static COLs, {} PSGs",

@@ -11233,7 +11233,13 @@ pub fn start() {
     let direct = param("venue").or_else(|| direct_room.then(|| "env01".to_string()));
     let venue = direct
         .clone()
-        .filter(|id| atv_game::launch::environments().contains(id))
+        .filter(|id| {
+            if direct_room {
+                atv_game::launch::environments().contains(id)
+            } else {
+                atv_game::launch::course_resource(id, false).is_ok()
+            }
+        })
         .unwrap_or_else(|| "env01".into());
     run(Options {
         front: direct.is_none().then(|| FrontStart {
