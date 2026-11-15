@@ -33,6 +33,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Bundle { .. } => 19,
         Packet::Batch { .. } => 20,
         Packet::Frame { .. } => 21,
+        Packet::Hub(_) => 26,
+        Packet::Challenge(_) => 27,
         Packet::RoomLoop(_) => 22,
         Packet::Vote(_) => 23,
         Packet::Rewards(_) => 25,
@@ -250,6 +252,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.0.extend_from_slice(pose);
             }
         }
+        Packet::Hub(hub) => hub.write(&mut w.0)?,
+        Packet::Challenge(challenge) => challenge.write(&mut w.0)?,
         Packet::RoomLoop(state) => state.encode(&mut w.0)?,
         Packet::Vote(vote) => vote.encode(&mut w.0)?,
         Packet::Rewards(rewards) => rewards.encode(&mut w.0)?,
@@ -552,6 +556,8 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             Packet::Frame { poses }
         }
+        26 => Packet::Hub(Box::new(crate::Hub::read(r.take(bytes.len() - r.offset)?)?)),
+        27 => Packet::Challenge(crate::Challenge::read(r.take(bytes.len() - r.offset)?)?),
         22 => {
             let body = r.take(bytes.len() - HEADER)?;
             Packet::RoomLoop(Box::new(crate::quickplay::RoomLoop::decode(body)?))

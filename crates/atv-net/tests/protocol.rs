@@ -1186,7 +1186,6 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(20, signal::OFFER, vec![1]),
         signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![signal::CHAT * 2]),
         signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
         signal(1, signal::PACE, vec![signal::PACE_MAX + 1]),
         signal(1, signal::GONE, vec![signal::BATCHES]),
@@ -1197,7 +1196,8 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![128]),
+        // Every bit of the first flags byte is allocated since the hub took
+        // 128, so no first-byte value is refused; the second byte is bounded.
         signal(1, signal::HELLO, vec![0, signal::REWARDS * 2]),
         signal(1, signal::HELLO, vec![0, 0, 0]),
         signal(1, signal::PRESENT, vec![1, 1]),
@@ -1209,10 +1209,9 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 128;
-    assert_eq!(decode(&bytes), Err(Error::InvalidValue));
-    // Every hello flag, frames, motorcycles and chat included, is accepted.
-    bytes[10] = 127;
+    // Every hello flag, frames, motorcycles, chat and the hub included, is
+    // accepted: the flags byte is full (research/MULTIPLAYER_EXPERIENCE.md).
+    bytes[10] = 255;
     assert!(decode(&bytes).is_ok());
     let report = atv_net::LinkReport {
         timeouts: 2,
