@@ -1955,7 +1955,9 @@ impl Overlay {
             if !self.results.hidden
                 && let Some(atv_ui::paint::Item::Box(panel)) = list.items.first()
             {
-                let dy = -panel.rect.h / 2.;
+                // Centred, but never above the top safe edge (a tall page
+                // on a phone on its side).
+                let dy = (-panel.rect.h / 2.).max(view.safe[0] + 6. - panel.rect.y);
                 for item in &mut list.items {
                     offset_item(item, dy);
                 }
