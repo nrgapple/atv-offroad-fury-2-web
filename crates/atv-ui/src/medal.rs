@@ -2,7 +2,7 @@
 //! addition): a coin in the medal's colour with its initial, and a weekly
 //! badge's pill, shared by the results, the course lists and the profile.
 use crate::{
-    color::{Color, Gradient},
+    color::{Color, Fill},
     layout::{Content, El, Paint},
     paint::BoxShadow,
     text::{Font, TextStyle},
@@ -17,6 +17,34 @@ fn label(value: &str, size: f32, color: Color) -> El {
         line_height: size,
         wrap: false,
     })
+}
+
+/// The menus' glossy bullet (`front::bullet`) in `base`: a lit top left
+/// shading to a dark rim, with its short hard shadow.
+fn gloss(base: Color) -> Paint {
+    let shade = |k: f32| Color {
+        r: base.r * k,
+        g: base.g * k,
+        b: base.b * k,
+        a: base.a,
+    };
+    let light = Color {
+        r: base.r + (1. - base.r) * 0.7,
+        g: base.g + (1. - base.g) * 0.7,
+        b: base.b + (1. - base.b) * 0.7,
+        a: base.a,
+    };
+    Paint::fill(Fill::radial_at(
+        [0.34, 0.3],
+        &[
+            (0., light),
+            (0.32, base),
+            (0.62, shade(0.75)),
+            (1., shade(0.4)),
+        ],
+    ))
+    .shadow(BoxShadow::outer(0., 1., 2., Color::BLACK))
+    .shadow(BoxShadow::inset(0., -1., 1., Color::hex("#0006")))
 }
 
 /// A medal coin `size` pixels across.
@@ -34,15 +62,7 @@ pub fn coin(medal: Medal, size: f32) -> El {
         flex_shrink: 0.,
         ..Default::default()
     })
-    .paint(
-        Paint::fill(Gradient::new(
-            160.,
-            &[(0., Color::hex("#ffffffa0")), (0.35, base), (1., base)],
-        ))
-        .radius(size / 2.)
-        .shadow(BoxShadow::inset(0., -2., 0., Color::hex("#0000004d")))
-        .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009"))),
-    )
+    .paint(gloss(base).radius(size / 2.))
     .children((size >= 12.).then(|| label(&medal.label()[..1], size * 0.52, Color::hex("#1a1300"))))
 }
 
@@ -91,11 +111,7 @@ pub fn badge(badge: Badge, size: f32) -> El {
         flex_shrink: 0.,
         ..Default::default()
     })
-    .paint(
-        Paint::fill(Color::hex(badge_color(badge)))
-            .radius(size / 2.)
-            .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009"))),
-    )
+    .paint(gloss(Color::hex(badge_color(badge))).radius(size / 2.))
     .child(label(&text, size * 0.5, Color::hex("#1a1300")))
 }
 

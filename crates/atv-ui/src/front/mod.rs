@@ -1292,6 +1292,32 @@ fn details(m: &Metrics, s: &Screen) -> El {
             line.style.border = sides(0., 0., 1., 0.);
         }
         line = line.child(wrap_text(label, label_style, 1.));
+        // A ten-step bar ("▰▰▱… 140/300", the Online card's level and
+        // tier) draws as the garage's stat meter before its numbers.
+        let lit = value.chars().take_while(|c| *c == '▰').count();
+        let unlit = value.chars().skip(lit).take_while(|c| *c == '▱').count();
+        let value = if lit + unlit == 10 {
+            line.style.align_items = AlignItems::CENTER;
+            line = line.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    size: Size {
+                        width: length(size * 7.),
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .child(meter(lit, (size * 0.5).round())),
+            );
+            value
+                .chars()
+                .skip(10)
+                .collect::<String>()
+                .trim()
+                .to_string()
+        } else {
+            value.clone()
+        };
         if !value.is_empty() {
             line = line.child(
                 El::new(Style {
@@ -1483,15 +1509,16 @@ fn hero(m: &Metrics, s: &Screen) -> El {
         style.display = Display::Flex;
         style.align_items = AlignItems::CENTER;
         style.justify_content = JustifyContent::CENTER;
-        photo = photo.child(
-            El::new(style)
-                .paint(
-                    Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                        .radius(5.),
-                )
-                .id(id)
-                .child(arrow(left, 20., Color::WHITE, false)),
-        );
+        // Small gold pills with dark arrows (the original steps courses
+        // from its gold row; nothing dark sits on its photo).
+        let mut button = El::new(style)
+            .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
+            .id(id)
+            .child(arrow(left, 20., Color::hex("#1b1500"), false));
+        if hovered {
+            button = button.child(gold_wash());
+        }
+        photo = photo.child(button);
     }
     let name_size = if m.portrait {
         24.
@@ -1646,8 +1673,14 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     El::new(hero).child(photo).child(caption)
 }
 
+/// `filter: brightness(1.08)` on a hovered gold pill: a faint white wash.
+fn gold_wash() -> El {
+    El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
+        .paint(Paint::fill(Color::hex("#ffffff12")).radius(5.))
+}
+
 /// Single Race's "All courses" button over the photo's foot: a list
-/// glyph and the label, on the arrows' dark glass.
+/// glyph and the label on a small gold pill, as the arrows.
 fn all_courses(hovered: bool) -> El {
     let bar = || {
         El::new(Style {
@@ -1658,10 +1691,10 @@ fn all_courses(hovered: bool) -> El {
             flex_shrink: 0.,
             ..Default::default()
         })
-        .paint(Paint::fill(Color::WHITE).radius(1.))
+        .paint(Paint::fill(Color::hex("#1b1500")).radius(1.))
     };
     let glyph = El::new(column(3.)).child(bar()).child(bar()).child(bar());
-    let mut style = absolute(None, None, Some(8.), Some(0.));
+    let mut style = absolute(None, None, Some(0.), Some(0.));
     style.inset.right = LengthPercentageAuto::length(0.);
     style.display = Display::Flex;
     style.justify_content = JustifyContent::CENTER;
@@ -1671,20 +1704,24 @@ fn all_courses(hovered: bool) -> El {
         width: auto(),
         height: length(32.),
     };
-    El::new(style).child(
-        El::new(pill)
-            .paint(
-                Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                    .radius(16.),
-            )
-            .id(COURSES)
-            .child(glyph)
-            .child(text(
-                "ALL COURSES",
-                TextStyle::new(display(13., 800, false), Color::WHITE).spacing(13. * 0.08),
-                16.,
-            )),
-    )
+    pill.position = Position::Relative;
+    let mut button = El::new(pill)
+        .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
+        .child(glyph)
+        .child(text(
+            "ALL COURSES",
+            TextStyle::new(display(13., 800, false), Color::hex("#0d0b00")).spacing(13. * 0.08),
+            16.,
+        ));
+    if hovered {
+        button = button.child(gold_wash());
+    }
+    // The 32px pill sits in a 48px touch target (8px clear above and below,
+    // where the pill stood before).
+    let mut target = row(0.);
+    target.min_size.height = length(48.);
+    target.padding = sides(0., 8., 0., 8.);
+    El::new(style).child(El::new(target).id(COURSES).child(button))
 }
 
 /// `.ms-pill`: Ride, Done and Press Start.
@@ -1728,11 +1765,7 @@ fn gold_button(
         size,
     ));
     if hovered {
-        // `filter: brightness(1.08)`: a faint white wash.
-        el = el.child(
-            El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
-                .paint(Paint::fill(Color::hex("#ffffff12")).radius(5.)),
-        );
+        el = el.child(gold_wash());
     }
     el
 }
@@ -1765,28 +1798,6 @@ fn left(m: &Metrics, s: &Screen) -> El {
     }
     let mut left = El::new(style);
     match s.page.as_str() {
-        "quickplay" => {
-            let mut tiles = El::new(Style {
-                display: Display::Flex,
-                flex_direction: if m.portrait {
-                    FlexDirection::Column
-                } else {
-                    FlexDirection::Row
-                },
-                gap: Size {
-                    width: length(14.),
-                    height: length(14.),
-                },
-                flex_shrink: 0.,
-                ..Default::default()
-            });
-            for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action != "back" {
-                    tiles = tiles.child(quickplay_tile(m, s, index, action, label));
-                }
-            }
-            left = left.child(tiles);
-        }
         "create-lobby" | "join-lobby" => {
             left = left.child(form(m, s));
             let mut rows = El::new(column(2.));
@@ -1810,6 +1821,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             "main"
                 | "single"
                 | "multiplayer"
+                | "quickplay"
                 | "split"
                 | "splitseats"
                 | "championship"
@@ -1847,7 +1859,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
             }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
-            rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // The rider lists keep a lane clear on the right for the Lobby's
+            // scroll rail, so the gold pill stops short of it.
+            let rail = if controller::online_page::RAIL_PAGES.contains(&page) {
+                20.
+            } else {
+                0.
+            };
+            rows.style.padding = sides(0., rail + if m.portrait { 0. } else { 8. }, 0., 0.);
             // A page with nothing but Back (the Overview and Trophies)
             // keeps Back as its row.
             let only_back = s.choices.iter().all(|(a, _)| a == "back");
@@ -2094,159 +2113,86 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
     } else {
         text_style.shadow(1., 2., 0., Color::hex("#000c"))
     };
-    let bullet = if selected {
-        // transform: scale(0) keeps its 14px slot.
-        El::new(Style {
-            size: Size {
-                width: length(14.),
-                height: length(14.),
-            },
-            flex_shrink: 0.,
-            ..Default::default()
-        })
-    } else {
-        bullet()
+    let (name, value) = row_value(s, action, label);
+    let el = el.child(bullet_slot(selected));
+    let Some((value, dim)) = value else {
+        return el.child(text(name, text_style, m.row_font * 1.1));
     };
-    let mut el = el
-        .child(bullet)
-        .child(text(label, text_style, m.row_font * 1.1));
-    if action == "freeride" {
-        el = freeride_badges(
-            m,
-            el,
-            selected,
-            s.freeride_riders,
-            s.freeride_map.as_deref(),
-        );
-    }
-    el
-}
-
-/// Quick Play's big playlist tiles (research/QUICK_PLAY.md): the label and
-/// what the playlist rotates, in two words.
-fn quickplay_tile(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) -> El {
-    let selected = s.selection == index;
-    let hint = if action == "qp-stunts" {
-        "Freestyle · Treasure"
-    } else {
-        "Races · Hills"
-    };
-    let width = if m.portrait {
-        (m.w - 48.).max(200.)
-    } else {
-        200.
-    };
-    let paint = if selected {
-        Paint::fill(crate::menu::gold_pill()).radius(12.)
-    } else {
-        Paint::fill(Color::hex("#000000a6")).radius(12.)
-    };
-    let ink = if selected { "#0d0b00" } else { "#f2f2f2" };
-    El::new(Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        justify_content: JustifyContent::CENTER,
-        align_items: AlignItems::CENTER,
-        gap: Size {
-            width: length(6.),
-            height: length(6.),
-        },
-        size: Size {
-            width: length(width),
-            height: length(if m.portrait { 112. } else { 150. }),
+    // A value row without arrows: the name, then its value standing right
+    // in the stepper's gold value face (Free Ride's map and riders, Quick
+    // Play's playlists, a friend's status). The value gives way first.
+    let name = El::new(Style {
+        flex_shrink: 0.01,
+        min_size: Size {
+            width: length(0.),
+            height: auto(),
         },
         ..Default::default()
     })
-    .id(ROW + index as u32)
-    .paint(paint)
-    .child(text(
-        label,
-        TextStyle::new(display(32., 800, true), Color::hex(ink)),
-        38.,
-    ))
-    .child(text(
-        hint,
-        TextStyle::new(display(16., 700, false), Color::hex(ink)),
-        20.,
-    ))
-}
-
-/// `.ms-new` and `.ms-live`: the NEW tag and the live rider count on the
-/// Arlington Free Ride row (static; the browser's glow/pulse animations are
-/// not drawn).
-fn freeride_badges(
-    m: &Metrics,
-    el: El,
-    selected: bool,
-    riders: Option<u32>,
-    map: Option<&str>,
-) -> El {
-    let tag_font = m.row_font * 0.5;
-    let mut tag = El::new(Style {
-        flex_shrink: 0.,
-        padding: sides(
-            tag_font * 0.22,
-            tag_font * 0.5,
-            tag_font * 0.18,
-            tag_font * 0.5,
-        ),
-        ..Default::default()
-    })
-    .paint(
-        Paint::fill(Fill::Linear(Gradient::new(
-            180.,
-            &[(0., Color::hex("#ff4a3a")), (1., Color::hex("#c4140c"))],
-        )))
-        .radius(999.)
-        .shadow(BoxShadow::inset(0., 0., 0., Color::hex("#ffd0c0aa")))
-        .shadow(BoxShadow::outer(0., 0., 12., Color::hex("#ff3a2a88"))),
+    .content(Content::Ellipsis {
+        text: name.to_string(),
+        style: text_style,
+        line_height: m.row_font * 1.1,
+    });
+    let value_size = m.row_font * 0.86;
+    let mut value_style = TextStyle::new(
+        display(value_size, 700, false),
+        Color::hex(match (selected, dim) {
+            (true, _) => "#3a2e00",
+            (false, false) => "#f1d84e",
+            (false, true) => "#a9a9a9",
+        }),
     );
-    tag = tag.child(text(
-        map.map_or_else(|| "NEW".to_string(), str::to_uppercase),
-        TextStyle::new(display(tag_font, 700, false), Color::WHITE)
-            .spacing(tag_font * 0.12)
-            .shadow(0., 1., 0., Color::hex("#6008")),
-        tag_font * 1.1,
-    ));
-    let mut el = el.child(tag);
-    if let Some(riders) = riders {
-        let live_font = m.row_font * 0.62;
-        let empty = riders == 0;
-        let (dot, color) = match (selected, empty) {
-            (true, _) => ("#1f8a0a", "#123d05"),
-            (false, true) => ("#9a9a9a", "#d8d8d8"),
-            (false, false) => ("#5df03a", "#9ff07a"),
-        };
-        let mut style = row(live_font * 0.4);
-        style.flex_shrink = 0.;
-        style.margin.left = taffy::LengthPercentageAuto::auto();
-        style.padding = sides(0., 0., 0., 10.);
-        let mut dot_el = El::new(Style {
-            size: Size {
-                width: length(live_font * 0.62),
-                height: length(live_font * 0.62),
+    if !selected {
+        value_style = value_style.shadow(1., 2., 0., Color::hex("#000c"));
+    }
+    el.child(name).child(
+        El::new(Style {
+            flex_shrink: 1.,
+            min_size: Size {
+                width: length(0.),
+                height: auto(),
             },
-            flex_shrink: 0.,
+            margin: taffy::Rect {
+                left: taffy::LengthPercentageAuto::auto(),
+                ..margins(0., 0., 0., 0.)
+            },
             ..Default::default()
         })
-        .paint(Paint::fill(Fill::Solid(Color::hex(dot))).radius(live_font));
-        if !selected && !empty {
-            dot_el = dot_el.paint(
-                Paint::fill(Fill::Solid(Color::hex(dot)))
-                    .radius(live_font)
-                    .shadow(BoxShadow::outer(0., 0., 8., Color::hex(dot))),
-            );
+        .content(Content::Ellipsis {
+            text: value,
+            style: value_style,
+            line_height: value_size * 1.1,
+        }),
+    )
+}
+
+/// A menu row's name and the value standing right of it, if any (and
+/// whether the value reads dimmed): Quick Play's playlists, Free Ride's
+/// map and riders, and the Online pages' "Name: Value" rows.
+fn row_value<'a>(s: &Screen, action: &str, label: &'a str) -> (&'a str, Option<(String, bool)>) {
+    match action {
+        "qp-race" => (label, Some(("Races · Hills".into(), false))),
+        "qp-stunts" => (label, Some(("Freestyle · Treasure".into(), false))),
+        "freeride" => {
+            let map = s.freeride_map.clone().unwrap_or_else(|| "New".to_string());
+            let value = match s.freeride_riders {
+                Some(riders) => (format!("{map} · {riders} riding"), riders == 0),
+                None => (map, false),
+            };
+            (label, Some(value))
         }
-        el = el.child(
-            El::new(style).child(dot_el).child(text(
-                format!("{riders} riding"),
-                TextStyle::new(display(live_font, 700, false), Color::hex(color))
-                    .spacing(live_font * 0.04),
-                live_font * 1.1,
-            )),
-        );
+        _ if controller::online_page::PAGES.contains(&s.page.as_str()) => {
+            match label.split_once(": ") {
+                Some((name, value)) => (
+                    name,
+                    Some((value.to_string(), value == controller::online_page::OFFLINE)),
+                ),
+                None => (label, None),
+            }
+        }
+        _ => (label, None),
     }
-    el
 }
 
 /// `.ms-fields`: the Host/Join text fields (label over a dark input box).
@@ -2254,6 +2200,9 @@ fn freeride_badges(
 /// canvas draws the value and, on desktop, the caret of the focused field.
 /// A die showing five pips (holes cut by drawing the pips the other way).
 const DICE_ICON: &str = "M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2H4a2 2 0 0 1 -2 -2V4a2 2 0 0 1 2 -2zM6 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM10 8.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM6 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3z";
+
+/// The text fields' ink (the web build's own input takes it too).
+pub const INPUT_INK: &str = "#111111";
 
 fn form(m: &Metrics, s: &Screen) -> El {
     let mut fields = El::new(column(12.));
@@ -2266,9 +2215,33 @@ fn form(m: &Metrics, s: &Screen) -> El {
         let mut field = El::new(column(6.));
         field = field.child(text(
             label.clone(),
-            TextStyle::new(display(15., 700, false), Color::hex("#eeeeee")).spacing(0.6),
+            TextStyle::new(display(15., 700, false), Color::hex("#eeeeee"))
+                .spacing(0.6)
+                .shadow(1., 2., 0., Color::hex("#000c")),
             18.,
         ));
+        // The classic stage's silver well; the field being typed in turns
+        // to the gold pill with the focused white ring (the original Lobby
+        // chat entry is an amber box on a dark rim). Dark ink on both.
+        let mut paint = if *focused {
+            let mut paint = pill_shadows(Paint::fill(gold_pill()).radius(5.));
+            paint.shadows.insert(
+                0,
+                BoxShadow {
+                    spread: 3.,
+                    ..BoxShadow::outer(0., 0., 0., Color::WHITE)
+                },
+            );
+            paint
+        } else {
+            Paint::fill(silver()).radius(5.).shadow(BoxShadow::outer(
+                0.,
+                2.,
+                0.,
+                Color::hex("#0009"),
+            ))
+        };
+        paint = paint.shadow(BoxShadow::inset(0., 2., 3., Color::hex("#0000004d")));
         let mut input = El::new(Style {
             display: Display::Flex,
             align_items: AlignItems::CENTER,
@@ -2280,19 +2253,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
             ..Default::default()
         })
         .id(FIELD + index as u32)
-        .paint(
-            Paint::fill(Color::hex("#0000008c"))
-                .radius(8.)
-                .shadow(BoxShadow {
-                    spread: 1.,
-                    ..BoxShadow::inset(
-                        0.,
-                        0.,
-                        0.,
-                        Color::hex(if *focused { "#e8c832" } else { "#ffffff26" }),
-                    )
-                }),
-        );
+        .paint(paint);
         // The browser's own input draws the text over this box.
         let shown = if cfg!(target_arch = "wasm32") {
             String::new()
@@ -2303,7 +2264,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
         };
         input = input.child(text(
             shown,
-            TextStyle::new(display(19., 700, false), Color::hex("#f4f4f4")).spacing(1.14),
+            TextStyle::new(display(19., 700, false), Color::hex(INPUT_INK)).spacing(1.14),
             23.,
         ));
         if label == "Rider name" && !s.typing {
@@ -2318,7 +2279,8 @@ fn form(m: &Metrics, s: &Screen) -> El {
                 ..Default::default()
             })
             .id(DICE)
-            .paint(Paint::fill(Color::hex("#0000008c")).radius(8.))
+            // A small gold pill, as Ride and Done.
+            .paint(pill_shadows(Paint::fill(gold_pill()).radius(5.)))
             .child(
                 El::new(Style {
                     size: Size {
@@ -2331,7 +2293,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
                     path: DICE_ICON.into(),
                     bounds: [0., 0., 20., 20.],
                     unit: 2.4,
-                    fill: Color::hex("#f4f4f4"),
+                    fill: Color::hex("#1b1500"),
                     stroke: None,
                     drop_shadow: None,
                 })),
@@ -2746,14 +2708,15 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         flex_shrink: 0.,
         ..Default::default()
     })
-    .paint(
-        Paint::fill(Color::hex(if rider_selected {
-            "#1b150026"
-        } else {
-            "#0000005c"
-        }))
-        .radius(5.),
-    );
+    .paint(if rider_selected {
+        Paint::fill(Color::hex("#1b150026")).radius(5.)
+    } else {
+        // A gold hairline track on the backdrop, not a dark well.
+        Paint::default().radius(5.).shadow(BoxShadow {
+            spread: 1.,
+            ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e80"))
+        })
+    });
     // Motorcycles carry the MX rider: the switch dims and shows no choice.
     let mx = s.quad_id >= 27;
     for (value, name) in [(0u16, "Male"), (1, "Female")] {
@@ -2855,8 +2818,13 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
             let hovered = s.hovered == Some(VEHICLE + u32::from(id)) && !selected;
             let mut paint = Paint::default().radius(5.);
             if selected {
-                paint.fill = Some(Color::hex("#0000006b").into());
-                paint = paint.shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")));
+                // The current vehicle: a gold edge and hairline, no dark well.
+                paint = paint
+                    .shadow(BoxShadow::inset(4., 0., 0., Color::hex("#f1d84e")))
+                    .shadow(BoxShadow {
+                        spread: 1.,
+                        ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e80"))
+                    });
             } else if hovered {
                 paint.fill = Some(Color::hex("#ffffff14").into());
             }
@@ -2956,12 +2924,15 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         let paint = if selected {
             pill_shadows(Paint::fill(gold_pill()).radius(5.))
         } else {
-            Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
-                .radius(5.)
-                .shadow(BoxShadow {
-                    spread: 2.,
-                    ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e"))
-                })
+            // The gold outline alone on the backdrop, no dark well.
+            let mut paint = Paint::default().radius(5.).shadow(BoxShadow {
+                spread: 2.,
+                ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e"))
+            });
+            if hovered {
+                paint.fill = Some(Color::hex("#ffffff14").into());
+            }
+            paint
         };
         let mut style = row(10.);
         style.justify_content = JustifyContent::CENTER;
@@ -3026,6 +2997,44 @@ fn index_of(s: &Screen, action: &str) -> u32 {
 }
 
 /// `.ms-stats`: Engine, Traction and Suspension meters, top speed and logo.
+/// The garage's ten-step stat meter, `steps` lit.
+fn meter(steps: usize, height: f32) -> El {
+    let mut track = El::new(Style {
+        display: Display::Flex,
+        flex_grow: 1.,
+        size: Size {
+            width: auto(),
+            height: length(height),
+        },
+        gap: Size {
+            width: px(2.),
+            height: px(0.),
+        },
+        ..Default::default()
+    });
+    for i in 0..10 {
+        let on = i < steps;
+        track = track.child(
+            El::new(Style {
+                flex_grow: 1.,
+                flex_basis: length(0.),
+                ..Default::default()
+            })
+            .paint(if on {
+                Paint::fill(Color::hex("#dac01f")).shadow(BoxShadow::outer(
+                    0.,
+                    1.,
+                    0.,
+                    Color::hex("#6a5600"),
+                ))
+            } else {
+                Paint::fill(Color::hex("#00000038"))
+            }),
+        );
+    }
+    track
+}
+
 fn stats_panel(m: &Metrics, stats: &Stats) -> El {
     let label_size = if m.portrait {
         13.
@@ -3059,43 +3068,7 @@ fn stats_panel(m: &Metrics, stats: &Stats) -> El {
             label_size,
         ))
     };
-    let meter = |value: f32| {
-        let steps = (value * 10.).round() as usize;
-        let mut track = El::new(Style {
-            display: Display::Flex,
-            flex_grow: 1.,
-            size: Size {
-                width: auto(),
-                height: length(meter_height),
-            },
-            gap: Size {
-                width: px(2.),
-                height: px(0.),
-            },
-            ..Default::default()
-        });
-        for i in 0..10 {
-            let on = i < steps;
-            track = track.child(
-                El::new(Style {
-                    flex_grow: 1.,
-                    flex_basis: length(0.),
-                    ..Default::default()
-                })
-                .paint(if on {
-                    Paint::fill(Color::hex("#dac01f")).shadow(BoxShadow::outer(
-                        0.,
-                        1.,
-                        0.,
-                        Color::hex("#6a5600"),
-                    ))
-                } else {
-                    Paint::fill(Color::hex("#00000038"))
-                }),
-            );
-        }
-        track
-    };
+    let meter = |value: f32| meter((value * 10.).round() as usize, meter_height);
     let mut rows = El::new(column(if m.portrait || m.short { 2. } else { 4. }));
     rows.style.flex_grow = 1.;
     for (name, value) in [

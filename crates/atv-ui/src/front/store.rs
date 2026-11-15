@@ -6,6 +6,11 @@ use super::Frontend;
 use crate::{hud::Viewport, settings::Settings};
 use atv_core::store::{self, Atv, CourseList, GAMES, GEAR_PAGES, Purchase, TRACK_PAGES};
 
+/// The garage's short notices when a locked ATV or gear gives way (the
+/// plate shows what is ridden instead).
+pub const ATV_LOCKED: &str = "ATV Locked · Unlock Items";
+pub const GEAR_LOCKED: &str = "Gear Locked · Unlock Items";
+
 /// The store pages ("store" is the Unlock Items menu).
 pub fn store_page(page: &str) -> bool {
     matches!(
@@ -394,17 +399,13 @@ impl Frontend {
     pub(super) fn enforce_unlocks(&mut self, settings: &mut Settings) -> Option<String> {
         let mut changed = None;
         if !self.quad_owned(self.quad_id) {
-            let from = self.quad_label(self.quad_id);
             self.quad_id = self.default_quad();
-            changed = Some(format!(
-                "{from} is locked: riding the {}. Unlock ATVs in Unlock Items.",
-                self.quad_label(self.quad_id)
-            ));
+            changed = Some(ATV_LOCKED.into());
         }
         for slot in 0..self.appearance.gear.len() {
             if !self.gear_choice_owned(slot, self.appearance.gear[slot]) {
                 self.appearance.gear[slot] = 0;
-                changed.get_or_insert_with(|| "Locked gear was replaced by the original.".into());
+                changed.get_or_insert_with(|| GEAR_LOCKED.into());
             }
         }
         if changed.is_some() {

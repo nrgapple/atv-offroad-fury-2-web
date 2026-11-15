@@ -443,6 +443,98 @@ impl Scroller {
         }
     }
 
+    /// The original Lobby's scroll rail (its game list, PAGEA `Lobby`) at
+    /// the right of `pane`: a gold up arrow, a gold capsule on a thin light
+    /// rail, a gold down arrow; an arrow dims at its end. With the edge
+    /// fades of [`Self::paint_edges`], in place of its chevron. Nothing
+    /// while the list fits.
+    pub fn paint_rail(&self, list: &mut crate::paint::DisplayList, pane: crate::Rect) {
+        if self.max <= 12. || pane.h < 120. {
+            return;
+        }
+        let fade = |list: &mut crate::paint::DisplayList, y: f32, down: bool| {
+            let (from, to) = (
+                crate::Color::hex("#00000000"),
+                crate::Color::hex("#00000073"),
+            );
+            let stops = if down {
+                [(0., from), (1., to)]
+            } else {
+                [(0., to), (1., from)]
+            };
+            list.push(crate::paint::Item::Box(crate::paint::BoxPaint {
+                rect: crate::Rect::new(pane.x, y, pane.w, 28.),
+                fill: Some(crate::color::Gradient::new(180., &stops).into()),
+                ..Default::default()
+            }));
+        };
+        let up = self.offset > 1.;
+        let down = self.offset < self.max - 1.;
+        if up {
+            fade(list, pane.y, false);
+        }
+        if down {
+            fade(list, pane.bottom() - 28., true);
+        }
+        let x = pane.right() - 10.;
+        let arrow = |list: &mut crate::paint::DisplayList, path: &str, y: f32, lit: bool| {
+            list.push(crate::paint::Item::Shape {
+                shape: crate::text::Shape {
+                    path: path.into(),
+                    bounds: [0., 0., 20., 20.],
+                    unit: 0.8,
+                    fill: crate::Color::hex("#f1d84e").with_alpha(if lit { 1. } else { 0.35 }),
+                    stroke: None,
+                    drop_shadow: Some(crate::text::Shadow {
+                        dx: 0.,
+                        dy: 1.,
+                        blur: 2.,
+                        color: crate::Color::hex("#000a"),
+                    }),
+                },
+                x: x - 8.,
+                y,
+                rotation: 0.,
+            });
+        };
+        arrow(list, "M3 14h14l-7-9z", pane.y + 2., up);
+        arrow(list, "M3 6h14l-7 9z", pane.bottom() - 18., down);
+        let (top, bottom) = (pane.y + 22., pane.bottom() - 22.);
+        let track = bottom - top;
+        list.push(crate::paint::Item::Box(crate::paint::BoxPaint {
+            rect: crate::Rect::new(x - 1.5, top, 3., track),
+            fill: Some(crate::Color::hex("#ffffff40").into()),
+            radii: [1.5; 4],
+            ..Default::default()
+        }));
+        let length = (track * pane.h / (pane.h + self.max)).clamp(22., track);
+        let t = (self.offset / self.max).clamp(0., 1.);
+        let thumb = top + (track - length) * t;
+        list.push(crate::paint::Item::Box(crate::paint::BoxPaint {
+            rect: crate::Rect::new(x - 4., thumb, 8., length),
+            fill: Some(
+                crate::color::Gradient::new(
+                    90.,
+                    &[
+                        (0., crate::Color::hex("#fff7b8")),
+                        (0.45, crate::Color::hex("#f6dc4a")),
+                        (0.55, crate::Color::hex("#d4ae0c")),
+                        (1., crate::Color::hex("#a88604")),
+                    ],
+                )
+                .into(),
+            ),
+            radii: [4.; 4],
+            shadows: vec![crate::paint::BoxShadow::outer(
+                0.,
+                1.,
+                0.,
+                crate::Color::hex("#0009"),
+            )],
+            ..Default::default()
+        }));
+    }
+
     /// Advances the motion to `now`. Returns true while it moves.
     pub fn tick(&mut self, now: f64) -> bool {
         let dt = self.clock.map_or(0., |c| (now - c).clamp(0., 50.)) as f32;

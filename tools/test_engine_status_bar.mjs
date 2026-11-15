@@ -121,7 +121,7 @@ try {
     await tap(page, hit(await front(page), LINK));
     await onPage(page, 'profile-view');
 
-    // Notices show as a toast under the bar, seen without scrolling, then fade.
+    // Notices show in the help box above the hint row, seen without scrolling, then fade.
     // (A wrong cheat code: "Invalid cheat!".)
     await page.goto(url('/play.html?uiDiagnostics=1&front=store-cheats'));
     await onPage(page, 'store-cheats');

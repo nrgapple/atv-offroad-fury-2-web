@@ -1532,10 +1532,15 @@ impl Front {
                 .paint_indicator(&mut self.list, r, scroll_now);
         }
         if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
-            self.state.rows.paint_edges(&mut self.list, r);
-            self.state
-                .rows
-                .paint_indicator(&mut self.list, r, scroll_now);
+            let online = atv_ui::front::controller::online_page::RAIL_PAGES;
+            if online.contains(&self.state.page.as_str()) {
+                self.state.rows.paint_rail(&mut self.list, r);
+            } else {
+                self.state.rows.paint_edges(&mut self.list, r);
+                self.state
+                    .rows
+                    .paint_indicator(&mut self.list, r, scroll_now);
+            }
         }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
