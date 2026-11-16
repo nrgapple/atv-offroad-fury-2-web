@@ -194,19 +194,24 @@ quad or motorcycle collides with.
 
 | Venue | Spots / candidates | Cells of 16 | Main rejections |
 | --- | --- | --- | --- |
-| env01 Caribou Peak | 110 / 152 | 7 | steep 23, cliff 7, boxed in 6 |
-| env02 Tioga Valley | 150 / 173 | 10 | steep 19, on a prop 3 |
-| env03 Sonora Dunes | 63 / 87 | 8 | steep 22 |
-| env04 Freeport Harbor | 144 / 182 | 9 | steep 22, on a prop 4, water 2 |
-| env05 Prospect Springs | 107 / 118 | 6 | steep 11 |
-| env06 Rockbridge Park | 102 / 124 | 9 | steep 13, boxed in 7 |
-| env07 San Jacinto Isles | 85 / 150 | 9 | steep 26, blocked 18, boxed in 8, water 5 |
-| env08 Arlington Stream | 101 / 115 | 7 | steep 7, water 4 |
+| env01 | 110 / 152 | 7 | steep 23, cliff 7, boxed in 6 |
+| env02 | 150 / 173 | 10 | steep 19, on a prop 3 |
+| env03 | 63 / 87 | 8 | steep 22 |
+| env04 | 144 / 182 | 9 | steep 22, on a prop 4, water 2 |
+| env05 | 107 / 118 | 6 | steep 11 |
+| env06 | 102 / 124 | 9 | steep 13, boxed in 7 |
+| env07 | 85 / 150 | 9 | steep 26, blocked 18, boxed in 8, water 5 |
+| env08 | 101 / 115 | 7 | steep 7, water 4 |
 
 - Browser: `tools/test_engine_freeride_spawns.mjs` (multiplayer group):
   two arrivals at different spots at least 40 ft apart, each seen by the
   other there; with `ATV_SPAWN_ROTATIONS=n` and a short
-  `FURY_HUB_ROTATION_SECS`, the same after each room move.
+  `FURY_HUB_ROTATION_SECS`, the same after each room move. Host run
+  (2026-11-16, PR build of 5edc4b30, local fury-server with
+  `FURY_HUB_ROTATION_SECS=90`, `ATV_SPAWN_ROTATIONS=2`): env06 random spots
+  1,875 ft apart, then the room moved to env05 (slot spots 389 ft apart)
+  and env02 (440 ft); each rider saw the other at its spot. Screenshots in
+  ignored `private/reports/devlog-images/freeride-spawns-710/`.
 
 ### Limits
 
