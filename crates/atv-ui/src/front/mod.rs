@@ -1365,15 +1365,23 @@ fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
     let logo = s.logo?;
     // A short portrait stage would squeeze the wordmark to a speck under
     // the status bar: the model (72px at least), the vehicle name and the
-    // panel's padding take about 137px, so it shows only when about 44px
-    // are left for it.
-    if m.portrait && stage_page(&s.page) && portrait_stage_share(m, s) * m.h < STAGE_FULL + 44. {
-        return None;
-    }
+    // panel's padding take about 137px, so it shows only when 44px are left
+    // for it after its gap.
+    // It takes only the height the rest leaves (it did not shrink below
+    // 72px, so a 202px stage pushed the name plate onto the rim).
+    let room = if m.portrait && stage_page(&s.page) {
+        let room = portrait_stage_share(m, s) * m.h - STAGE_FULL - 8.;
+        if room < 44. {
+            return None;
+        }
+        room
+    } else {
+        f32::INFINITY
+    };
     // width: min(100%, 460px) (portrait: max-width min(78%, 340px), max-height 24%).
     let (width, height) = if m.portrait {
         let width = (m.w - 2. * m.gutter) * 0.78;
-        let width = width.min(340.);
+        let width = width.min(340.).min(room * 3.);
         (length(width), length(width / 3.))
     } else {
         let w = if m.short { percent(0.7) } else { percent(1.) };
