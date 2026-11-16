@@ -80,6 +80,40 @@ async function swipe(touch, page, from, dy, steps, pick) {
   return seen;
 }
 
+/** A timed flick (synthetic touch pointer events, one move every 16 ms,
+ *  then the lift); returns the list offset right after the lift. */
+function flick(page, from, dy, steps) {
+  return page.evaluate(
+    async ({ from, dy, steps }) => {
+      const canvas = document.querySelector('canvas');
+      const fire = (type, y) => {
+        const event = new PointerEvent(type, {
+          pointerId: 9,
+          pointerType: 'touch',
+          isPrimary: true,
+          clientX: from.x,
+          clientY: y,
+          button: type === 'pointermove' ? -1 : 0,
+          buttons: type === 'pointerup' ? 0 : 1,
+          bubbles: true,
+          cancelable: true
+        });
+        if (type === 'pointermove') event.getCoalescedEvents = () => [event];
+        canvas.dispatchEvent(event);
+      };
+      fire('pointerdown', from.y);
+      for (let i = 1; i <= steps; i++) {
+        await new Promise(resolve => setTimeout(resolve, 16));
+        fire('pointermove', from.y + (dy * i) / steps);
+      }
+      fire('pointerup', from.y + dy);
+      await new Promise(requestAnimationFrame);
+      return JSON.parse(document.querySelector('#ui-state').textContent).front.kinetic.list[0];
+    },
+    { from, dy, steps }
+  );
+}
+
 /** Offsets every frame until the motion rests, with frame intervals (ms). */
 async function follow(page, path) {
   return page.evaluate(async path => {
@@ -124,15 +158,16 @@ for (const engine of ['chromium', 'webkit']) {
     const start = { x: centre(second).x, y: Math.min(list.y + list.height - 20, centre(second).y + 160) };
 
     // 1. Immediate tracking: the list follows within the first frames past the slop.
-    // Moves are paced by frames: on a loaded host (software GL at DPR 3)
-    // those come 50-200 ms apart, so a 26px step read as a slow drag and
-    // barely flung. 39px steps keep it a flick there (a phone's 60 Hz
-    // moves make either one fast).
-    const held = await swipe(touch, page, start, -390, 10, s => s.kinetic.list[0]);
+    const held = await swipe(touch, page, start, -260, 10, s => s.kinetic.list[0]);
     assert.ok(held[1] > 0, `follows the finger at once: ${held}`);
     for (let i = 1; i < held.length; i++) assert.ok(held[i] >= held[i - 1], `tracks monotonically ${held}`);
-    const released = held.at(-1);
-    // 2. Momentum: it keeps moving after release, decelerates, then rests.
+    await settled(page);
+    // 2. Momentum: a flick keeps moving after release, decelerates, then
+    // rests. The frame-paced moves above arrive 50-330 ms apart on a loaded
+    // host (software GL at DPR 3 holds each input until a frame), which
+    // reads as a slow drag that rightly barely flings. So this flick is a
+    // timed finger in the page: 26px every 16 ms, as a phone's 60 Hz moves.
+    const released = await flick(page, start, -260, 10);
     const layouts = (await read(page)).pageLayouts;
     const path = await follow(page, ['kinetic', 'list', 0]);
     const rest = path.at(-1).value;
@@ -141,7 +176,7 @@ for (const engine of ['chromium', 'webkit']) {
     assert.ok(laidOut < path.length / 2, `${engine}: ${laidOut} page layouts over ${path.length} frames of a fling`);
     assert.ok(
       rest > released + 60,
-      `${engine}: momentum after release: ${released} -> ${rest} held ${held} path ${JSON.stringify(path.slice(0, 5))}`
+      `${engine}: momentum after release: ${released} -> ${rest} path ${JSON.stringify(path.slice(0, 5))}`
     );
     assert.ok(path.length > 4 && !path.at(-1).active, 'settles');
     const intervals = path
@@ -235,12 +270,19 @@ for (const engine of ['chromium', 'webkit']) {
     assert.equal(f.selection, 0);
     const top = hit(f, 2000 + f.selection);
     assert.ok(top.y >= rows.y - 1, `selected row in view at the top (${top.y} vs ${rows.y})`);
+    // Distinct offsets seen, each with the longest frame that led to it.
     const sampling = land.evaluate(async () => {
-      const seen = new Set();
+      const seen = new Map();
       const t0 = performance.now();
+      let last = t0;
+      let previous = null;
       while (performance.now() - t0 < 2500) {
         await new Promise(requestAnimationFrame);
-        seen.add(JSON.parse(document.querySelector('#ui-state').textContent).front.kinetic.rows[0].toFixed(2));
+        const now = performance.now();
+        const value = JSON.parse(document.querySelector('#ui-state').textContent).front.kinetic.rows[0].toFixed(2);
+        if (value !== previous) seen.set(value, Math.max(seen.get(value) ?? 0, now - last));
+        previous = value;
+        last = now;
       }
       return [...seen];
     });
@@ -251,7 +293,18 @@ for (const engine of ['chromium', 'webkit']) {
     assert.equal(f.selection, f.choices.length - 1);
     const last = hit(f, 2000 + f.selection);
     assert.ok(last.y + last.height <= rows.y + rows.height + 1, `selected row in view at the bottom`);
-    assert.ok(glide.length >= 4, `keyboard reveal glides through intermediate offsets (${glide})`);
+    // A glide shows offsets between its ends (a jump shows none). Its 180 ms
+    // span is 10 frames on a phone but can be a single frame on a loaded
+    // host (software GL): then reaching the end in one step proves nothing
+    // and the frame that did it must have been at least that long (#707).
+    const offsets = glide.map(([v]) => Number(v));
+    const [from, to] = [offsets[0], f.kinetic.rows[0]];
+    const between = offsets.filter(v => v > Math.min(from, to) + 0.5 && v < Math.max(from, to) - 0.5);
+    const step = glide.find(([v]) => Math.abs(Number(v) - to) < 0.5)?.[1] ?? 0;
+    assert.ok(
+      between.length >= 1 || step >= 170,
+      `keyboard reveal glides through intermediate offsets (${JSON.stringify(glide)} to ${to})`
+    );
     await land.close();
   } finally {
     await browser.close();

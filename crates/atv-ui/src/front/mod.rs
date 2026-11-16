@@ -832,6 +832,9 @@ fn stage_share(m: &Metrics, s: &Screen, most: f32) -> f32 {
 
 /// The smallest portrait stage a long list of rows may leave (CSS px).
 const STAGE_LEAST: f32 = 124.;
+/// A portrait stage page's height with the model at its 72px minimum, the
+/// name plate, the gap and the padding (CSS px).
+const STAGE_FULL: f32 = 137.;
 
 trait Pipe: Sized {
     fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
@@ -1140,13 +1143,20 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             if let Some(logo) = panel_logo(m, s) {
                 panel = panel.child(logo);
             }
-            // `.ms-model`: flex 1, min-height 72px.
+            // `.ms-model`: flex 1, min-height 72px. A portrait stage at its
+            // 124px floor (a long list, as Single Player's ten modes) has
+            // 60px for it: at 72 the name plate overflowed onto the rim.
+            let least = if m.portrait && portrait_stage_share(m, s) * m.h < STAGE_FULL {
+                60.
+            } else {
+                72.
+            };
             let mut slot = El::new(Style {
                 flex_grow: 1.,
                 flex_basis: length(0.),
                 min_size: Size {
                     width: auto(),
-                    height: length(72.),
+                    height: length(least),
                 },
                 ..Default::default()
             })
@@ -1357,7 +1367,7 @@ fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
     // the status bar: the model (72px at least), the vehicle name and the
     // panel's padding take about 137px, so it shows only when about 44px
     // are left for it.
-    if m.portrait && stage_page(&s.page) && portrait_stage_share(m, s) * m.h < 181. {
+    if m.portrait && stage_page(&s.page) && portrait_stage_share(m, s) * m.h < STAGE_FULL + 44. {
         return None;
     }
     // width: min(100%, 460px) (portrait: max-width min(78%, 340px), max-height 24%).
