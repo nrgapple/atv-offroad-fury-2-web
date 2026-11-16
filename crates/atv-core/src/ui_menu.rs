@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 const FONT: &str = "tradegothic_boldcondensed_22s";
 const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
+/// Multiplayer slot ids run below this (`atv_net::MAX_PLAYERS`; atv-core
+/// does not depend on atv-net).
+const MAX_SLOTS: u8 = 64;
 /// The original's Warning alert 0x90 (`0025e120`) shown before Ecosystem
 /// Collision turns off, line by line.
 pub const ECOSYSTEM_WARNING: [&str; 6] = [
@@ -536,15 +539,17 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.room_code.len() > 64
         || request.player_name.len() > 32
         || request.lobby_status.len() > 256
-        // Shared Free Ride rooms hold up to 20 riders; private rooms four.
+        // The Players page lists at most 20 riders (a larger shared room
+        // sends this rider and the nearest others); slot ids go up to the
+        // protocol bound (atv_net::MAX_PLAYERS, 64).
         || request.lobby_players.len() > 20
         || request.lobby_players.iter().any(|p| {
-            p.id.parse::<u8>().map_or(true, |id| id >= 20)
+            p.id.parse::<u8>().map_or(true, |id| id >= MAX_SLOTS)
                 || p.label.len() > 64
                 || !["self", "ready", "waiting"].contains(&p.value.as_str())
         })
         || request.rider.as_ref().is_some_and(|r| {
-            r.id.parse::<u8>().map_or(true, |id| id >= 20)
+            r.id.parse::<u8>().map_or(true, |id| id >= MAX_SLOTS)
                 || r.label.len() > 64
                 || !r.value.chars().all(|c| "mbr".contains(c))
                 || r.value.len() > 3

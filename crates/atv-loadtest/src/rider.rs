@@ -2,7 +2,7 @@
 //! WebSocket, rides a loop at the game's adaptive cadence and counts what
 //! the server sends back.
 use crate::stats::Stats;
-use crate::{Args, Frames};
+use crate::{Args, Cadence, Frames};
 use atv_net::{AnimationState, Lobby, Packet, Participant, Snapshot, signal};
 use futures_util::{SinkExt, StreamExt};
 use std::time::{Duration, Instant};
@@ -14,8 +14,6 @@ use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 const PRIVATE_MAP: u16 = 1;
 /// A full pose at least this often (ms), deltas between, as the game sends.
 const FULL_MS: u64 = 2000;
-/// Riders ride near each other in groups of this many.
-const CLUSTER: usize = 6;
 
 /// splitmix64: reproducible paths without a dependency.
 struct Random(u64);
@@ -43,8 +41,9 @@ pub struct Plan {
     pub room: Option<usize>,
     /// Creates its private room and starts it.
     pub host: bool,
-    /// Rides near others (20 Hz while moving), or far apart (10 Hz).
+    /// Rides near others, or far apart.
     pub clustered: bool,
+    cadence: Cadence,
     center: [f64; 2],
     radius: f64,
     /// Feet per second while moving.
@@ -59,11 +58,12 @@ pub struct Plan {
 impl Plan {
     /// Every rider's plan. Riders `0..rooms` host the private rooms; rider
     /// `i` rides in room `i % rooms`. Clustered riders ride loops in groups
-    /// of six within about 60 ft of each other; the rest ride far apart.
+    /// of `--group` within about 60 ft of each other; the rest ride far
+    /// apart.
     pub fn all(args: &Args) -> Vec<Plan> {
         let mut random = Random(args.seed);
         let clustered = (args.riders as f64 * args.clustered).round() as usize;
-        let groups: Vec<[f64; 2]> = (0..clustered.div_ceil(CLUSTER))
+        let groups: Vec<[f64; 2]> = (0..clustered.div_ceil(args.group))
             .map(|_| [random.range(-1500., 1500.), random.range(-1500., 1500.)])
             .collect();
         (0..args.riders)
@@ -74,7 +74,7 @@ impl Plan {
                     (index * clustered) / args.riders != ((index + 1) * clustered) / args.riders;
                 let rank = ((index + 1) * clustered) / args.riders;
                 let (center, radius) = if near {
-                    let group = groups[(rank.max(1) - 1) / CLUSTER];
+                    let group = groups[(rank.max(1) - 1) / args.group];
                     (
                         [
                             group[0] + random.range(-10., 10.),
@@ -93,6 +93,7 @@ impl Plan {
                     room: (args.rooms > 0).then(|| index % args.rooms),
                     host: args.rooms > 0 && index < args.rooms,
                     clustered: near,
+                    cadence: args.cadence,
                     center,
                     radius,
                     speed: random.range(20., 45.),
@@ -126,13 +127,19 @@ impl Plan {
         (position, velocity, moving)
     }
 
-    /// The game's adaptive cadence (research/MULTIPLAYER.md): 20 Hz near
-    /// other riders, 10 Hz farther, 1 Hz at rest.
+    /// The time between poses. `Test`: 20 Hz near other riders, 10 Hz
+    /// farther, 1 Hz at rest. `Game`: the game's Free Ride intervals
+    /// (atv-game `links::freeride_interval`): near others 100 ms above
+    /// 35 ft/s, else 150 ms; 350 ms over 1,000 ft from anyone; 2 s at rest.
     fn interval_ms(&self, moving: bool) -> u64 {
-        match (moving, self.clustered) {
-            (false, _) => 1000,
-            (true, true) => 50,
-            (true, false) => 100,
+        match (self.cadence, moving, self.clustered) {
+            (Cadence::Test, false, _) => 1000,
+            (Cadence::Test, true, true) => 50,
+            (Cadence::Test, true, false) => 100,
+            (Cadence::Game, false, _) => 2000,
+            (Cadence::Game, true, true) if self.speed > 35. => 100,
+            (Cadence::Game, true, true) => 150,
+            (Cadence::Game, true, false) => 350,
         }
     }
 
@@ -562,6 +569,8 @@ mod tests {
             ramp: 0.,
             frames: Frames::Auto,
             clustered,
+            group: 6,
+            cadence: Cadence::Test,
             ping_ms: 5000,
             seed: 7,
             out: None,

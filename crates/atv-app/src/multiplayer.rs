@@ -88,6 +88,9 @@ pub struct Net {
     pub closed: Option<String>,
     /// Remote riders drawn on the latest frame.
     pub drawn: usize,
+    /// The nearest riders ([`DRAWN_RIDERS`]) on the latest frame: those
+    /// drawn, and those the pause menu lists in a room above 20.
+    nearest: Vec<u8>,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
     /// Each posed rider's slot, vehicle and rider bone count (tests).
@@ -198,6 +201,37 @@ const PRIVATE_LOOP_STALE_MS: u64 = 6_000;
 /// Distinct remote quad/rider models kept loaded: one per possible rider
 /// (web/multiplayer.js `MAX_REMOTE_MODELS`).
 const MAX_REMOTE_MODELS: usize = 20;
+
+/// Other riders drawn at once: the nearest this many. A full 20-rider room
+/// drew 19, the most measured so far (research/PERFORMANCE.md "full Free
+/// Ride room", host only); shared rooms now hold up to
+/// `atv_net::PUBLIC_CAPACITY` riders, so phones never draw more than
+/// before. The rest still have minimap dots, sounds (the nearest six
+/// engines) and contacts (research/GAME_SERVER.md "Load testing").
+pub const DRAWN_RIDERS: usize = 19;
+
+/// The `count` riders nearest `own` of `present`.
+fn nearest<T>(
+    present: &[(u8, T)],
+    own: [f32; 3],
+    at: impl Fn(&T) -> [f32; 3],
+    count: usize,
+) -> Vec<u8> {
+    let mut by_distance: Vec<(f32, u8)> = present
+        .iter()
+        .map(|(peer, pose)| {
+            let p = at(pose);
+            let d = [p[0] - own[0], p[1] - own[1], p[2] - own[2]];
+            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2], *peer)
+        })
+        .collect();
+    by_distance.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    by_distance
+        .into_iter()
+        .take(count)
+        .map(|(_, peer)| peer)
+        .collect()
+}
 
 /// Before caching another remote model: once `MAX_REMOTE_MODELS` are held,
 /// drop every model no rider in the room still uses (game.js
@@ -316,14 +350,14 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
         let url = format!("{server}/multiplayer/freeride");
-        // A friend's Join asks for their shared room first.
-        let body = start
-            .code
-            .as_deref()
-            .filter(|_| shared)
-            .map_or(String::new(), |code| {
-                serde_json::json!({ "room": code }).to_string()
-            });
+        // A friend's Join asks for their shared room first. `riders`: the
+        // slots this build takes, so the server may seat it in a room above
+        // the 20 riders older builds take (research/GAME_SERVER.md).
+        let body = serde_json::json!({
+            "room": start.code.as_deref().filter(|_| shared),
+            "riders": atv_game::multiplayer::MAX_PLAYERS,
+        })
+        .to_string();
         let (status, text) = net::post(&url, &origin, &body).await?;
         match status {
             200 => {}
@@ -477,6 +511,7 @@ impl Net {
             locals: BTreeMap::new(),
             closed: None,
             drawn: 0,
+            nearest: Vec::new(),
             presented: Vec::new(),
             posed: Vec::new(),
             riders: Vec::new(),
@@ -1301,6 +1336,7 @@ impl Net {
         if self.closed.is_some() {
             scene.retain_peers(|_, _| false);
             self.locals.clear();
+            self.nearest.clear();
             self.presented.clear();
             self.posed.clear();
             self.riders.clear();
@@ -1323,10 +1359,15 @@ impl Net {
         scene.retain_peers(|peer, key| roster.contains(&(peer, key)));
         self.locals
             .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
+        let cars = |car| ride.train_car(car);
+        let present = self.session.present(now, Some(own), &cars);
+        // Only the nearest riders are uploaded, posed and drawn.
+        let drawn = nearest(&present, own, |s| s.snapshot.atv.position, DRAWN_RIDERS);
+        self.nearest.clone_from(&drawn);
         // One new GPU upload per frame, so a full room arriving at once does
         // not stall a frame.
         let mut uploaded = false;
-        for &(peer, key) in &roster {
+        for &(peer, key) in roster.iter().filter(|(peer, _)| drawn.contains(peer)) {
             if !uploaded
                 && scene.peer_model(peer) != Some(key)
                 && let Some(Loaded::Ready(model)) = self.models.get(&key)
@@ -1351,9 +1392,8 @@ impl Net {
         self.presented.clear();
         self.posed.clear();
         self.riders.clear();
-        let cars = |car| ride.train_car(car);
         let mut forked = false;
-        for (peer, sampled) in self.session.present(now, Some(own), &cars) {
+        for (peer, sampled) in present {
             self.presented.push((
                 peer,
                 sampled.snapshot.atv.position,
@@ -1376,6 +1416,9 @@ impl Net {
                 engine: None,
                 cpu: false,
             });
+            if !drawn.contains(&peer) {
+                continue;
+            }
             // The roster lists the rider's look; the session only admits
             // snapshots whose models match it.
             let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
@@ -1435,7 +1478,11 @@ impl Net {
             status: if quickplay {
                 format!("Quick Play / {}/4 riders", lobby.players.len())
             } else if lobby.public {
-                format!("Arlington Free Ride / {}/20 riders", lobby.players.len())
+                format!(
+                    "Arlington Free Ride / {}/{} riders",
+                    lobby.players.len(),
+                    atv_game::multiplayer::PUBLIC_CAPACITY
+                )
             } else {
                 format!(
                     "{}/4 riders / {}",
@@ -1470,9 +1517,16 @@ impl Net {
                 .filter(|p| Some(p.id) != me && self.chat.blocked_slot(p.id, &p.name))
                 .map(|p| p.id)
                 .collect(),
+            // A room above 20 lists this rider and the nearest others, as
+            // many as a 20-rider room listed (the page's layout fits that).
             players: lobby
                 .players
                 .iter()
+                .filter(|p| {
+                    lobby.players.len() <= atv_game::multiplayer::LEGACY_PLAYERS
+                        || Some(p.id) == me
+                        || self.nearest.contains(&p.id)
+                })
                 .map(|p| {
                     if Some(p.id) == me {
                         (p.id, format!("{} (You)", p.name), "self")

@@ -28,11 +28,21 @@ pub use smoothing::{PoseBuffer, SENDER_JUMP_MS, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
 pub const VERSION: u8 = 6;
-/// Protocol bound on participant slots. Private rooms keep the original four
-/// riders ([`PRIVATE_CAPACITY`]); shared Arlington Free Ride rooms hold more.
-pub const MAX_PLAYERS: usize = 20;
+/// Protocol bound on participant slots (peer ids `0..MAX_PLAYERS`; peer
+/// masks are `u64`). Private rooms keep the original four riders
+/// ([`PRIVATE_CAPACITY`]); shared Free Ride rooms hold more
+/// ([`PUBLIC_CAPACITY`], research/GAME_SERVER.md "Load testing").
+pub const MAX_PLAYERS: usize = 64;
 pub const PRIVATE_CAPACITY: usize = 4;
-pub const PUBLIC_CAPACITY: usize = 20;
+/// Riders in a shared Free Ride room, chosen from load tests. A server may
+/// run lower (`FURY_FREERIDE_CAPACITY`); decoders accept up to
+/// [`MAX_PLAYERS`].
+pub const PUBLIC_CAPACITY: usize = 64;
+/// The slot bound of builds before shared rooms grew past 20 riders: they
+/// refuse any packet naming a peer id from 20 up. A build says the slots it
+/// takes in its Free Ride claim (`"riders"`); a server keeps a room that
+/// holds an older build at this many riders, all in slots below it.
+pub const LEGACY_PLAYERS: usize = 20;
 /// Shared Free Ride rooms ride Arlington Stream (`env08`) only.
 pub const PUBLIC_MAP: u16 = 8;
 /// Shared rooms are numbered from 1; a full room opens the next one.
@@ -728,8 +738,9 @@ pub mod signal {
     /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
     pub const CHAT: u8 = 64;
 }
-/// Most poses in one [`Packet::Bundle`]: every rider in a full room.
-pub const MAX_BUNDLE: usize = MAX_PLAYERS;
+/// Most poses in one [`Packet::Bundle`]: every rider in a full room of the
+/// retired relay, the only sender of bundles.
+pub const MAX_BUNDLE: usize = LEGACY_PLAYERS;
 /// Most samples in one [`Packet::Batch`].
 pub const MAX_BATCH: usize = 16;
 /// Most poses in one [`Packet::Frame`] (a frame is also bounded by

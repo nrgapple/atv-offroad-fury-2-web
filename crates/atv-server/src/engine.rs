@@ -13,11 +13,12 @@
 //! [`Entropy`] source and delivers the [`Out`] actions it returns.
 
 use atv_net::{
-    Lobby, MAX_PLAYERS, PRIVATE_CAPACITY, PUBLIC_CAPACITY, PUBLIC_MAP, Packet, Participant,
-    RoomCode, Snapshot, signal,
+    LEGACY_PLAYERS, Lobby, MAX_PLAYERS, PRIVATE_CAPACITY, PUBLIC_CAPACITY, PUBLIC_MAP, Packet,
+    Participant, RoomCode, Snapshot, signal,
 };
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 use crate::interest::{self, Pose, Sent};
 
@@ -116,6 +117,29 @@ pub struct Reserved {
     pub player: Option<Participant>,
     pub key: String,
     pub since_ms: u64,
+    /// The slots its build takes ([`Room::claim`]); rooms saved before
+    /// this field held only older builds.
+    #[serde(default = "legacy_slots")]
+    pub slots: u8,
+}
+
+fn legacy_slots() -> u8 {
+    LEGACY_PLAYERS as u8
+}
+
+static PUBLIC_ROOM_CAPACITY: OnceLock<usize> = OnceLock::new();
+
+/// Sets the riders a shared room holds (`FURY_FREERIDE_CAPACITY`), once,
+/// at start; [`PUBLIC_CAPACITY`] by default.
+pub fn configure_public_capacity(riders: usize) {
+    let _ = PUBLIC_ROOM_CAPACITY.set(riders.clamp(1, MAX_PLAYERS));
+}
+
+pub fn public_capacity() -> usize {
+    PUBLIC_ROOM_CAPACITY
+        .get()
+        .copied()
+        .unwrap_or(PUBLIC_CAPACITY)
 }
 
 /// Lowest slot that is neither connected nor held for a reconnecting rider.
@@ -145,6 +169,8 @@ struct Conn {
     id: ConnId,
     peer: u8,
     key: String,
+    /// The slots its build takes ([`Reserved::slots`]).
+    slots: u8,
     player: Option<Participant>,
     /// Map this rider has loaded. Poses go only to and from the room's map.
     ready_map: u16,
@@ -313,6 +339,7 @@ impl Room {
                 player: None,
                 key,
                 since_ms: now,
+                slots: MAX_PLAYERS as u8,
             }],
             empty_since_ms: None,
             closed: false,
@@ -329,6 +356,15 @@ impl Room {
             records: Vec::new(),
             chat_ring: Default::default(),
         }
+    }
+
+    /// The first slot's claimant takes `slots` slots (a shared room opened
+    /// by a Free Ride claim, see [`Room::claim`]).
+    pub fn claimed_by(mut self, slots: usize) -> Self {
+        for r in &mut self.reserved {
+            r.slots = slots.min(MAX_PLAYERS) as u8;
+        }
+        self
     }
 
     /// A Quick Play room of `playlist` with no host: the server runs its
@@ -434,10 +470,22 @@ impl Room {
         if self.qp.is_some() {
             atv_net::quickplay::QUICKPLAY_HUMANS
         } else if self.public {
-            PUBLIC_CAPACITY
+            public_capacity()
         } else {
             PRIVATE_CAPACITY
         }
+    }
+    /// The riders the room may hold now, and the slot ids below which they
+    /// sit: its capacity, or less while it holds a build that takes fewer
+    /// slots (an older build: [`LEGACY_PLAYERS`]), so nobody is ever sent
+    /// a peer id its build refuses.
+    fn bound(&self, slots: usize) -> usize {
+        self.conns
+            .iter()
+            .map(|c| c.slots)
+            .chain(self.reserved.iter().map(|r| r.slots))
+            .map(usize::from)
+            .fold(self.capacity().min(slots), usize::min)
     }
     /// Sockets, joined or not.
     pub fn connections(&self) -> usize {
@@ -541,13 +589,15 @@ impl Room {
         }
     }
 
-    /// Reserves a slot in a shared room for a Free Ride claimant: its key,
-    /// or None when the room is full. Unused claims expire with the hold.
-    pub fn claim(&mut self, now: u64, rng: &mut dyn Entropy) -> Option<String> {
+    /// Reserves a slot in a shared room for a Free Ride claimant whose
+    /// build takes `slots` slots (the claim's `"riders"`; older builds send
+    /// none: [`LEGACY_PLAYERS`]): its key, or None when the room is full for
+    /// it. Unused claims expire with the hold.
+    pub fn claim(&mut self, now: u64, rng: &mut dyn Entropy, slots: usize) -> Option<String> {
         if !self.public || self.closed {
             return None;
         }
-        self.reserve(now, rng)
+        self.reserve(now, rng, slots)
     }
 
     /// Reserves a seat in a Quick Play room; unless `any_phase`, only while
@@ -562,22 +612,34 @@ impl Room {
         if self.closed || !(any_phase || qp.joinable()) {
             return None;
         }
-        self.reserve(now, rng)
+        self.reserve(now, rng, MAX_PLAYERS)
     }
 
-    fn reserve(&mut self, now: u64, rng: &mut dyn Entropy) -> Option<String> {
+    /// The lowest free slot for a build taking `slots` slots, when every
+    /// rider already here sits below the room's bound with it.
+    fn open_slot(&self, slots: usize) -> Option<u8> {
+        let bound = self.bound(slots);
         let taken = self
             .conns
             .iter()
             .map(|c| c.peer)
             .chain(self.reserved.iter().map(|r| r.peer));
-        let peer = free_slot(taken, self.capacity())?;
+        if taken.clone().any(|t| usize::from(t) >= bound) {
+            return None;
+        }
+        free_slot(taken, bound)
+    }
+
+    fn reserve(&mut self, now: u64, rng: &mut dyn Entropy, slots: usize) -> Option<String> {
+        let slots = slots.min(MAX_PLAYERS);
+        let peer = self.open_slot(slots)?;
         let key = token(rng);
         self.reserved.push(Reserved {
             peer,
             player: None,
             key: key.clone(),
             since_ms: now,
+            slots: slots as u8,
         });
         self.empty_since_ms = None;
         Some(key)
@@ -607,26 +669,24 @@ impl Room {
             // old transport has not reported its close yet.
             while let Some(i) = self.conns.iter().position(|c| c.key == key) {
                 let old = self.conns.remove(i);
-                reclaimed = Some(old.peer);
+                reclaimed = Some((old.peer, old.slots));
                 out.push(Out::Close(old.id, 1000, "Connection replaced"));
             }
             if let Some(index) = self.reserved.iter().position(|r| r.key == key) {
-                reclaimed.get_or_insert(self.reserved.remove(index).peer);
+                let held = self.reserved.remove(index);
+                reclaimed.get_or_insert((held.peer, held.slots));
             }
         }
-        let peer = match reclaimed {
-            Some(peer) => peer,
-            None => {
-                let taken = self
-                    .conns
-                    .iter()
-                    .map(|c| c.peer)
-                    .chain(self.reserved.iter().map(|r| r.peer));
-                free_slot(taken, self.capacity()).ok_or(Refused {
+        let (peer, slots) = match reclaimed {
+            Some(held) => held,
+            // A socket without a claim may be an older build.
+            None => (
+                self.open_slot(LEGACY_PLAYERS).ok_or(Refused {
                     status: 409,
                     message: "Game is full!",
-                })?
-            }
+                })?,
+                LEGACY_PLAYERS as u8,
+            ),
         };
         let key = match (reclaimed, key) {
             (Some(_), Some(key)) => key.to_string(),
@@ -637,6 +697,7 @@ impl Room {
             id,
             peer,
             key,
+            slots,
             player: None,
             ready_map: 0,
             sequence: None,
@@ -751,6 +812,7 @@ impl Room {
                 player: conn.player.clone(),
                 key: conn.key.clone(),
                 since_ms: now,
+                slots: conn.slots,
             });
         } else {
             self.broadcast(&Packet::Leave { peer: conn.peer }, None, out);
@@ -1448,6 +1510,7 @@ impl Room {
                 player: c.player.clone(),
                 key: c.key.clone(),
                 since_ms: now,
+                slots: c.slots,
             })
             .collect();
         for held in &self.reserved {
@@ -1481,7 +1544,7 @@ impl Room {
         let capacity = if saved.quickplay.is_some() {
             atv_net::quickplay::QUICKPLAY_HUMANS
         } else if saved.public {
-            PUBLIC_CAPACITY
+            public_capacity()
         } else {
             PRIVATE_CAPACITY
         };

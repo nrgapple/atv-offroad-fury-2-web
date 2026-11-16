@@ -277,7 +277,7 @@ impl Usage {
             .find(|d| {
                 let riders = d.now.get("riders").copied().unwrap_or(0)
                     + d.now.get("held").copied().unwrap_or(0);
-                riders < atv_net::PUBLIC_CAPACITY as u64
+                riders < crate::engine::public_capacity() as u64
             })
             .and_then(|d| d.now.get("map").copied());
         serde_json::json!({

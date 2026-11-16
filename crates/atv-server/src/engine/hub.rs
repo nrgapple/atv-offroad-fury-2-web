@@ -120,7 +120,7 @@ fn flat(a: [f32; 3], b: [f32; 3]) -> f32 {
     (x * x + z * z).sqrt()
 }
 
-fn bit(peer: u8) -> u32 {
+fn bit(peer: u8) -> u64 {
     1 << peer
 }
 
@@ -195,7 +195,7 @@ struct Event {
     phase: u8,
     point: [f32; 3],
     target: [f32; 3],
-    joined: u32,
+    joined: u64,
     /// End of the current phase.
     until: u64,
     started: u64,
@@ -228,8 +228,8 @@ pub struct Hub {
     vote: Option<Vote>,
     next_rotation: Option<u64>,
     /// Hub riders as last announced, and riders sent the current state.
-    riders: u32,
-    greeted: u32,
+    riders: u64,
+    greeted: u64,
 }
 
 /// A step's result for the room.
@@ -949,7 +949,7 @@ impl Hub {
             return Moved::default();
         }
         // Votes of riders still here; ties and no votes pick at random.
-        let present = riders.iter().fold(0u32, |m, r| m | bit(r.peer));
+        let present = riders.iter().fold(0u64, |m, r| m | bit(r.peer));
         let counts: Vec<usize> = (0..vote.maps.len() as u8)
             .map(|i| {
                 (0..MAX_PLAYERS as u8)

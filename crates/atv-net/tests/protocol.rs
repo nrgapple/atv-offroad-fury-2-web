@@ -688,21 +688,29 @@ fn rider_appearance_roundtrips_and_rejects_out_of_range_gear() {
 }
 
 #[test]
-fn shared_free_ride_lobbies_hold_twenty_and_private_rooms_keep_four() {
+fn shared_free_ride_lobbies_hold_the_protocol_bound_and_private_rooms_keep_four() {
+    assert!(PUBLIC_CAPACITY <= MAX_PLAYERS && MAX_PLAYERS <= 64);
     let public = Lobby {
-        host: 19,
+        host: (MAX_PLAYERS - 1) as u8,
         map: PUBLIC_MAP,
         started: true,
         public: true,
-        players: (0..PUBLIC_CAPACITY as u8).map(participant).collect(),
+        players: (0..MAX_PLAYERS as u8)
+            .map(|id| Participant {
+                // The longest names: a full room still fits one packet.
+                name: "W".repeat(atv_net::MAX_NAME_BYTES),
+                ..participant(id)
+            })
+            .collect(),
         ..lobby()
     };
     let bytes = encode(&Packet::Lobby(public.clone())).unwrap();
     assert!(bytes.len() < MAX_PACKET_BYTES);
     assert_eq!(decode(&bytes).unwrap(), Packet::Lobby(public.clone()));
-    // Slot 20 does not exist, even in a shared room.
+    // Slot MAX_PLAYERS does not exist, even in a shared room.
     let mut over = public.clone();
-    over.players[19].id = 20;
+    over.players[MAX_PLAYERS - 1].id = MAX_PLAYERS as u8;
+    over.host = 0;
     assert!(encode(&Packet::Lobby(over)).is_err());
     // A private room never exceeds the original four riders.
     let private = Lobby {
@@ -1141,9 +1149,8 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
             .to_bytes(),
         }),
         Packet::Links { mask: 0 },
-        Packet::Links {
-            mask: (1 << MAX_PLAYERS) - 1,
-        },
+        // Every bit of the relay-era mask names a valid slot.
+        Packet::Links { mask: u32::MAX },
         // Pose batches: a build says it takes them, hears which riders do,
         // and follows the relay's pace.
         Packet::Signal(Signal {
@@ -1201,9 +1208,6 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::HELLO, vec![0, signal::REWARDS * 2]),
         signal(1, signal::HELLO, vec![0, 0, 0]),
         signal(1, signal::PRESENT, vec![1, 1]),
-        Packet::Links {
-            mask: 1 << MAX_PLAYERS,
-        },
     ] {
         assert_eq!(encode(&bad), Err(Error::InvalidValue));
     }
@@ -1288,7 +1292,7 @@ fn courier_bundles_carry_whole_compact_poses_only() {
         encode(&Packet::Snapshot(Box::new(s))).unwrap()
     };
     let bundle = Packet::Bundle {
-        poses: (0..MAX_PLAYERS as u8)
+        poses: (0..atv_net::MAX_BUNDLE as u8)
             .map(|p| compact(p, p as f32))
             .collect(),
     };
@@ -1298,7 +1302,7 @@ fn courier_bundles_carry_whole_compact_poses_only() {
     for bad in [
         Packet::Bundle { poses: vec![] },
         Packet::Bundle {
-            poses: vec![compact(0, 0.); MAX_PLAYERS + 1],
+            poses: vec![compact(0, 0.); atv_net::MAX_BUNDLE + 1],
         },
         // Only compact snapshots, never other packets or node poses.
         Packet::Bundle {

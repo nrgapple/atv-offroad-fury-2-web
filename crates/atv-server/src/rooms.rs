@@ -52,7 +52,9 @@ pub enum RoomMsg {
         code: u16,
         reason: String,
     },
+    /// A Free Ride slot for a build taking `slots` slots.
     Claim {
+        slots: usize,
         reply: oneshot::Sender<Option<String>>,
     },
     /// A Quick Play seat (research/QUICK_PLAY.md).
@@ -111,8 +113,8 @@ impl RoomHandle {
         })
         .await
     }
-    pub async fn claim(&self) -> Option<Option<String>> {
-        self.ask(|reply| RoomMsg::Claim { reply }).await
+    pub async fn claim(&self, slots: usize) -> Option<Option<String>> {
+        self.ask(|reply| RoomMsg::Claim { slots, reply }).await
     }
     pub async fn claim_quickplay(&self, any_phase: bool) -> Option<Option<String>> {
         self.ask(|reply| RoomMsg::QuickClaim { any_phase, reply })
@@ -351,8 +353,8 @@ async fn run(
                         outboxes.remove(&conn);
                         room.disconnected(conn, code, &reason, now, &mut out);
                     }
-                    RoomMsg::Claim { reply } => {
-                        let _ = reply.send(room.claim(now, &mut rng));
+                    RoomMsg::Claim { slots, reply } => {
+                        let _ = reply.send(room.claim(now, &mut rng, slots));
                     }
                     RoomMsg::QuickClaim { any_phase, reply } => {
                         let _ = reply.send(room.claim_quickplay(now, &mut rng, any_phase));

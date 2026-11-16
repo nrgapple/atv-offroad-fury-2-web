@@ -236,15 +236,25 @@ async fn create(
 /// Arlington Free Ride: a slot in the lowest-numbered shared room with
 /// space, so riders gather together; a full room opens the next one.
 /// `{"room": "FREERDnn"}` (a friend's Join) tries that room first.
+/// `"riders"` is the slots the build takes (`atv_net::MAX_PLAYERS`); older
+/// builds send none and get rooms kept to `atv_net::LEGACY_PLAYERS`.
 async fn claim(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
-    let wanted = (body.len() <= 512)
+    let request = (body.len() <= 512)
         .then(|| serde_json::from_slice::<serde_json::Value>(&body).ok())
-        .flatten()
+        .flatten();
+    let slots = request
+        .as_ref()
+        .and_then(|v| v.get("riders")?.as_u64())
+        .map_or(atv_net::LEGACY_PLAYERS, |n| {
+            (n as usize).clamp(atv_net::LEGACY_PLAYERS, atv_net::MAX_PLAYERS)
+        });
+    let wanted = request
+        .as_ref()
         .and_then(|v| v.get("room")?.as_str().map(str::to_string))
         .and_then(|code| atv_net::parse_room_code(&code).ok())
         .filter(atv_net::is_public_room_code)
@@ -277,14 +287,14 @@ async fn claim(
         // A live room reserves a slot; a room that ended is opened again.
         for _ in 0..2 {
             let key = match shared.registry.get(&code) {
-                Some(room) => match room.claim().await {
+                Some(room) => match room.claim(slots).await {
                     Some(Some(key)) => Some(key),
                     Some(None) => break,
                     None => continue,
                 },
                 None => {
                     let key = engine::token(&mut rng);
-                    let room = Room::new(code, key.clone(), true, now_ms());
+                    let room = Room::new(code, key.clone(), true, now_ms()).claimed_by(slots);
                     shared.registry.open(&shared, room).map(|_| key)
                 }
             };
@@ -292,6 +302,8 @@ async fn claim(
                 let mut body = features();
                 // Shared rooms run the Free Ride hub (research/FREERIDE_HUB.md).
                 body.insert("hub".into(), true.into());
+                // The riders a shared room holds (`FURY_FREERIDE_CAPACITY`).
+                body.insert("max".into(), engine::public_capacity().into());
                 body.insert("code".into(), text.into());
                 body.insert("key".into(), key.into());
                 return json(StatusCode::OK, body.into());

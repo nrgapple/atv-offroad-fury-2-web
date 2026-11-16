@@ -87,8 +87,12 @@ pub struct Hub {
     pub target: [f32; 3],
     /// The join circle's radius (ft).
     pub radius: f32,
-    /// Event: joined riders; RIDERS: hub riders.
-    pub mask: u32,
+    /// Event: joined riders; RIDERS: hub riders. Bits 0-31 travel where
+    /// they always did; bits 32-63 follow the rows only when one is set
+    /// (only rooms without older builds have those slots, see
+    /// [`crate::LEGACY_PLAYERS`]), so older builds read every packet they
+    /// can be sent.
+    pub mask: u64,
     /// SCORE: the sender's points.
     pub value: f32,
     /// Event: [`SOLO`] flags; CAST: the option; VOTE: the winning option
@@ -108,8 +112,8 @@ fn finite(values: &[f32], limit: f32) -> bool {
 
 impl Hub {
     pub fn validate(&self) -> Result<()> {
-        let peers = (1u64 << MAX_PLAYERS) - 1;
-        let mut seen = 0u32;
+        let peers = u64::MAX >> (64 - MAX_PLAYERS);
+        let mut seen = 0u64;
         let rows = self.rows.len() <= MAX_PLAYERS
             && self.rows.iter().all(|r| {
                 let fresh = valid_peer(r.peer) && seen & (1 << r.peer) == 0;
@@ -128,7 +132,7 @@ impl Hub {
             && finite(&self.target, MAX_COORDINATE)
             && self.radius.is_finite()
             && (0. ..=1000.).contains(&self.radius)
-            && u64::from(self.mask) <= peers
+            && self.mask <= peers
             && self.value.is_finite()
             && (0. ..=MAX_HUB_VALUE).contains(&self.value)
             && (self.choice < MAX_VOTE_MAPS as u8
@@ -156,7 +160,7 @@ impl Hub {
         for v in self.point.iter().chain(&self.target).chain([&self.radius]) {
             out.extend_from_slice(&v.to_le_bytes());
         }
-        out.extend_from_slice(&self.mask.to_le_bytes());
+        out.extend_from_slice(&(self.mask as u32).to_le_bytes());
         out.extend_from_slice(&self.value.to_le_bytes());
         out.push(self.choice);
         out.push(self.maps.len() as u8);
@@ -170,6 +174,10 @@ impl Hub {
             out.extend_from_slice(&row.value.to_le_bytes());
             out.extend_from_slice(&row.points.to_le_bytes());
             out.push(u8::from(row.finished));
+        }
+        let high = (self.mask >> 32) as u32;
+        if high != 0 {
+            out.extend_from_slice(&high.to_le_bytes());
         }
         Ok(())
     }
@@ -186,7 +194,7 @@ impl Hub {
             point: [r.f32()?, r.f32()?, r.f32()?],
             target: [r.f32()?, r.f32()?, r.f32()?],
             radius: r.f32()?,
-            mask: r.u32()?,
+            mask: u64::from(r.u32()?),
             value: r.f32()?,
             choice: r.byte()?,
             ..Default::default()
@@ -210,6 +218,14 @@ impl Hub {
                 points: r.u16()?,
                 finished: r.boolean()?,
             });
+        }
+        // The mask's high half, present only when not zero.
+        if r.at < r.bytes.len() {
+            let high = r.u32()?;
+            if high == 0 {
+                return Err(Error::InvalidValue);
+            }
+            hub.mask |= u64::from(high) << 32;
         }
         r.end()?;
         hub.validate()?;

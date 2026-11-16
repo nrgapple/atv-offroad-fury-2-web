@@ -1,8 +1,8 @@
 //! Free Ride hub packets (research/FREERIDE_HUB.md) round-trip at their
 //! limits and refuse forged values.
 use atv_net::{
-    Challenge, Hub, HubRow, NO_PEER, Packet, challenge_end, challenge_op, decode, encode,
-    event_kind, event_phase, hub_op, signal,
+    Challenge, Hub, HubRow, LEGACY_PLAYERS, MAX_PLAYERS, NO_PEER, Packet, challenge_end,
+    challenge_op, decode, encode, event_kind, event_phase, hub_op, signal,
 };
 
 fn full_event() -> Hub {
@@ -15,12 +15,12 @@ fn full_event() -> Hub {
         point: [10., 20., -30.],
         target: [-1000., 50., 2500.],
         radius: 40.,
-        mask: (1 << 20) - 1,
+        mask: u64::MAX >> (64 - MAX_PLAYERS),
         value: 0.,
         choice: atv_net::hub::SOLO,
         maps: Vec::new(),
         votes: Vec::new(),
-        rows: (0..20)
+        rows: (0..MAX_PLAYERS as u8)
             .map(|peer| HubRow {
                 peer,
                 value: f32::from(peer) * 1.5,
@@ -70,6 +70,33 @@ fn hub_packets_round_trip_at_their_limits() {
 }
 
 #[test]
+fn masks_within_older_builds_slots_keep_their_layout() {
+    // Builds that take 20 slots read a 32-bit mask and nothing after the
+    // rows; a server sends them only masks of those slots.
+    let riders = |mask| {
+        encode(&Packet::Hub(Box::new(Hub {
+            op: hub_op::RIDERS,
+            mask,
+            ..Default::default()
+        })))
+        .unwrap()
+    };
+    let legacy = riders((1 << LEGACY_PLAYERS) - 1);
+    assert_eq!(legacy.len(), 8 + 1 + 4 + 2 + 4 + 7 * 4 + 4 + 4 + 1 + 1 + 1);
+    let wide = riders(1 << (MAX_PLAYERS - 1) | 1);
+    assert_eq!(wide.len(), legacy.len() + 4);
+    assert!(
+        matches!(decode(&wide).unwrap(), Packet::Hub(h) if h.mask == 1 << (MAX_PLAYERS - 1) | 1)
+    );
+    // A zero high half is never sent, so it is refused.
+    let mut zero = legacy.clone();
+    zero.extend_from_slice(&[0; 4]);
+    let len = (zero.len() - 8) as u16;
+    zero[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(decode(&zero).is_err());
+}
+
+#[test]
 fn hub_packets_refuse_forged_values() {
     let bad = [
         Hub {
@@ -90,10 +117,6 @@ fn hub_packets_refuse_forged_values() {
         },
         Hub {
             target: [2.0e6, 0., 0.],
-            ..full_event()
-        },
-        Hub {
-            mask: 1 << 20,
             ..full_event()
         },
         Hub {
@@ -138,7 +161,7 @@ fn hub_packets_refuse_forged_values() {
         },
         Hub {
             rows: vec![HubRow {
-                peer: 20,
+                peer: MAX_PLAYERS as u8,
                 ..Default::default()
             }],
             ..full_event()
@@ -150,8 +173,14 @@ fn hub_packets_refuse_forged_values() {
             "{hub:?}"
         );
     }
-    // Hand-forged bytes: a truncated packet, trailing bytes and a bad flag.
-    let mut bytes = encode(&Packet::Hub(Box::new(full_event()))).unwrap();
+    // Hand-forged bytes: a truncated packet, trailing bytes and a bad flag
+    // (an event whose mask has no high half, so a row ends the packet).
+    let narrow = Hub {
+        mask: 0b111,
+        rows: full_event().rows[..3].to_vec(),
+        ..full_event()
+    };
+    let mut bytes = encode(&Packet::Hub(Box::new(narrow))).unwrap();
     let fix = |b: &mut Vec<u8>| {
         let len = (b.len() - 8) as u16;
         b[6..8].copy_from_slice(&len.to_le_bytes());
@@ -211,7 +240,7 @@ fn challenges_round_trip_and_refuse_forged_values() {
             ..Default::default()
         },
         Challenge {
-            peer: 20,
+            peer: MAX_PLAYERS as u8,
             ..Default::default()
         },
         Challenge {

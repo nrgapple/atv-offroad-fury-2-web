@@ -56,6 +56,7 @@ pub struct Shared {
 impl Shared {
     pub fn new(config: Config) -> Arc<Self> {
         engine::hub::configure(config.hub);
+        engine::configure_public_capacity(config.freeride_capacity);
         Arc::new(Shared {
             config,
             started: Instant::now(),
