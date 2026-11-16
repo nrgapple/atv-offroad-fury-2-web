@@ -858,7 +858,12 @@ about 390x664 in portrait and 844x330 in landscape) and a WebKit audit at DPR 3.
 - **Portrait stages** give rows more room: stage pages take 36% of the
   height below the status bar on phones up to 820px (28% up to 640px), so
   Single Player's six modes fit without scrolling; Select Track's photo is
-  2.4:1 too.
+  2.4:1 too. (2026-11-16, #691) Single Player now has ten modes. A long
+  list shrinks the stage to 124px (about its size under Safari's toolbars,
+  room for the vehicle and its name) instead of a fifth of the page, so the
+  ten fit a full-height 390x844 phone. Under Safari's toolbars (390x664)
+  they cannot fit with 44px targets and a stage: the rows scroll with the
+  cue and the last mode glides fully into view above Back.
 - **Landscape** rows columns run to the bottom edge; Back (and Copy ride
   link) sit under the stage at the bottom right. The status bar gets a dark
   band so the profile chip (on red) and the others (on silver) read as one
@@ -877,8 +882,8 @@ about 390x664 in portrait and 844x330 in landscape) and a WebKit audit at DPR 3.
 Test: `tools/test_engine_menu_phone_layout.mjs` (Chromium; 390x664, 390x844,
 844x330, 844x390, iPad, desktop): Back, Start Race and Copy ride link on
 screen and clear of the scroll panes; rows clear of them where nothing
-scrolls; Press Start on screen; Single Player's modes fit on portrait
-phones; Select Track shows two whole cards; Single Race has no squeezed list,
+scrolls; Press Start on screen; Single Player's modes fit on full-height
+portrait phones and its last mode scrolls into view under Safari's toolbars; Select Track shows two whole cards; Single Race has no squeezed list,
 its picker shows three whole cards (two on a landscape phone) and opens and
 closes by touch, keyboard and a stand-in controller; stage text clear of the
 rim. Physical iPhones are not tested here.

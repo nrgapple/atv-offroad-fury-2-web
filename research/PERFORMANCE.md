@@ -1256,3 +1256,8 @@ located by direct timing, but was not moved into boot or otherwise changed.
 The old unexplained post-load penalty is not separately isolated by these
 whole-task measurements. No physical device, startup-speed improvement or
 pixel comparison is claimed.
+
+The shared pipeline belongs to the frontend's device: a ride whose load
+fails hands the frontend a new device, so `release_gpu` drops the pipeline
+with the previews. Keeping it made the next stage page's preview panic on a
+stale bind group layout (`test_engine_menu_flows.mjs`, #691).

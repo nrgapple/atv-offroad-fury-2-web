@@ -124,7 +124,11 @@ for (const engine of ['chromium', 'webkit']) {
     const start = { x: centre(second).x, y: Math.min(list.y + list.height - 20, centre(second).y + 160) };
 
     // 1. Immediate tracking: the list follows within the first frames past the slop.
-    const held = await swipe(touch, page, start, -260, 10, s => s.kinetic.list[0]);
+    // Moves are paced by frames: on a loaded host (software GL at DPR 3)
+    // those come 50-200 ms apart, so a 26px step read as a slow drag and
+    // barely flung. 39px steps keep it a flick there (a phone's 60 Hz
+    // moves make either one fast).
+    const held = await swipe(touch, page, start, -390, 10, s => s.kinetic.list[0]);
     assert.ok(held[1] > 0, `follows the finger at once: ${held}`);
     for (let i = 1; i < held.length; i++) assert.ok(held[i] >= held[i - 1], `tracks monotonically ${held}`);
     const released = held.at(-1);
