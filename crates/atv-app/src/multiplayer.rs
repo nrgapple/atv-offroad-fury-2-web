@@ -86,11 +86,17 @@ pub struct Net {
     locals: BTreeMap<u8, Local>,
     /// Why the room ended (closed socket, leave, protocol error).
     pub closed: Option<String>,
-    /// Remote riders drawn on the latest frame.
+    /// Remote riders presented (posed or held) on the latest frame, and
+    /// how many of them the frame before drew inside its view.
     pub drawn: usize,
-    /// The nearest riders ([`DRAWN_RIDERS`]) on the latest frame: those
-    /// drawn, and those the pause menu lists in a room above 20.
+    pub in_view: usize,
+    /// The nearest riders ([`LISTED_RIDERS`]) on the latest frame: those
+    /// the pause menu lists in a room above 20.
     nearest: Vec<u8>,
+    /// Frames presented, and when each rider was last posed (local ms):
+    /// a far rider posed every other frame advances by its own interval.
+    frame: u64,
+    posed_at: BTreeMap<u8, u64>,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
     /// Each posed rider's slot, vehicle and rider bone count (tests).
@@ -202,35 +208,62 @@ const PRIVATE_LOOP_STALE_MS: u64 = 6_000;
 /// (web/multiplayer.js `MAX_REMOTE_MODELS`).
 const MAX_REMOTE_MODELS: usize = 20;
 
-/// Other riders drawn at once: the nearest this many. A full 20-rider room
-/// drew 19, the most measured so far (research/PERFORMANCE.md "full Free
-/// Ride room", host only); shared rooms now hold up to
-/// `atv_net::PUBLIC_CAPACITY` riders, so phones never draw more than
-/// before. The rest still have minimap dots, sounds (the nearest six
-/// engines) and contacts (research/GAME_SERVER.md "Load testing").
-pub const DRAWN_RIDERS: usize = 19;
+/// The Players page of a room above 20 lists this rider and the nearest
+/// this many others (its layout fits a 20-rider room).
+pub const LISTED_RIDERS: usize = 19;
+/// Other riders past this many feet are posed every other frame (their
+/// last pose drawn between): small on screen, they move under half a foot
+/// a frame. Nearer riders are posed every frame.
+pub const HALF_RATE_FT: f32 = 150.;
+/// Riders are presented out to the scene's rider distance (the fog end)
+/// from the camera; measured from this rider, plus the chase camera's
+/// reach behind it.
+const CAMERA_REACH_FT: f32 = 100.;
+/// The most other riders posed and drawn in one frame: a safety net for an
+/// extreme pack on a phone, not a draw distance (research/GAME_SERVER.md
+/// "Shared room capacity"). Past it the farthest go first, riders outside
+/// the last frame's view before any inside it. `?riderCap=` overrides it
+/// for measurements, `?halfRate=0` poses far riders every frame.
+pub const RIDER_CAP: usize = 63;
+pub static DRAWN_CAP: AtomicU32 = AtomicU32::new(RIDER_CAP as u32);
+pub static HALF_RATE: AtomicBool = AtomicBool::new(true);
 
-/// The `count` riders nearest `own` of `present`.
-fn nearest<T>(
-    present: &[(u8, T)],
+/// The riders to present, by slot with their distance (ft) from `own`:
+/// those within `reach`, riders `in_view` first and then the nearest, at
+/// most `cap`.
+fn draw_order(
+    present: &[(u8, [f32; 3])],
     own: [f32; 3],
-    at: impl Fn(&T) -> [f32; 3],
-    count: usize,
-) -> Vec<u8> {
-    let mut by_distance: Vec<(f32, u8)> = present
+    reach: f32,
+    in_view: impl Fn([f32; 3]) -> bool,
+    cap: usize,
+) -> Vec<(u8, f32)> {
+    let mut order: Vec<(bool, f32, u8)> = present
         .iter()
-        .map(|(peer, pose)| {
-            let p = at(pose);
+        .map(|&(peer, p)| {
             let d = [p[0] - own[0], p[1] - own[1], p[2] - own[2]];
-            (d[0] * d[0] + d[1] * d[1] + d[2] * d[2], *peer)
+            let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            (!in_view(p), distance, peer)
         })
+        .filter(|&(_, distance, _)| distance <= reach)
         .collect();
-    by_distance.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    by_distance
+    order.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+    order
         .into_iter()
-        .take(count)
-        .map(|(_, peer)| peer)
+        .take(cap)
+        .map(|(_, distance, peer)| (peer, distance))
         .collect()
+}
+
+/// The paint a rider chose for their ATV (`rider_gear::PAINTS`, the
+/// appearance's last byte): their HUD colour. Motorcycles keep their
+/// original livery, so they keep their slot colour (0, Original).
+fn paint_of(p: &atv_game::multiplayer::Participant) -> u8 {
+    if atv_game::multiplayer::is_motorcycle(p.atv_model) {
+        0
+    } else {
+        p.appearance[7]
+    }
 }
 
 /// Before caching another remote model: once `MAX_REMOTE_MODELS` are held,
@@ -511,7 +544,10 @@ impl Net {
             locals: BTreeMap::new(),
             closed: None,
             drawn: 0,
+            in_view: 0,
             nearest: Vec::new(),
+            frame: 0,
+            posed_at: BTreeMap::new(),
             presented: Vec::new(),
             posed: Vec::new(),
             riders: Vec::new(),
@@ -1341,6 +1377,8 @@ impl Net {
             self.posed.clear();
             self.riders.clear();
             self.drawn = 0;
+            self.in_view = 0;
+            self.posed_at.clear();
             return;
         }
         let own = ride.frame().origin;
@@ -1359,15 +1397,48 @@ impl Net {
         scene.retain_peers(|peer, key| roster.contains(&(peer, key)));
         self.locals
             .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
+        self.posed_at
+            .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
         let cars = |car| ride.train_car(car);
         let present = self.session.present(now, Some(own), &cars);
-        // Only the nearest riders are uploaded, posed and drawn.
-        let drawn = nearest(&present, own, |s| s.snapshot.atv.position, DRAWN_RIDERS);
-        self.nearest.clone_from(&drawn);
-        // One new GPU upload per frame, so a full room arriving at once does
-        // not stall a frame.
+        let positions: Vec<(u8, [f32; 3])> = present
+            .iter()
+            .map(|(peer, s)| (*peer, s.snapshot.atv.position))
+            .collect();
+        self.nearest = draw_order(&positions, own, f32::INFINITY, |_| true, LISTED_RIDERS)
+            .into_iter()
+            .map(|(peer, _)| peer)
+            .collect();
+        // Riders within the fog end are uploaded, posed and presented; the
+        // renderer draws those inside the view (research/GAME_SERVER.md
+        // "Shared room capacity").
+        let cap = DRAWN_CAP.load(Ordering::Relaxed) as usize;
+        let drawn = draw_order(
+            &positions,
+            own,
+            scene.rider_distance() + CAMERA_REACH_FT,
+            |p| scene.in_last_view(p),
+            cap,
+        );
+        self.frame += 1;
+        let half_rate = HALF_RATE.load(Ordering::Relaxed);
+        let held: Vec<u8> = drawn
+            .iter()
+            .filter(|&&(peer, distance)| {
+                half_rate
+                    && distance > HALF_RATE_FT
+                    && (self.frame + u64::from(peer)) % 2 == 1
+                    && self.posed_at.contains_key(&peer)
+            })
+            .map(|&(peer, _)| peer)
+            .collect();
+        // One new GPU upload per frame, nearest first, so a full room
+        // arriving at once does not stall a frame.
         let mut uploaded = false;
-        for &(peer, key) in roster.iter().filter(|(peer, _)| drawn.contains(peer)) {
+        for &(peer, _) in &drawn {
+            let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
+                continue;
+            };
             if !uploaded
                 && scene.peer_model(peer) != Some(key)
                 && let Some(Loaded::Ready(model)) = self.models.get(&key)
@@ -1416,7 +1487,7 @@ impl Net {
                 engine: None,
                 cpu: false,
             });
-            if !drawn.contains(&peer) {
+            if !drawn.iter().any(|&(id, _)| id == peer) || held.contains(&peer) {
                 continue;
             }
             // The roster lists the rider's look; the session only admits
@@ -1449,6 +1520,10 @@ impl Net {
                 }
             }
             let local = self.locals.get_mut(&peer).expect("remote rig");
+            // A rider posed every other frame advances by its own interval.
+            let dt = self.posed_at.insert(peer, now).map_or(dt, |last| {
+                (now.saturating_sub(last) as f32 * 0.001).clamp(0., 0.1)
+            });
             match local.pose(&sampled.snapshot, dt, sampled.stale) {
                 Ok(pose) => {
                     self.posed
@@ -1458,7 +1533,8 @@ impl Net {
                 Err(error) => crate::status(&format!("Remote rider pose: {error}")),
             }
         }
-        self.drawn = scene.pose_peers(gpu, &poses);
+        self.drawn = scene.pose_peers(gpu, &poses, &held);
+        self.in_view = scene.peers_in_view();
     }
 
     /// The room as the pause menu shows it (frontend.js lobby fields).
@@ -1637,7 +1713,10 @@ impl Net {
                 .find(|(peer, _, stale, _)| *peer == slot && !*stale)
                 .map(|(_, position, ..)| *position)
         };
-        self.chat.update(available, position, ready, now as f64);
+        let paints: BTreeMap<u8, u8> = self.session.others().map(|p| (p.id, paint_of(p))).collect();
+        let paint = |slot: u8| paints.get(&slot).copied().unwrap_or(0);
+        self.chat
+            .update(available, position, paint, ready, now as f64);
         horn
     }
 
@@ -1700,17 +1779,19 @@ impl Net {
 
     /// Other riders for the HUD: roster names at their presented positions.
     pub fn hud_peers(&self) -> Vec<atv_ui::hud::peers::Peer> {
-        let names: BTreeMap<u8, &str> = self
+        let names: BTreeMap<u8, (&str, u8)> = self
             .session
             .others()
-            .map(|p| (p.id, p.name.as_str()))
+            .map(|p| (p.id, (p.name.as_str(), paint_of(p))))
             .collect();
         self.presented
             .iter()
             .filter_map(|(peer, position, stale, _)| {
+                let &(name, paint) = names.get(peer)?;
                 Some(atv_ui::hud::peers::Peer {
                     slot: *peer,
-                    name: (*names.get(peer)?).to_string(),
+                    paint,
+                    name: name.to_string(),
                     position: *position,
                     stale: *stale,
                     pill: None,
@@ -1750,6 +1831,8 @@ impl Net {
             "environment": self.session.environment(),
             "players": self.session.lobby.as_ref().map(|l| l.players.len()),
             "drawn": self.drawn,
+            "inView": self.in_view,
+            "posedRate": self.posed.len(),
             "models": self.models.len(),
             "rttMs": self.session.rtt_ms,
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
@@ -1862,6 +1945,29 @@ pub fn room_games(environment: &str, content: &Content) -> Vec<(u8, &'static str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn riders_within_reach_are_drawn_in_view_first_and_the_farthest_dropped() {
+        let at = |x: f32| [x, 0., 0.];
+        let present = [
+            (1, at(500.)),
+            (2, at(-20.)),
+            (3, at(900.)),
+            (4, at(100.)),
+            (5, at(-300.)),
+        ];
+        // Past the reach (the fog end) nobody is drawn: they are fogged out.
+        let all = super::draw_order(&present, [0.; 3], 800., |_| true, 63);
+        assert_eq!(
+            all.iter().map(|r| r.0).collect::<Vec<_>>(),
+            vec![2, 4, 5, 1]
+        );
+        assert_eq!(all[0].1, 20.);
+        // The safety cap keeps riders in view (here ahead, x > 0) before
+        // those behind, and drops the farthest.
+        let capped = super::draw_order(&present, [0.; 3], 800., |p| p[0] > 0., 2);
+        assert_eq!(capped.iter().map(|r| r.0).collect::<Vec<_>>(), vec![4, 1]);
+    }
+
     use super::*;
 
     fn key(quad: u16) -> Key {

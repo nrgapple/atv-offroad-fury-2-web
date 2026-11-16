@@ -689,7 +689,7 @@ fn rider_appearance_roundtrips_and_rejects_out_of_range_gear() {
 
 #[test]
 fn shared_free_ride_lobbies_hold_the_protocol_bound_and_private_rooms_keep_four() {
-    assert!(PUBLIC_CAPACITY <= MAX_PLAYERS && MAX_PLAYERS <= 64);
+    const _: () = assert!(PUBLIC_CAPACITY <= MAX_PLAYERS && MAX_PLAYERS <= 64);
     let public = Lobby {
         host: (MAX_PLAYERS - 1) as u8,
         map: PUBLIC_MAP,

@@ -573,6 +573,7 @@ impl TagSession {
         let [x, y, z] = self.ball.position;
         vec![atv_ui::hud::peers::Peer {
             slot: 2,
+            paint: 0,
             name: "Ball".into(),
             position: [x, y - 6., z],
             stale: false,

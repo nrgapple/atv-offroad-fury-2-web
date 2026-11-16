@@ -102,6 +102,8 @@ pub enum Said {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bubble {
     pub slot: u8,
+    /// The rider's ATV paint: its colour ([`peers::rider_color`]).
+    pub paint: u8,
     pub position: [f32; 3],
     pub said: Said,
     pub age: f32,
@@ -111,6 +113,8 @@ pub struct Bubble {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Feed {
     pub slot: Option<u8>,
+    /// The rider's ATV paint, as [`Bubble::paint`].
+    pub paint: u8,
     pub name: std::rc::Rc<str>,
     pub said: Said,
     pub age: f32,
@@ -214,7 +218,7 @@ pub fn paint_bubbles(
                 rect: Rect::new(at.x - r, at.y - r, r * 2., r * 2.),
                 radii: [r; 4],
                 border: [3.; 4],
-                border_color: peers::color(b.slot).fade(1. - t),
+                border_color: peers::rider_color(b.slot, b.paint).fade(1. - t),
                 ..Default::default()
             }));
             continue;
@@ -253,14 +257,16 @@ pub fn paint_feed(
     let mut y = (view.safe[0].max(14.) + 44. + 30.).max(below + 24.);
     for f in feed {
         list.opacity(fade(f.age, FEED_S));
-        let style = TextStyle::new(
-            Font::display(15., 800, true),
-            match f.slot {
-                Some(slot) => peers::color(slot),
-                None => classic::VALUE,
-            },
-        )
-        .stroke(2., Color::BLACK, Join::Round);
+        let fill = match f.slot {
+            Some(slot) => peers::rider_color(slot, f.paint),
+            None => classic::VALUE,
+        };
+        // A black-painted rider's name keeps a light outline to read.
+        let style = TextStyle::new(Font::display(15., 800, true), fill).stroke(
+            2.,
+            peers::outline(fill, Color::BLACK),
+            Join::Round,
+        );
         let who = format!("{}:", f.name);
         list.text(&who, &style, x, y);
         let after = x + fonts.measure(&who, &style.font, 0.).width + 6.;

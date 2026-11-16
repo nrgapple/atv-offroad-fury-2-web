@@ -619,6 +619,7 @@ impl Hub {
     pub fn markers(&self) -> Vec<Peer> {
         let tag = |name: &str, p: [f32; 3]| Peer {
             slot: MARKER_SLOT,
+            paint: 0,
             name: name.into(),
             // screen_marker lifts tags 7 ft.
             position: p,

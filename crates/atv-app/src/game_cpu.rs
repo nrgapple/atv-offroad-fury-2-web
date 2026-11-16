@@ -568,6 +568,7 @@ impl Cpu {
     pub fn tag(&self, index: usize) -> atv_ui::hud::peers::Peer {
         atv_ui::hud::peers::Peer {
             slot: self.player - 1,
+            paint: 0,
             name: NAMES[index.min(NAMES.len() - 1)].into(),
             position: self.riding.ride.frame().origin,
             stale: false,

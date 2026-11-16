@@ -23,11 +23,11 @@ use crate::Result;
 use crate::ride::Ride;
 pub use atv_net::{
     CPU_PEER, CpuMotion, CpuRider, GameClaim, GameMarks, GameState, LEGACY_PLAYERS,
-    MAX_GAME_POINTS, MAX_MARKS, MAX_PLAYERS, NO_PEER, PUBLIC_CAPACITY, RACE_CPUS, RACE_DNF,
-    RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, claim_kind, game_kind, game_phase,
-    race_phase,
+    MAX_GAME_POINTS, MAX_MARKS, MAX_PLAYERS, NO_PEER, PUBLIC_CAPACITY, Participant, RACE_CPUS,
+    RACE_DNF, RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, claim_kind, game_kind, game_phase,
+    is_motorcycle, race_phase,
 };
-use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose};
+use atv_net::{Lobby, Packet, PoseBuffer, SampledPose};
 use std::collections::BTreeMap;
 
 /// The wire protocol version (atv-net), shared with the JavaScript game.

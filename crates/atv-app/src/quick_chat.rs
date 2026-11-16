@@ -438,6 +438,7 @@ impl QuickChat {
         &mut self,
         available: bool,
         position: impl Fn(u8) -> Option<[f32; 3]>,
+        paint: impl Fn(u8) -> u8,
         ready: [bool; 3],
         now: f64,
     ) {
@@ -463,6 +464,7 @@ impl QuickChat {
             if let Some(position) = position(*slot) {
                 v.bubbles.push(Bubble {
                     slot: *slot,
+                    paint: paint(*slot),
                     position,
                     said: said(*kind, *id),
                     age: ((now - at) / 1000.) as f32,
@@ -474,6 +476,7 @@ impl QuickChat {
         for (slot, name, kind, id, at) in &self.feed {
             v.feed.push(Feed {
                 slot: *slot,
+                paint: slot.map_or(0, &paint),
                 name: name.clone(),
                 said: said(*kind, *id),
                 age: ((now - at) / 1000.) as f32,

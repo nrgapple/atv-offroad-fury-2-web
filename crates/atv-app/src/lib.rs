@@ -824,6 +824,7 @@ impl ObjectiveSession {
             .filter(|(i, _)| untouched.get(*i).copied().unwrap_or(false))
             .map(|(_, t)| atv_ui::hud::peers::Peer {
                 slot: if red { 0 } else { 2 },
+                paint: 0,
                 name: "Target".into(),
                 position: [t.position[0], t.position[1] - 7., t.position[2]],
                 stale: false,
@@ -2213,7 +2214,7 @@ impl App {
                     Err(error) => status(&format!("CPU rider {}: {error}", cpu.player)),
                 }
             }
-            ready.scene.pose_peers(&ready.gpu, &poses);
+            ready.scene.pose_peers(&ready.gpu, &poses, &[]);
             for (id, pose) in &poses {
                 riding.recorder.add(instant_replay::Kind::Peer(*id), pose);
             }
@@ -3111,6 +3112,7 @@ impl App {
                     .into_iter()
                     .map(|[x, y, z]| atv_ui::hud::peers::Peer {
                         slot: 3,
+                        paint: 0,
                         name: "Marker".into(),
                         // screen_marker lifts tags 7 ft.
                         position: [x, y - 7., z],
@@ -3131,6 +3133,7 @@ impl App {
                             .map_or(if m.label == "Treasure" { 19 } else { 9 }, |o| {
                                 o.min(3) as u8
                             }),
+                        paint: 0,
                         // King of the Hills draws its hills as score pills
                         // (`002eac20`); treasures keep a tag.
                         pill: m
@@ -3231,6 +3234,7 @@ impl App {
                             .sqrt();
                         atv_ui::hud::peers::Peer {
                             slot: id - 1,
+                            paint: 0,
                             name: format!("P{id} · {distance:.0} ft"),
                             position: *position,
                             stale: false,
@@ -11336,6 +11340,15 @@ pub fn start() {
     }
     if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
+    }
+    // Measurement hooks (research/GAME_SERVER.md "Shared room capacity"):
+    // `?riderCap=N` draws at most N other riders, `?halfRate=0` poses far
+    // riders every frame.
+    if let Some(cap) = param("riderCap").and_then(|v| v.parse::<u32>().ok()) {
+        multiplayer::DRAWN_CAP.store(cap.min(255), std::sync::atomic::Ordering::Relaxed);
+    }
+    if param("halfRate").as_deref() == Some("0") {
+        multiplayer::HALF_RATE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if param("p2p").as_deref() == Some("0") {
         multiplayer::P2P.store(false, std::sync::atomic::Ordering::Relaxed);
