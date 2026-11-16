@@ -1,163 +1,184 @@
-# Fury Remastered — ATV Offroad Fury 2 in your browser
+<p align="center">
+  <a href="https://furyremastered.com/"><img src="https://furyremastered.com/devlog-images/gallery-the-title-screen-5f1eacf0693f42d99c4cacf19f5e6bbb.png" alt="Fury Remastered"></a>
+</p>
 
-**[Play Fury Remastered](https://furyremastered.com/) · [Screenshot dev log](https://furyremastered.com/devlog.html)**
+<h3 align="center">ATV Offroad Fury 2, rebuilt in Rust. Play it in your browser, right now.</h3>
 
-Fury Remastered is an ongoing **Rust/WebAssembly port of ATV Offroad Fury 2** for desktop and mobile browsers. The project started with many hours spent riding these maps on PS2 and wanting that same ATV feel in something you can quickly open on your phone or play with friends.
+<p align="center">
+  <a href="https://furyremastered.com/"><img src="https://img.shields.io/badge/%E2%96%B6%20PLAY%20NOW-furyremastered.com-e0201b?style=for-the-badge" alt="Play now at furyremastered.com"></a>
+  <a href="https://furyremastered.com/devlog.html"><img src="https://img.shields.io/badge/DEV%20LOG-screenshots%20%26%20notes-f2c230?style=for-the-badge" alt="Dev log"></a>
+</p>
 
-Codex has helped with most of the implementation and reverse engineering. We work from the original PS2 disc, without the original source code, recovering the game's resources and behavior one system at a time. The original experience is the baseline; optional enhancements sit alongside the ongoing port.
+<p align="center">
+  <a href="https://github.com/nrgapple/atv-offroad-fury-2-web/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nrgapple/atv-offroad-fury-2-web/ci.yml?branch=main&label=deploy" alt="Build and deploy status"></a>
+  <a href="https://github.com/nrgapple/atv-offroad-fury-2-web/commits/main"><img src="https://img.shields.io/github/last-commit/nrgapple/atv-offroad-fury-2-web/main" alt="Last commit"></a>
+  <a href="https://github.com/nrgapple/atv-offroad-fury-2-web/graphs/commit-activity"><img src="https://img.shields.io/github/commit-activity/w/nrgapple/atv-offroad-fury-2-web" alt="Commit activity"></a>
+  <a href="https://github.com/nrgapple/atv-offroad-fury-2-web/releases"><img src="https://img.shields.io/github/v/release/nrgapple/atv-offroad-fury-2-web?include_prereleases&label=desktop" alt="Latest desktop build"></a>
+  <img src="https://img.shields.io/badge/Rust-WebAssembly-b7410e?logo=rust" alt="Rust and WebAssembly">
+</p>
 
-**The public HTTPS build now unlocks all 40 original venue families in Freestyle:** eight environments, six stunt venues, eight Nationals, sixteen Supercross stadiums, Training, and Coonce Arena. The all-venue release was verified on the public app with its separate runtime content package. The browser port also supports all 26 original in-race quads, one-handed touch controls, online Freeride with up to four players, motorcycles, and a race preview on all 32 original race courses. Required resources load automatically, with no installation or disc-selection step.
+<p align="center">
+  <img src="https://furyremastered.com/devlog-images/gallery-a-supercross-pack-under-the-moon-4b249b052d414c7aacbf02a75249b7ed.png" alt="Five quads fighting for the first turn of a Supercross stadium race at night, with the race HUD showing second place at 52 mph." width="100%">
+</p>
 
-**This is still a work in progress.** Racing, progression, saves, and parts of the original physics, animation, audio and rendering remain incomplete. It is a playable reconstruction, not a completed decompilation or a finished port.
+Remember riding these hills on the PS2 for hours? **Fury Remastered** brings that ATV feel to anything with a browser: open a link on your phone, hold a thumb down and go. No install, no disc, no emulator. It's a from-scratch Rust/WebAssembly port, recovered system by system from the original USA v2.00 disc, and it ships to [furyremastered.com](https://furyremastered.com/) many times a day.
 
-![ATV riding Tioga Valley in the current public Fury Remastered build, with the circular GPS and 27 mph speed display.](https://furyremastered.com/devlog-images/public-desktop-env02-gps-course-capture-on-0787b32-647d7edc.png)
+> [!NOTE]
+> **This is a live, very active project.** Hundreds of changes land every week and each merge to `main` deploys straight to the public site. It's very playable, and it's still a reconstruction in progress, not a finished or complete port. See [what's still in the shop](#whats-still-in-the-shop).
 
-*October 13 public build: riding Tioga Valley, captured from the deployed game in desktop Chromium.*
+## 📸 From the live build
 
-## What you can play today
+<table>
+  <tr>
+    <td width="50%"><img src="https://furyremastered.com/devlog-images/gallery-grand-canyon-at-dusk-c4556661e8d8409d898ab24a70eeffdd.png" alt="A red quad cresting a whoop on Grand Canyon at dusk, its shadow still in the air beside the light towers."><br><sub><b>Grand Canyon at dusk.</b> Freestyle, mid-jump.</sub></td>
+    <td width="50%"><img src="https://furyremastered.com/devlog-images/gallery-cactus-country-in-tioga-valley-1c3023306afe4150a87382a367fd0978.png" alt="A rider threading tall saguaro cacti in Tioga Valley with the circular GPS minimap at 30 mph."><br><sub><b>Cactus country.</b> Tioga Valley with the GPS minimap.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://furyremastered.com/devlog-images/gallery-motorcycle-air-on-prospect-springs-02ed65fb426f47168b5a23fcc8f1e1d3.png" alt="A yellow motorcycle in the air over the dirt jumps of Prospect Springs, its shadow on the ground below."><br><sub><b>Bikes too.</b> Motorcycle physics recovered from MX vs. ATV Unleashed.</sub></td>
+    <td><img src="https://furyremastered.com/devlog-images/gallery-a-41-foot-jump-then-the-trees-8bbda91df33348b996c5a581d9ea87c1.png" alt="A stars-and-stripes quad on its side in a National race: New Longest Jump 41 Feet! and Off Track, Go Back!"><br><sub><b>New longest jump: 41 feet.</b> Then the trees.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://furyremastered.com/devlog-images/gallery-the-free-ride-main-menu-ae66481d6f204a279c5aa906f94802b6.png" alt="The classic Main Menu panel over a live Free Ride room on Arlington Stream in the rain, with a gold Hop in button."><br><sub><b>The menu is a live world.</b> Boot into Free Ride, then hit <i>Hop in</i>.</sub></td>
+    <td><img src="https://furyremastered.com/devlog-images/split-screen-three-and-four-local-players-f06fafe8d77444f29aa4bf328227c9a6.png" alt="Four-way local split screen, each quarter showing a different rider and quad."><br><sub><b>Couch split screen</b> for up to four players.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="https://furyremastered.com/devlog-images/free-ride-hub-challenges-pop-up-events-map-rotation-7d79513c6f9e458c9912cadf3f1f9be5.png" alt="Online Free Ride with a pop-up sprint challenge, other riders' name tags and a JOIN prompt."><br><sub><b>Online Free Ride</b> with pop-up challenges and events.</sub></td>
+    <td><img src="https://furyremastered.com/devlog-images/streamed-soundtrack-and-a-jukebox-player-fb61720882354ee3a2a83a8527fd2d6e.png" alt="The Jukebox with a spinning CD, the current song and the soundtrack track list."><br><sub><b>The Jukebox.</b> All 21 original songs.</sub></td>
+  </tr>
+</table>
 
-| Feature | Current public build |
+<img align="right" width="230" src="https://furyremastered.com/devlog-images/gallery-tioga-valley-on-a-phone-cdc0d332407842bd8a2ca70ff72f384b.png" alt="Portrait phone view of Tioga Valley: a red quad, rolling dunes, the GPS minimap and the hint Hold anywhere to ride.">
+
+## 🏁 Hop on
+
+1. Open **[furyremastered.com](https://furyremastered.com/)** on a phone, tablet or computer.
+2. Press Start. You land in a live **Free Ride** room with the main menu over it. Hit **Hop in** to ride, or pick a mode.
+3. On a phone, **hold anywhere to ride**. Drag to steer and lean, lift on a ramp to pop off the lip. A second finger brakes, or opens the trick wheel in the air.
+
+Want to skip straight to the dirt? These links drop you into a ride:
+
+- 🌵 [Tioga Valley on a Honda 250EX](https://furyremastered.com/?mode=single&map=env02&quad=14&rider=female)
+- 🏟️ [A Supercross race against four CPUs](https://furyremastered.com/?activity=race&map=sx07&cpu=4)
+- ❄️ [Vancouver Ridge in the snow](https://furyremastered.com/?map=free05&quad=26)
+- 🏆 [An Expert National with the field cranked up](https://furyremastered.com/?activity=race&map=nat01&cpu=4&difficulty=expert)
+
+Make your own with **Pause → Copy ride link** or the [link reference](research/PLAY_LINKS.md). On iPhone, **Share → Add to Home Screen** gives you an app icon.
+
+<br clear="right">
+
+## 🎮 What's in the garage
+
+| | |
 | --- | --- |
-| **Freestyle riding** | All 40 original venue families are publicly available: eight ENV, six FREE, eight NAT, sixteen SX, Training and Coonce Arena. Their source terrain, sky, scenery and available vegetation are connected; racing rules, environmental behavior and full visual parity remain incomplete. |
-| **Quads and riders** | All 26 original in-race quads, with their own resources, tuning and engine banks; male and female rider choices. Garage selections are available without the original unlock progression. |
-| **Mobile controls** | One-handed throttle, steering and rider lean, with an optional second touch for braking/reverse and airborne tricks. A standard two-thumb layout is also available. |
-| **Online multiplayer** | Up to four ATV riders in Freeride, drop-in style: host on any track and friends join from the invite link at any time, appearing beside you. Change ATV or track without leaving, and the ride carries on if anyone (including the host) drops or leaves. Remote riders have animated quads, spatial engine audio, overhead names and GPS markers. |
-| **Motorcycles** | Single Player includes 20 choices across 16 bike designs and 50/125/250/500 profiles, including labeled Race/Pro setups. Their riding physics are recovered from **MX vs. ATV Unleashed** (not ATV2) and use that game's models, animation, sound and tuning. Motorcycles are not yet available in multiplayer. |
-| **Race preview** | Single Player → Race offers every original race course: eight Environment Nationals, eight Nationals and sixteen Supercross tracks, decoded from their own TDF route graphs with start straights, alternate lines and original start/finish gates. Countdown, laps, timing, radar and results are included. The ATV field includes four independently simulated CPU riders with recovered driving decisions. CPU corner speed on courses without authored speed limits, full original race rules and progression remain unfinished. |
-| **GPS and speed HUD** | A configurable minimap combines terrain, heading, speed and preload feedback. Choose shape, corner, size and zoom; tap it to switch north-up/heading-up. |
-| **Sound and settings** | All 21 original songs, streamed for fast start and low memory, with a **Jukebox** in the main menu and Pause (original spinning-CD art, seek, track list). Also per-quad engine audio, selected impact and train sounds, and remappable keyboard/controller bindings. Music continues through the pause menu. |
-| **Crash presentation and camera** | Settings → Extras offers Original (default), Crazy and Gorn crash modes, Tight/Original framing for Crazy/Gorn crashes, and an opt-in Assisted chase camera for steep climbs. Camera shake is removed. Gorn adds severed rider parts and bounded terrain droplets only on severe impacts; recovery and original vehicle handling remain intact. Settings are saved locally. |
-| **Quick return** | This browser remembers Garage selections, settings and the last successfully loaded Freestyle course. Home Screen app metadata and an install/help flow are included. |
+| 🗺️ **Places to ride** | All **40** ATV Offroad Fury 2 venues (environments, stunt parks, Nationals, Supercross stadiums, Training and Coonce Arena), plus **56** MX vs. ATV Unleashed venues in Free Ride. |
+| 🏍️ **Rides** | All **26** original quads with their own tuning and engine sounds, and **20** motorcycles. Pick your rider, gear and paint. |
+| 🏆 **Racing** | Championships (Amateur and Pro Enduro, Nationals, Supercross) on **32** National and Supercross courses, **16** Enduro gate courses and **3** Short Tracks. Single Race, Practice, Lap Attack with ghosts and medals, and two-player Duel. CPU riders on Normal or Expert. |
+| 🎯 **Games** | Tag, King of the Hills, Treasure Hunt, Hockey, Freestyle Objectives and the six-lesson Training Course. |
+| 🌐 **Online** | Free Ride rooms with up to four riders (that's the main menu now), **Quick Play** public rooms with map votes, races and a podium, private rooms with CPU fill, friend codes, quick chat and emotes. |
+| 🛋️ **Couch** | Split screen for 2 to 4 players, and *Face to Face* mode for two players on one tablet. |
+| 💾 **Progress** | Profiles, the Profile Store unlocks, the Hall of Fame, and cloud saves through a shareable *Pass Key* (no account). |
+| ✨ **Extras** | A **Remastered** graphics preset with world shadows, instant and full-race replays, photo mode, a Waypoint Editor for your own Enduro courses, and opt-in *Crazy* and *Gorn* crash modes. |
+| 💻 **Everywhere** | Phones (one-handed or two-thumb touch), keyboard and controllers, with remappable bindings. Standalone [macOS, Windows and Linux builds](https://github.com/nrgapple/atv-offroad-fury-2-web/releases) too. |
 
-The renderer now connects recovered materials, animated UVs, fog coverage, ice-reflection overlays and near-vegetation colors, alongside water and wheel effects. These are incremental rendering improvements; original lighting, distant vegetation/LOD, shadows and full-scene fidelity still need work. See [map evidence](research/MAP_FIDELITY.md).
+## 🔥 Recently landed
 
-## Ride from your phone
+The [dev log](https://furyremastered.com/devlog.html) has the full story with screenshots. A taste of the last week:
 
-Open [Fury Remastered](https://furyremastered.com/), choose **Single Player → Freestyle**, and select your ride and map.
-
-- **One finger by default:** touch anywhere on the game surface to hold throttle and brace. Drag sideways to steer and up/down to lean. Lift to coast and release preload through the original ramp gates.
-- **Optional second touch:** while the primary finger stays held, another touch brakes and then reverses on the ground. In the air, the second finger opens a trick wheel: drag to a named trick and release to perform it. Return to the center to cancel; lifting the primary clears both.
-- **Two-thumb layout:** set **Pause → Settings → Controls → One-handed mobile: Off**. The left thumb steers/leans; the right thumb accelerates/braces or drags down to brake/reverse. A saved Off is preserved.
-- **Adjust the feel:** **Pause → Settings → Controls** includes saved Mobile steering response from 50% to 150%, defaulting to 85%.
-- **Pause and Camera:** the on-screen buttons work independently, including a second-finger tap while driving. In multiplayer, opening the menu leaves the visible ride running; Single Player pauses its simulation.
-
-<img src="https://furyremastered.com/devlog-images/public-portrait-gps-capture-on-commit-0787b32-23c7204a.png" width="300" alt="Current public Fury Remastered portrait view: ATV and rider on Caribou Peak with a circular GPS map and integrated speed display.">
-
-*October 13 public build in a 390×844 Chromium viewport: Caribou Peak with the combined GPS and speed HUD.*
-
-**GPS:** open **Pause → Settings → Display → Minimap configuration** for visibility, circular/square shape, top-right/bottom-left placement, size (96–224px), zoom (25–200%) and orientation. The map follows the detached rider during a wreck; in multiplayer it also shows the other riders. See [GPS settings and performance evidence](research/MINIMAP.md).
-
-**Home Screen:** on iPhone/iPad, open the game in Safari and use **Share → Add to Home Screen**, keeping **Open as Web App** enabled if offered. The shortcut launches **Fury Remastered** with its matching icon. Other browsers show an install prompt when they provide one. Existing saved icons may need to be added again to refresh them.
-
-Touch, portrait/landscape layouts and install-flow behavior have automated Chromium/WebKit coverage on the host Mac. Physical iOS/Android installation, sustained phone performance and Bluetooth controllers still need hands-on validation. The Home Screen flow does not establish offline play.
-
-## Ride with friends
-
-Choose **Multiplayer → Host Game**, enter a rider name (it is remembered), choose your quad/rider, then **Select Track** and **Ride**. You are riding straight away; leave the code blank for a random one or supply eight letters/digits. Share **Pause → Copy invite link** or the code. Friends open the invite (or **Join Game** with the code) whenever they like and appear beside a rider who is already there. The link keeps working: if everyone has left, opening it starts that room again on its track.
-
-During a ride, **Pause → Change ATV and Rider** swaps your ride in place, and the host's **Pause → Select Track** moves everyone to another course. **Players → Spawn beside** meets up with a friend. Any rider who drops or reloads gets the same slot back within 30 seconds; if the host leaves, the next rider takes over and everyone keeps riding. The Arlington train runs on a shared relay clock, so it keeps moving for everyone regardless of who pauses.
-
-![Two ATV riders sharing the snowy Vancouver Ridge course in a publicly verified multiplayer session.](https://furyremastered.com/devlog-images/public-vancouver-multiplayer-joins-the-four-client-bas-c2977fcb.png)
-
-*Earlier public Vancouver Ridge checkpoint: two riders in the same Freeride room. The current build adds GPS player markers, overhead names and late-join controls.*
-
-This is an authored Rust multiplayer implementation using our own Rust game server, fury-server ([design](research/GAME_SERVER.md)), at `mp.furyremastered.com`. Each rider simulates their own quad locally. Rider contacts use authored owner-local yawed-box collisions with spin and landings; server physics reconciliation, competitive racing and local split-screen remain unfinished. Automated two- and four-client public checks pass, but geographically separated latency and physical-phone sessions remain unverified. See [multiplayer implementation and evidence](research/MULTIPLAYER.md).
-
-## Open a shared ride
-
-[Start Tioga with a Honda 250EX and female rider](https://furyremastered.com/?mode=single&map=env02&quad=14&rider=female), or use **Pause → Copy ride link** to share the setup you are riding. **Copy invite link** joins that room automatically at any time, or reopens it on its track once everyone has left. Links can select map, vehicle, rider, player name, Single Player/Freeride, a multiplayer room, or the supported Race laps/CPU settings. Add `play=0` to open setup before starting.
-
-See the [URL parameter reference and examples](research/PLAY_LINKS.md). Multiplayer remains ATV Freeride; motorcycles and the Race preview are Single Player.
-
-## Motorcycles in Single Player
-
-The garage also includes motorcycles whose resources and tuning come from the separate **MX vs. ATV Unleashed** disc. Their riding controller is recovered from that game's own code: speed-scaled steering with a kinematic lean, tire grip curves and suspension, engine, clutch and gears, wheelies and stoppies, self-levelling in the air, ramp preload, backflips and three-sixties, and its crash rules. ATV2 maps supply their own surface grip, traction, braking and drag. Bike brands sharing a class profile do not imply separately recovered per-brand physics.
-
-<img src="https://furyremastered.com/devlog-images/public-motorcycle-touch-steering-and-rider-contact-now-b584ab85.png" width="300" alt="Motorcycle and rider on a snowy course in the public browser build, shown in portrait with touch controls.">
-
-*Public motorcycle checkpoint, October 13: portrait browser riding and touch steering. This is a browser capture, not a physical-phone photograph.*
-
-Use **V** for clutch on keyboard; hold V with the throttle and release for a clutch-dump launch. Lean back with throttle for a wheelie; lean fully forward while braking for a stoppie. Hold **Space** approaching a jump and release at the lip for a preload pop (the original only fires on a rising ramp face above about 20 mph). With **L** held, push forward then pull back on a ramp face for a backflip, or flick sideways for a three-sixty; L plus a direction early in a jump also works. The controller clutch defaults to left-stick press. Whole-controller native parity, chassis collision and full stunt linking are not established. See [motorcycle evidence and limits](research/MOTORCYCLES.md).
-
-## Keyboard and controllers
-
-**Pause → Settings → Controls** remaps keys, controller buttons, analog directions and combinations. Settings and Garage selections are stored in this browser; if storage is unavailable, the game still runs but those choices cannot persist across reloads.
-
-| Action | Keyboard default | Controller default |
-| --- | --- | --- |
-| Accelerate / brake | W / S or up/down arrows | Bottom face button or right trigger / left face button or left trigger |
-| Reverse | Keep holding S (or down arrow) once stopped | Bottom + left face buttons together |
-| Steer | A / D or left/right arrows | Left stick horizontal or D-pad |
-| Lean forward / back | Q / E or Left Shift | Left stick vertical or D-pad |
-| Prepare a jump | Space hold/release, or quick back-to-forward lean | Quick back-to-forward lean at a jump |
-| Stunt modifiers | In the air, hold J / K (add L for combos), then tap a direction | Right face / top face / left shoulder with a direction |
-| Pause / camera / reset | Escape or P / C / R or Backspace | Start / right stick click / both shoulder buttons |
-
-Press **H** (or the **Keys** button) while riding to show the keyboard controls card; it opens automatically on your first keyboard ride. Controller labels follow the browser's standard layout. See [controls](research/CONTROLS.md) and [touch gestures](research/TOUCH.md) for the full mappings and evidence.
-
-## How the port works
-
-The source is the USA v2.00 PS2 release, `SCUS_972.11`, with an empty symbol table. Recovering its assets and interpreting its machine instructions are separate parts of the work. Named routines from the first ATV game must be verified against this sequel build.
-
-```mermaid
-flowchart LR
-    disc["Original disc<br/>kept private"] --> assets["Recovered runtime resources"]
-    disc --> behavior["Study original behavior"]
-    behavior --> rust["Implement and test Rust systems"]
-    rust --> wasm["WebAssembly browser game"]
-    assets --> r2["Separate R2 content manifest"]
-    r2 --> wasm
-```
-
-The browser runs the authored Rust port, not a PS2 emulator or the disc executable. The web layer connects WebGL2 rendering, Web Audio, menus and input. Codex helps investigate routines, implement systems and compare results; original instructions and tests are the evidence for a recovered component.
-
-Selected physics, camera, animation, collision and rendering routines have comparisons against original instructions. **That is component evidence, not whole-game replay equivalence or a PS2-hardware comparison.** Full racing, progression/saves, stunt fidelity, remaining collision/water behavior, original audio mixing and full rendering fidelity are still open.
-
-**Screenshot baseline — October 13, 2026:** the public app identifies [`0787b32`](https://github.com/nrgapple/atv-offroad-fury-2-web/commit/0787b32b505ce8edc5d98bbf719514fce57b4ed9), with passing [main CI and deployment](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38457121147). Earlier public gates cover nine-map driving, all ATV selections, multiplayer late join/four-client replication, motorcycle touch steering and rider contacts, fog/reflections/materials, and pause/menu behavior. The screenshots above identify their own capture context; passing CI alone does not prove every gameplay system or physical-device behavior. Current component status is in the [handoff](HANDOFF.md); detailed evidence lives in the [deployment record](research/DEPLOYMENT.md) and [dev log](https://furyremastered.com/devlog.html).
-
-## Follow development
-
-The [screenshot dev log](https://furyremastered.com/devlog.html) records discoveries, changes, verification and limitations. Its older entries describe historical builds; the screenshots in this README are selected recent checkpoints.
-
-For the implementation, start with [strategy](research/IMPLEMENTATION.md), [resources](research/RESOURCES.md) and [formats](research/FORMATS.md). System notes cover [movement](research/MOVEMENT.md), [collision](research/COLLISION.md), [wrecks](research/WRECK.md), [racing](research/RACING.md), [audio](research/AUDIO.md), [motorcycles](research/MOTORCYCLES.md) and [multiplayer](research/MULTIPLAYER.md) ([modern multiplayer plan](research/MULTIPLAYER_EXPERIENCE.md)). Anonymous usage analytics are described in [analytics](research/ANALYTICS.md).
-
-## Working on the project
-
-**Each new chat that edits this repository must use its own worktree and task branch, based on freshly fetched `origin/main`.** This includes documentation and release notes. Keep the shared checkout on `main`; do not inherit its current feature branch or share another chat's checkout. Put worktrees on the external SSD under `~/Projects/atv-worktrees/`. See [agent instructions](AGENTS.md#chat-worktrees-and-branches) for setup, delivery, and cleanup rules.
+- **The main menu is a live world.** Boot into a shared Free Ride room, watch your rider cruise under the menu, then *Hop in*.
+- **Quick Play.** Server-run public rooms: vote on a map, race or do stunts, see the podium, rematch.
+- **Free Ride hub.** Pop-up events, challenges between nearby riders and a rotating venue.
+- **MX vs. ATV Unleashed venues.** 56 extra places to ride in Free Ride.
+- **Online identity.** Friend codes, friends with *Join*, a weekly league and levels.
+- **Lap Attack ghosts.** Medals, a Rival ghost and a weekly challenge.
+- **Menus rebuilt from the disc.** Race Results, multiplayer screens and the Pause overlay drawn in the original style.
+- **Remastered graphics.** The world casts shadows, and riders receive them.
 
 <details>
-<summary>Developer setup, checks, and repository map</summary>
+<summary><b>⌨️ Keyboard and controller defaults</b></summary>
 
-You need Rust with the `wasm32-unknown-unknown` target, rustfmt, Clippy, Python 3, and Node. Original-source audits also require the private local disc files. Preserve the existing SSD-backed `target/`, `web/dist/`, and `work/verification/` symlinks.
+<br>
 
-```sh
-make verify  # Check source identity, reference revisions, and Git exclusions
-make check   # Secrets/repository hygiene, Rust formatting, tests, Clippy, JS and Python tool tests
-make web     # Build the browser game (Rust engine, play.html) and its page shell
-make serve   # Run the host-only development server on port 4173
-```
+Everything is remappable in **Options → Controls**. Press **H** while riding for the keyboard card.
 
-`make serve` is **host-only access**, not a remote handoff. `BIND` and `PORT` can be overridden; binding to `0.0.0.0` alone doesn't make the service remotely reachable. Use the public HTTPS build for remote play.
+| Action | Keyboard | Controller |
+| --- | --- | --- |
+| Gas / brake | W / S or ↑ / ↓ | Bottom face button or right trigger / left face button or left trigger |
+| Reverse | Keep holding S once stopped | Bottom + left face buttons |
+| Steer | A / D or ← / → | Left stick or D-pad |
+| Lean forward / back | Q / E or Left Shift | Left stick vertical |
+| Preload a jump | Hold Space, release at the lip | Quick back-to-forward lean |
+| Tricks | In the air, hold J / K (add L for combos) and tap a direction | Right face / top face / left shoulder with a direction |
+| Pause / camera / reset | Esc or P / C / R | Start / right stick click / both shoulders |
+| Motorcycle clutch | V | Left stick press |
 
-Browser checks require Playwright and Chromium. Build with `make web` first; the runner starts its own host-only server on a free port:
-
-```sh
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke   # content-free; also runs in CI
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-tests   # adds private-content tests
-```
-
-See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, native comparisons, multiplayer tests and running one test. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
-
-| Folder | What's inside |
-| --- | --- |
-| `crates/atv-core/` | Shared Rust resource readers and game simulation |
-| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: one codebase for the browser game, the desktop apps and the Android app ([research/ANDROID.md](research/ANDROID.md)) |
-| `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
-| `web/` | The game page (`play.html`, the Rust engine since the JavaScript game was retired on 2026-10-23) and its shell: landing, app install, offline cache, usage events, dev log |
-| `tools/` | Build, analysis, verification, and deployment helpers |
-| `research/` | Shareable discoveries, evidence, and dev-log metadata |
-| `private/`, `references/`, `work/` | Original source, analysis, references, and intermediate outputs; ignored by Git |
+More in [controls](research/CONTROLS.md), [touch](research/TOUCH.md) and [motorcycles](research/MOTORCYCLES.md).
 
 </details>
 
-GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. Standalone desktop releases, zipped with those resources embedded, are published as GitHub Release assets from the owner's machine; the resources themselves are never committed. The Android APK carries no resources: it downloads the same R2 package on first launch. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
+## 🔧 How it's built
+
+The source is the USA v2.00 PS2 disc (`SCUS_972.11`), which has an **empty symbol table**: no names, no source code. Every system is recovered by studying the original machine code and resources, reimplemented in Rust, and checked against the original instructions where possible.
+
+```mermaid
+flowchart LR
+    disc["Original disc<br/>(kept private)"] --> assets["Recovered runtime<br/>resources"]
+    disc --> behavior["Study original<br/>behavior"]
+    behavior --> rust["Rust engine<br/>+ tests"]
+    rust --> wasm["WebAssembly<br/>browser game"]
+    rust --> desktop["macOS / Windows /<br/>Linux apps"]
+    assets --> r2["Cloudflare R2<br/>content manifest"]
+    r2 --> wasm
+```
+
+- **One Rust engine** (`crates/atv-*`) builds the web game and the desktop apps. It renders through wgpu (WebGL2 in the browser), with Web Audio for sound.
+- **Multiplayer** runs on our own Rust game server, [fury-server](research/GAME_SERVER.md).
+- **The original game is the baseline.** Enhancements like the Remastered preset, crash modes and the Free Ride menu are optional layers on top.
+- **No game content lives in this repository.** Recovered runtime resources are served separately from Cloudflare R2. The disc image, BIOS, executable and reverse-engineering output never leave the owner's machine.
+- AI coding agents (Codex and Claude) do much of the investigation and implementation, alongside a heavy suite of Rust, browser and native-comparison tests.
+
+## 🚧 What's still in the shop
+
+Plenty is still open: whole-game physics parity with the PS2 (individual routines are checked, full replays aren't), some original collision and stunt-linking behavior, the PS2's audio mixer and reverb, original lighting and distant detail, and phone performance on real hardware. The [handoff](HANDOFF.md) has the component-by-component status, and every system has its own evidence note under [`research/`](research/).
+
+## 🛠️ Working on the project
+
+Start with [HANDOFF.md](HANDOFF.md), [AGENTS.md](AGENTS.md) (worktrees, privacy and delivery rules), [research/RUST_ENGINE.md](research/RUST_ENGINE.md) and [research/IMPLEMENTATION.md](research/IMPLEMENTATION.md).
+
+<details>
+<summary><b>Developer setup, checks and repository map</b></summary>
+
+<br>
+
+**Each chat or contributor that edits this repository works in its own worktree and task branch, based on a freshly fetched `origin/main`.** Keep the shared checkout on `main`. See [agent instructions](AGENTS.md#chat-worktrees-and-branches).
+
+You need Rust with the `wasm32-unknown-unknown` target, rustfmt and Clippy, Python 3 and Node. Original-source audits also need the private local disc files.
+
+```sh
+make verify     # source identity, reference revisions and Git exclusions
+make precheck   # hygiene, secrets and cargo fmt (compiles nothing); run before pushing
+make check      # full workspace tests, Clippy, JS and Python tool tests
+make web        # build the browser game (play.html) and its page shell
+make serve      # host-only development server on 127.0.0.1:4173
+```
+
+Builds are cloud-first: GitHub Actions compiles, tests and lints every PR, and merges to `main` deploy automatically. Browser tests use Playwright; see [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) and [research/CI_CHECKPOINTS.md](research/CI_CHECKPOINTS.md).
+
+| Folder | What's inside |
+| --- | --- |
+| `crates/atv-core/` | Resource readers and the game simulation |
+| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: one codebase for the browser game and the desktop apps |
+| `crates/atv-net/` | Multiplayer snapshot codec and smoothing |
+| `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
+| `web/` | The game page (`play.html`) and its shell: landing, install, offline cache, dev log |
+| `cloudflare/` | The production Worker |
+| `tools/` | Build, analysis, verification and deployment helpers |
+| `research/` | Shareable discoveries, evidence and dev-log entries |
+| `private/`, `references/`, `work/` | Original source, analysis and intermediate output; ignored by Git |
+
+</details>
+
+---
+
+<p align="center">
+  <sub>A fan project. ATV Offroad Fury 2 and MX vs. ATV Unleashed belong to their respective owners. This repository holds authored code and notes only; no game content is distributed here.</sub>
+</p>

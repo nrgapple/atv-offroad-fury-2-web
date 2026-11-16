@@ -1,0 +1,14 @@
+{
+  "id": "gallery-the-free-ride-main-menu-ae66481d6f204a279c5aa906f94802b6",
+  "timestamp": "2026-11-16T20:39:10.886693+00:00",
+  "recorded_at": "2026-11-16T20:39:32.761379+00:00",
+  "kind": "verification",
+  "title": "Gallery: the Free Ride main menu",
+  "summary": "The new boot screen: the classic Main Menu over a live Free Ride room on Arlington Stream in the rain, with Hop in to take the controls.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-the-free-ride-main-menu-ae66481d6f204a279c5aa906f94802b6.png",
+  "caption": "Free Ride main menu over Arlington Stream"
+}

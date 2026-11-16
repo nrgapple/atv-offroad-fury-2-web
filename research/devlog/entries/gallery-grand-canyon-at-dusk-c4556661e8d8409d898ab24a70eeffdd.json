@@ -1,0 +1,14 @@
+{
+  "id": "gallery-grand-canyon-at-dusk-c4556661e8d8409d898ab24a70eeffdd",
+  "timestamp": "2026-11-16T20:39:01.667411+00:00",
+  "recorded_at": "2026-11-16T20:39:32.166344+00:00",
+  "kind": "verification",
+  "title": "Gallery: Grand Canyon at dusk",
+  "summary": "Cresting a whoop on Grand Canyon in Freestyle, with the rider's shadow still in the air beside the light towers.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-grand-canyon-at-dusk-c4556661e8d8409d898ab24a70eeffdd.png",
+  "caption": "Grand Canyon Freestyle at dusk, mid-jump"
+}
