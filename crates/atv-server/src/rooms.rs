@@ -32,6 +32,13 @@ impl Entropy for OsEntropy {
     }
 }
 
+/// A random u64 from the system source.
+pub fn random_u64() -> u64 {
+    let mut bytes = [0; 8];
+    OsEntropy.fill(&mut bytes);
+    u64::from_le_bytes(bytes)
+}
+
 pub enum RoomMsg {
     Admit {
         conn: ConnId,
@@ -331,6 +338,8 @@ async fn run(
     let mut housekeep_at = now_ms() + HOUSEKEEP_MS;
     let mut report_at = now_ms() + REPORT_MS;
     let mut reported = Reported::default();
+    // The map last seen; a shared room's move sets the next room's venue.
+    let mut venue = room.map();
     tracing::info!(event = "room_opened", room = %String::from_utf8_lossy(&code), public = room.public());
     let ended = loop {
         tokio::select! {
@@ -379,6 +388,10 @@ async fn run(
             _ = tick.tick() => {
                 let now = now_ms();
                 room.tick(now, &mut out);
+                if room.public() && room.map() != venue {
+                    venue = room.map();
+                    shared.venue.lock().expect("venue lock").moved(venue, now);
+                }
                 let records = room.take_records();
                 for record in &records {
                     send_rewards(&shared, &room, record, &mut out);

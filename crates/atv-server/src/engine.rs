@@ -324,7 +324,8 @@ fn new_hub(code: &RoomCode, public: bool, now: u64) -> Option<hub::Hub> {
 
 impl Room {
     /// A new room whose first slot is held for its creator (or first
-    /// claimant) under `key`. Shared rooms ride Arlington from the start.
+    /// claimant) under `key`. Shared rooms ride Arlington unless
+    /// [`Room::on_venue`] sets the venue.
     pub fn new(code: RoomCode, key: String, public: bool, now: u64) -> Self {
         Room {
             code,
@@ -1376,6 +1377,15 @@ impl Room {
             self.epoch = self.epoch.wrapping_add(1);
             self.broadcast_lobby(out);
         }
+    }
+
+    /// A new shared room opens on `map`, a rotation venue
+    /// ([`hub::Venue`]); other rooms and maps keep theirs.
+    pub fn on_venue(mut self, map: u16) -> Self {
+        if self.public && hub::ROTATION_MAPS.contains(&map) {
+            self.map = map;
+        }
+        self
     }
 
     /// The room's map (shared rooms move with the hub's rotation).

@@ -66,7 +66,8 @@ judges every result; clients show it and send the rider's choices.
 
 ### Map rotation
 
-- Every 20-25 min (random) the room moves to another venue. A minute
+- Every 2 hours the room moves to another venue (owner decision
+  2026-11-16, #710; it was every 20-25 min). A minute
   before, hub riders get **NEXT MAP** with three venues and live counts
   (buttons, or 1-3). Most votes wins; ties and no votes pick at random.
 - The whole room moves: the server changes the shared room's map and sends
@@ -75,6 +76,12 @@ judges every result; clients show it and send the rider's choices.
   challenges in progress end; poses wait for each rider's Ready on the new
   venue; waypoint spots start over.
 - New arrivals ride the room's current map (the claim's `Welcome` lobby).
+- A shared room that opens (the first rider, or a full room's overflow)
+  rides the venue the last room moved to, so riders land together. If a
+  rotation fell due while no room was open, it opens on another venue at
+  random; Free Ride no longer always starts on Arlington Stream
+  (`hub::Venue`). The rider count route reports that venue when no room is
+  open.
 
 ### Venues
 
@@ -92,7 +99,7 @@ Evidence (facts):
 - Private rooms already ride any of the 40 venues through the same
   `SetLobby`/`Lobby` path the rotation uses (research/MULTIPLAYER.md
   "Room Freestyle", `Room::receive`).
-- Arlington Stream, the shared rooms' only venue until now, is one of them.
+- Arlington Stream, the shared rooms' only venue at first, is one of them.
 
 Judgment: Nationals and Supercross are closed race tracks and stadiums,
 the stunt venues are arenas (research/FREESTYLE_MAPS.md "Family"), and
@@ -101,7 +108,7 @@ they are left out. Arlington's train runs only on Arlington.
 
 Rotation ships **on** (the requested default). Risk assessment: older
 builds follow the lobby's map exactly as in private rooms, so nobody is
-left on the old venue; the cost is a reload every 20-25 min. Turn it off
+left on the old venue; the cost is a reload every 2 hours. Turn it off
 with `FURY_HUB_ROTATION_SECS=off` if that proves disruptive.
 
 ## Waypoints without terrain
@@ -162,7 +169,7 @@ Allocated in research/MULTIPLAYER_EXPERIENCE.md "Shared contracts".
 | --- | --- | --- |
 | `FURY_HUB_EVENT_SECS` | seconds between pop-up events, `N` or `MIN-MAX`; `off` | `240-360` |
 | `FURY_HUB_JOIN_SECS` | the join window | `45` |
-| `FURY_HUB_ROTATION_SECS` | seconds between rotations; `off` | `1200-1500` |
+| `FURY_HUB_ROTATION_SECS` | seconds between rotations; `off` | `7200` |
 
 The browser test runs the server with short timers (below).
 
@@ -203,7 +210,5 @@ The browser test runs the server with short timers (below).
 - Waypoints can fall off the course in a room nobody has ridden yet.
 - The ground ring is drawn as projected dots in the HUD layer (no 3D
   geometry): it does not hide behind hills.
-- The main menu row still says Arlington Free Ride: the rider count route
-  does not carry the rooms' current maps yet (follow-up).
 - Gamepad: the HUD buttons take touch, mouse and keys; no pad buttons are
   assigned yet.

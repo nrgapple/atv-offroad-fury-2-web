@@ -233,8 +233,9 @@ async fn create(
     error(StatusCode::SERVICE_UNAVAILABLE, "Room creation unavailable")
 }
 
-/// Arlington Free Ride: a slot in the lowest-numbered shared room with
-/// space, so riders gather together; a full room opens the next one.
+/// Free Ride: a slot in the lowest-numbered shared room with space, so
+/// riders gather together; a full room opens the next one, on the venue
+/// the others ride ([`crate::engine::hub::Venue`]).
 /// `{"room": "FREERDnn"}` (a friend's Join) tries that room first.
 /// `"riders"` is the slots the build takes (`atv_net::MAX_PLAYERS`); older
 /// builds send none and get rooms kept to `atv_net::LEGACY_PLAYERS`.
@@ -294,7 +295,15 @@ async fn claim(
                 },
                 None => {
                     let key = engine::token(&mut rng);
-                    let room = Room::new(code, key.clone(), true, now_ms()).claimed_by(slots);
+                    let now = now_ms();
+                    let map = shared
+                        .venue
+                        .lock()
+                        .expect("venue lock")
+                        .current(now, crate::rooms::random_u64());
+                    let room = Room::new(code, key.clone(), true, now)
+                        .on_venue(map)
+                        .claimed_by(slots);
                     shared.registry.open(&shared, room).map(|_| key)
                 }
             };
@@ -326,6 +335,15 @@ async fn riders(State(shared): State<Arc<Shared>>) -> Response {
     let value = match value {
         serde_json::Value::Object(mut map) => {
             map.insert("quickplay".into(), true.into());
+            // With no shared room open, the venue the next one opens on.
+            if map.get("map").is_none_or(serde_json::Value::is_null) {
+                let venue = shared
+                    .venue
+                    .lock()
+                    .expect("venue lock")
+                    .current(now_ms(), crate::rooms::random_u64());
+                map.insert("map".into(), venue.into());
+            }
             serde_json::Value::Object(map)
         }
         value => value,

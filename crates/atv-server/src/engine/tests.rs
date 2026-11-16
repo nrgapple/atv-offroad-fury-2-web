@@ -1123,3 +1123,15 @@ fn a_rider_watching_a_loop_round_is_never_relayed_to_the_racers() {
             .all(|p| !matches!(p, Packet::Snapshot(s) if s.peer == late))
     );
 }
+
+#[test]
+fn a_shared_room_opens_on_the_current_venue_and_a_private_room_does_not() {
+    let shared = Fixture::new(true).room.on_venue(3);
+    assert_eq!(shared.map(), 3);
+    assert_eq!(
+        Fixture::new(true).room.on_venue(30).map(),
+        PUBLIC_MAP,
+        "not a rotation venue"
+    );
+    assert_eq!(Fixture::new(false).room.on_venue(3).map(), 1);
+}

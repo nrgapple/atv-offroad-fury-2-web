@@ -48,6 +48,8 @@ pub struct Shared {
     /// Rider identity, friends, stats and the league (research/ONLINE_IDENTITY.md).
     pub players: players::Players,
     pub admission: Mutex<admission::Admission>,
+    /// The venue a newly opened Free Ride room rides.
+    pub venue: Mutex<engine::hub::Venue>,
     pub reports: Mutex<reports::Reports>,
     pub next_conn: AtomicU64,
     pub shutting_down: AtomicBool,
@@ -65,6 +67,7 @@ impl Shared {
             registry: rooms::Registry::default(),
             players: players::Players::default(),
             admission: Mutex::default(),
+            venue: Mutex::new(engine::hub::Venue::new(rooms::random_u64(), now_ms())),
             reports: Mutex::default(),
             next_conn: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),

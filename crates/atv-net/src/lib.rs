@@ -43,7 +43,8 @@ pub const PUBLIC_CAPACITY: usize = 64;
 /// takes in its Free Ride claim (`"riders"`); a server keeps a room that
 /// holds an older build at this many riders, all in slots below it.
 pub const LEGACY_PLAYERS: usize = 20;
-/// Shared Free Ride rooms ride Arlington Stream (`env08`) only.
+/// The venue a shared Free Ride room rides when the server names none
+/// (Arlington Stream, `env08`); the server rotates rooms across venues.
 pub const PUBLIC_MAP: u16 = 8;
 /// Shared rooms are numbered from 1; a full room opens the next one.
 pub const PUBLIC_ROOMS: u8 = 25;

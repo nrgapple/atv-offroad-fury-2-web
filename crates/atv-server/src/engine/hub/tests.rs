@@ -454,7 +454,11 @@ fn the_rotation_vote_moves_the_room_and_ends_what_runs() {
     assert_eq!(last.choice, 2);
     assert!(hub.vote.is_none());
     assert!(hub.spots.is_empty(), "spots belong to the old venue");
-    assert!(hub.next_rotation.unwrap() >= now + 20 * 60_000);
+    assert_eq!(
+        hub.next_rotation,
+        Some(now + ROTATION_MS),
+        "two hours to the next"
+    );
 }
 
 #[test]
@@ -510,6 +514,29 @@ fn hub_settings_parse_ranges_and_off() {
             "{name}={value}"
         );
     }
+}
+
+#[test]
+fn new_rooms_open_where_the_last_room_moved_and_move_on_once_a_rotation_is_due() {
+    let mut venue = Venue::new(7, 0);
+    let first = venue.current(1_000, 3);
+    assert!(ROTATION_MAPS.contains(&first));
+    // A room voted elsewhere: the next room opens there.
+    let voted = ROTATION_MAPS.iter().copied().find(|&m| m != first).unwrap();
+    venue.moved(voted, 60_000);
+    assert_eq!(venue.current(ROTATION_MS, 5), voted, "not yet due");
+    // A rotation fell due with no room to move: another venue.
+    let next = venue.current(60_000 + ROTATION_MS, 5);
+    assert_ne!(next, voted);
+    assert!(ROTATION_MAPS.contains(&next));
+    assert_eq!(
+        venue.current(60_000 + ROTATION_MS + 1, 6),
+        next,
+        "stays until due again"
+    );
+    // Only rotation venues count as moves.
+    venue.moved(30, 70_000);
+    assert_eq!(venue.current(70_001, 0), next);
 }
 
 #[test]
