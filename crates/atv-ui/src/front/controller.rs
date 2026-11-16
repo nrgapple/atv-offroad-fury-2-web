@@ -2036,6 +2036,34 @@ impl Frontend {
         &self.choices
     }
 
+    /// The main menu's rows (action, label) as it would list them now, for
+    /// the main menu over the live Free Ride world (research/
+    /// FREERIDE_MENU.md). The current page is left as it is.
+    pub fn main_rows(&mut self, view: &Viewport) -> Vec<(String, String)> {
+        let page = std::mem::replace(&mut self.page, "main".into());
+        let (choices, selection) = (self.choices.clone(), self.selection);
+        self.refresh(view);
+        let rows = std::mem::replace(&mut self.choices, choices);
+        self.page = page;
+        self.selection = selection;
+        rows
+    }
+
+    /// Chooses `action` on the page shown (the live Free Ride main menu
+    /// hands the frontend's main menu the row picked over the world).
+    pub fn choose(
+        &mut self,
+        action: &str,
+        view: &Viewport,
+        settings: &mut Settings,
+    ) -> Option<Event> {
+        if let Some(at) = self.choices.iter().position(|(a, _)| a == action) {
+            self.selection = at;
+        }
+        let event = self.run(action, view, settings);
+        self.seat_gate(event, view)
+    }
+
     fn current(&self) -> Option<&str> {
         self.choices.get(self.selection).map(|(a, _)| a.as_str())
     }

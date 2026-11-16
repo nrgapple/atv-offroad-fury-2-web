@@ -63,6 +63,9 @@ pub enum Event {
     Photo,
     /// Pause → Replay: the last stretch of the ride again.
     Replay,
+    /// The live Free Ride main menu's row (the frontend main menu's
+    /// action): leave the world for that page or ride.
+    Home(String),
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -179,6 +182,8 @@ pub struct PauseMenu {
     /// The pages Back returns through with the row each was left by
     /// (the original's page history, research/MENU_FLOW.md).
     history: Vec<(String, usize, Option<String>)>,
+    /// The live Free Ride main menu's rows (action, label) after Hop in.
+    pub home: Vec<(String, String)>,
     /// The row to select once the returned-to page's rows are built.
     restore: Option<String>,
 }
@@ -200,6 +205,7 @@ struct Pressed {
 fn parent(page: &str) -> &'static str {
     match page {
         "settings" => "pause",
+        "home" => "home",
         "minimap-config" | "race-overlays" => "hud-settings",
         "controller-settings" | "bindings" => "controls",
         "ecosystem-warning" => "game-settings",
@@ -240,6 +246,17 @@ impl PauseMenu {
             credits_since: 0.,
             history: Vec::new(),
             restore: None,
+            home: Vec::new(),
+        }
+    }
+
+    /// The main menu over the live Free Ride world (research/
+    /// FREERIDE_MENU.md): Hop in, then `rows` (the frontend's main menu).
+    pub fn home(rows: Vec<(String, String)>) -> Self {
+        Self {
+            page: "home".into(),
+            home: rows,
+            ..Self::new()
         }
     }
 
@@ -473,6 +490,14 @@ impl PauseMenu {
         request["show_fps"] = p.show_fps.into();
         request["editor_active"] = self.editor_active.into();
         request["free_ride_cpus"] = p.free_ride_cpus.into();
+        request["start_menu"] = p.start_menu.into();
+        if page == "home" {
+            request["home_rows"] = self
+                .home
+                .iter()
+                .map(|(id, label)| json!({"id": id, "label": label, "value": ""}))
+                .collect();
+        }
         if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
@@ -613,7 +638,10 @@ impl PauseMenu {
     }
 
     fn back(&mut self) -> Option<Event> {
-        if self.page == "pause" || (self.from_menu && self.page == "settings") {
+        if self.page == "pause"
+            || self.page == "home"
+            || (self.from_menu && self.page == "settings")
+        {
             return Some(Event::Resume);
         }
         if self.page == "jukebox" {
@@ -646,6 +674,11 @@ impl PauseMenu {
         stepped: bool,
         ctx: &mut Context,
     ) -> Option<Event> {
+        // The live Free Ride main menu: Hop in rides, Options opens over the
+        // world, and every other row leaves it for the frontend.
+        if self.page == "home" && !matches!(action, "resume" | "back" | "settings" | "devlog") {
+            return Some(Event::Home(action.into()));
+        }
         let event = match action {
             "resume" => return Some(Event::Resume),
             "reset" => return Some(Event::Reset),
@@ -1388,6 +1421,17 @@ impl PauseMenu {
         if p.moved || p.caught {
             return None;
         }
+        // The live Free Ride main menu: a tap on the world beside the panel
+        // rides (Hop in).
+        if self.page == "home"
+            && p.index == usize::MAX
+            && Self::hit(hits, x, y).is_none()
+            && !hits
+                .iter()
+                .any(|(r, id)| *id == super::SHEET && (r.contains(x, y) || r.contains(p.x, p.y)))
+        {
+            return Some(Event::Resume);
+        }
         let (index, _) = Self::hit(hits, x, y)?;
         if index != p.index {
             return None;
@@ -1425,8 +1469,10 @@ impl PauseMenu {
             .iter()
             .find(|(_, id)| *id == ROW + self.selection as u32)
             .map(|(r, _)| *r);
-        // Back and a list's actions sit outside the scrolled part.
-        let row = row.filter(|_| !self.selected().is_some_and(super::fixed));
+        // Back and a list's actions sit outside the scrolled part, as does
+        // the live Free Ride main menu's Hop in.
+        let home = self.page == "home" && self.selected() == Some("resume");
+        let row = row.filter(|_| !home && !self.selected().is_some_and(super::fixed));
         if let (Some(panel), Some(row)) = (panel, row) {
             self.scroller.set_bounds(max_scroll, panel.h);
             let before = self.scroller.offset();
@@ -1811,6 +1857,7 @@ mod parity_tests {
                 "sound-configuration",
                 "new-profiles",
                 "free-ride-cpus",
+                "start-in",
                 "back"
             ]
         );
@@ -2179,5 +2226,74 @@ mod parity_tests {
         fx.with(&mut menu, |m, _| m.cancel_capture());
         assert!(menu.capture.is_none());
         assert_eq!(menu.selected(), Some("bind:brake"));
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+    use crate::{hud::minimap::MinimapSettings, menu::prefs::Preferences, touch::TouchControls};
+
+    /// The main menu over the live Free Ride world (research/FREERIDE_MENU.md).
+    #[test]
+    fn hop_in_leads_rows_leave_and_a_tap_beside_the_panel_rides() {
+        let mut settings = Settings::memory();
+        let mut prefs = Preferences::load(&settings, false);
+        let mut minimap = MinimapSettings::load(&settings);
+        let mut touch = TouchControls::new(&settings, false);
+        let mut ctx = Context {
+            settings: &mut settings,
+            prefs: &mut prefs,
+            minimap: &mut minimap,
+            touch: &mut touch,
+            bindings: None,
+            pad_name: None,
+            pads: Vec::new(),
+            pad_standard: true,
+            view: Default::default(),
+            lobby: None,
+            music: None,
+        };
+        let rows = [("single", "Single Player"), ("settings", "Options")]
+            .map(|(a, l)| (a.to_string(), l.to_string()))
+            .to_vec();
+        let mut menu = PauseMenu::home(rows);
+        menu.refresh(&ctx);
+        assert_eq!(menu.rows.choices, ["resume", "single", "settings"]);
+        assert_eq!(menu.rows.label("resume"), Some("Hop in"));
+        // Hop in is selected first: Enter rides, as does Back.
+        assert_eq!(menu.key("Enter", &mut ctx), Some(Event::Resume));
+        assert_eq!(menu.key("Escape", &mut ctx), Some(Event::Resume));
+        // Another row leaves the world for the frontend.
+        assert_eq!(
+            menu.run("single", 1, false, &mut ctx),
+            Some(Event::Home("single".into()))
+        );
+        // Options opens over the world and Back returns to the main menu.
+        assert_eq!(menu.run("settings", 1, false, &mut ctx), None);
+        assert_eq!(menu.page, "settings");
+        menu.refresh(&ctx);
+        assert_eq!(menu.key("Escape", &mut ctx), None);
+        assert_eq!(menu.page, "home");
+        menu.refresh(&ctx);
+        // A tap on the world beside the panel rides; one on the panel does
+        // not.
+        let hits = [(Rect::new(0., 0., 300., 400.), super::super::SHEET)];
+        menu.press(&hits, 1, 100., 100., &mut ctx);
+        assert_eq!(menu.release(&hits, 1, 100., 100., &mut ctx), None);
+        menu.press(&hits, 1, 600., 100., &mut ctx);
+        assert_eq!(
+            menu.release(&hits, 1, 600., 100., &mut ctx),
+            Some(Event::Resume)
+        );
+        // Game Settings → Start in.
+        menu.run("settings", 1, false, &mut ctx);
+        menu.run("game-settings", 1, false, &mut ctx);
+        assert_eq!(
+            menu.run("start-in", 1, false, &mut ctx),
+            Some(Event::Changed)
+        );
+        assert!(ctx.prefs.start_menu);
+        assert!(crate::menu::prefs::start_menu(ctx.settings));
     }
 }

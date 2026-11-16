@@ -147,6 +147,11 @@ pub struct Request {
     pub access_rows: Vec<ControlRow>,
     #[serde(default)]
     pub access_fov: f32,
+    /// The live Free Ride main menu (research/FREERIDE_MENU.md): the main
+    /// menu's rows as the frontend lists them (action, label), after its
+    /// Hop in.
+    #[serde(default)]
+    pub home_rows: Vec<ControlRow>,
     #[serde(default)]
     pub music_page: usize,
     #[serde(default)]
@@ -231,6 +236,10 @@ pub struct Request {
     /// (0-3; research/CPU_MINIGAMES.md); 0, off, is original.
     #[serde(default)]
     pub free_ride_cpus: u8,
+    /// Game Settings → Start in: Menu (the static main menu) rather than
+    /// the live Free Ride world (research/FREERIDE_MENU.md).
+    #[serde(default)]
+    pub start_menu: bool,
     /// Game Settings (Settings_Game, PAGE15): Measurement Metric,
     /// Ecosystem Collision and Sound Configuration.
     #[serde(default)]
@@ -572,9 +581,15 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.gear_rows.len() > 8
         || request.alpha_rows.len() > 12
         || request.access_rows.len() > 8
+        || request.home_rows.len() > 12
         || !(request.access_fov == 0. || (85.0..=125.0).contains(&request.access_fov))
-        || request.alpha_rows.iter().chain(&request.access_rows).any(|row| {
-            row.id.is_empty()
+        || request
+            .alpha_rows
+            .iter()
+            .chain(&request.access_rows)
+            .chain(&request.home_rows)
+            .any(|row| {
+                row.id.is_empty()
                 || row.id.len() > 40
                 || !row
                     .id
@@ -610,6 +625,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "alpha"
             | "accessibility"
             | "pause"
+            | "home"
             | "players"
             | "rider"
             | "hud-settings"
@@ -688,6 +704,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "tracks" => "Freestyle",
         "race" => "Single Race",
         "pause" => "Pause",
+        "home" => "Main Menu",
         "settings" => "Options",
         "extras" => "Extras",
         "game-settings" => "Game Settings",
@@ -1680,6 +1697,29 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
             }
         }
+        "home" => {
+            // The main menu over the live Free Ride world: Hop in, then the
+            // main menu's rows in the frontend's order (the host draws Hop
+            // in beside the panel; research/FREERIDE_MENU.md).
+            let choices: Vec<(&str, &str)> = std::iter::once(("Hop in", "resume"))
+                .chain(
+                    request
+                        .home_rows
+                        .iter()
+                        .map(|row| (row.label.as_str(), row.id.as_str())),
+                )
+                .collect();
+            let row = 54f32.min((h - 96.) / choices.len() as f32);
+            for (i, (label, action)) in choices.iter().enumerate() {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 92. + i as f32 * row, w - 48., row],
+                    request.selection % choices.len() == i,
+                );
+            }
+        }
         "ecosystem-warning" => {
             // The original's Warning alert 0x90 (`0025e120`) before
             // Ecosystem Collision turns off.
@@ -1822,6 +1862,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                             _ => "Free Ride CPU riders: 3",
                         },
                         "free-ride-cpus",
+                    ),
+                    (
+                        if request.start_menu {
+                            "Start in: Menu"
+                        } else {
+                            "Start in: Free Ride"
+                        },
+                        "start-in",
                     ),
                 ],
                 _ => vec![
@@ -2545,6 +2593,26 @@ mod tests {
         let mut r = request("game-settings", 390., 844.);
         r.free_ride_cpus = 2;
         assert!(labels(r).iter().any(|t| t == "Free Ride CPU riders: 2"));
+        assert!(game.iter().any(|t| t == "Start in: Free Ride"));
+        let mut r = request("game-settings", 390., 844.);
+        r.start_menu = true;
+        assert!(labels(r).iter().any(|t| t == "Start in: Menu"));
+        // The live Free Ride main menu: Hop in, then the frontend's rows.
+        let mut r = request("home", 1280., 720.);
+        r.home_rows = [("single", "Single Player"), ("settings", "Options")]
+            .map(|(id, label)| ControlRow {
+                id: id.into(),
+                label: label.into(),
+                value: String::new(),
+            })
+            .into();
+        let home = layout(r).unwrap();
+        assert_eq!(home.choices, ["resume", "single", "settings"]);
+        assert!(
+            labels(request("home", 1280., 720.))
+                .iter()
+                .any(|t| t == "Main Menu")
+        );
         let warning = layout(request("ecosystem-warning", 390., 844.)).unwrap();
         assert_eq!(warning.choices, ["ecosystem-yes", "ecosystem-no"]);
         let text = labels(request("ecosystem-warning", 640., 448.));
@@ -2670,6 +2738,7 @@ mod tests {
             alpha_rows: vec![],
             access_rows: vec![],
             access_fov: 0.,
+            home_rows: vec![],
             music_page: 0,
             music_status: String::new(),
             music_enabled: true,
@@ -2689,6 +2758,7 @@ mod tests {
             flips: false,
             realistic_train: false,
             free_ride_cpus: 0,
+            start_menu: false,
             metric: false,
             ecosystem_collision: true,
             sound_configuration: String::new(),
