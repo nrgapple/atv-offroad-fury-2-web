@@ -3,8 +3,10 @@
 //   1. Past the title the page joins Free Ride (on the venue the shared room is on in
 //      the server's rotation) and opens the Main Menu overlay over the ride (Hop in
 //      selected) instead of the static main menu.
-//   2. Hop in closes it and the rider rides; Pause brings the Main Menu back; a
-//      click on the world beside the panel closes it too.
+//   2. While the menu is open a roaming CPU rides the player's rider (the
+//      autopilot); Hop in hands the same ride back where it stands and the player
+//      rides; Pause brings the Main Menu and the autopilot back; a click on the
+//      world beside the panel closes it too.
 //   3. Single Player leaves the world for the frontend's Single Player page;
 //      Back to the main menu joins the world again.
 //   4. A phone held upright gets the same menu with Hop in bottom right.
@@ -13,17 +15,33 @@
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_menu.mjs
 // ATV_SCREENSHOTS=dir saves freeride-menu-desktop.png and freeride-menu-phone.png.
 import assert from 'node:assert/strict';
-import { assertNoErrors, holdKey, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
 const shots = process.env.ATV_SCREENSHOTS;
 const report = {};
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const wait = (page, predicate, arg, timeout = 60000) => page.waitForFunction(predicate, arg, { timeout });
-const state = () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
-const onFront = (page, name) => wait(page, `(${state})().front?.page === ${JSON.stringify(name)}`);
+// Predicates are functions: the page's CSP refuses string evaluation.
+const onFront = (page, name) =>
+  wait(page, name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name);
 const onMenu = (page, name, timeout) =>
-  wait(page, `(${state})().toolbar?.menu?.page === ${JSON.stringify(name)}`, null, timeout);
-const menuClosed = page => wait(page, `(${state})().toolbar && !(${state})().toolbar.menu`);
+  wait(
+    page,
+    name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === name,
+    name,
+    timeout
+  );
+const menuClosed = page =>
+  wait(page, () => {
+    const ui = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+    return Boolean(ui.toolbar) && !ui.toolbar.menu;
+  });
+const probed = (page, answered) =>
+  wait(
+    page,
+    answered => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').home?.probed === answered,
+    answered
+  );
 async function key(page, code) {
   await page.keyboard.down(code);
   await nextFrames(page, 2);
@@ -77,6 +95,15 @@ try {
   assert.equal(ui.toolbar.menu.selection, 0, 'Hop in is selected first');
   for (const row of ['single', 'multiplayer', 'settings']) assert.ok(ui.toolbar.menu.choices.includes(row), row);
   assert.ok(!ui.toolbar.menu.choices.includes('leave'), 'no Free Ride pause rows');
+  // The autopilot rides under the menu.
+  const origin = () => page.evaluate(() => JSON.parse(window.furyMultiplayer).origin);
+  const flat = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
+  let start = await origin();
+  await nextFrames(page, 240);
+  ui = await read(page);
+  assert.equal(ui.home.piloting, true, 'the autopilot rides under the menu');
+  report.piloted = flat(start, await origin());
+  assert.ok(report.piloted > 10, `autopilot moved the rider: ${report.piloted} ft`);
   const hop = await hit(page, 'resume');
   assert.ok(hop.rect.x > 1280 * 0.6, `Hop in on the right: ${JSON.stringify(hop.rect)}`);
   assert.ok(hop.rect.height >= 48, 'Hop in touch target');
@@ -84,15 +111,36 @@ try {
   if (shots) await page.screenshot({ path: `${shots}/freeride-menu-desktop.png` });
 
   // 2. Hop in rides; Pause reopens the Main Menu; a click beside it rides.
+  start = await origin();
   await page.mouse.click(hop.x, hop.y);
   await menuClosed(page);
-  const before = (await page.evaluate(() => window.atvTerrainStatus.frame.origin)).slice();
-  await holdKey(page, 'KeyW', 120);
-  const after = await page.evaluate(() => window.atvTerrainStatus.frame.origin);
-  report.rode = Math.hypot(after[0] - before[0], after[2] - before[2]);
-  assert.ok(report.rode > 3, `rode after Hop in: ${report.rode} ft`);
+  const before = await origin();
+  // Handed over where it stands: no respawn or teleport.
+  report.handover = flat(start, before);
+  assert.ok(report.handover < 30, `no jump at Hop in: ${report.handover} ft`);
+  assert.equal((await read(page)).home.piloting, false);
+  // The autopilot lets go: with no input the rider coasts down; the
+  // player's throttle then drives it.
+  await nextFrames(page, 300);
+  let coast = await origin();
+  await nextFrames(page, 60);
+  report.coasting = flat(coast, await origin());
+  coast = await origin();
+  await page.keyboard.down('KeyW');
+  await nextFrames(page, 120);
+  await page.keyboard.up('KeyW');
+  const after = await origin();
+  report.rode = flat(coast, after);
+  assert.ok(report.coasting < 15, `no autopilot after Hop in: ${report.coasting} ft a second`);
+  assert.ok(report.rode > report.coasting + 5, `the player rides after Hop in: ${report.rode} ft`);
   await key(page, 'Escape');
   await onMenu(page, 'home');
+  // Pause: the autopilot takes over again.
+  start = await origin();
+  await nextFrames(page, 180);
+  assert.equal((await read(page)).home.piloting, true);
+  report.repiloted = flat(start, await origin());
+  assert.ok(report.repiloted > 5, `autopilot again after Pause: ${report.repiloted} ft`);
   await page.mouse.click(760, 140);
   await menuClosed(page);
   await key(page, 'Escape');
@@ -139,7 +187,7 @@ try {
   await offline.route('**/multiplayer/**', route => route.abort());
   await setup(offline, 'freeride');
   await onFront(offline, 'main');
-  await wait(offline, `(${state})().home?.probed === false`);
+  await probed(offline, false);
   await offline.waitForTimeout(1500);
   ui = await read(offline);
   assert.equal(ui.front?.page, 'main', 'static main menu');
@@ -150,7 +198,7 @@ try {
   const menu = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await setup(menu, null);
   await onFront(menu, 'main');
-  await wait(menu, `(${state})().home?.probed === true`);
+  await probed(menu, true);
   await menu.waitForTimeout(1500);
   ui = await read(menu);
   assert.equal(ui.front?.page, 'main', 'Start in: Menu keeps the static main menu');

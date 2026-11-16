@@ -1192,6 +1192,9 @@ struct World {
     /// A multiplayer room's ride: the start lamps' beeps load even off a
     /// race (Quick Play's countdown, research/QUICK_PLAY.md).
     lamps: bool,
+    /// The live Free Ride main menu: a roaming CPU rides the player's ride
+    /// while the menu is open (home.rs).
+    pilot: bool,
 }
 
 /// The start lamps' beep and GO (`002e79a0`), for a room ride's countdowns.
@@ -1333,6 +1336,7 @@ async fn prepare_inner(
         user_course,
         editor,
         lamps,
+        pilot,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1646,16 +1650,23 @@ async fn prepare_inner(
             );
         }
     }
-    // A free ride's CPU riders roam the venue.
-    let roam = match cpus.first() {
-        Some(cpu) if cpu_request.roam => {
+    // A free ride's CPU riders roam the venue, as does the live Free Ride
+    // main menu's autopilot.
+    let roam = match (cpus.first(), riding.as_ref()) {
+        (Some(cpu), _) if cpu_request.roam => {
             progress(&gpu, "Reading the venue for CPU riders…");
             Some(Rc::new(
                 game_cpu::roam_map(&content, &venue, &cpu.riding.ride).await,
             ))
         }
+        (_, Some(own)) if pilot => Some(Rc::new(
+            game_cpu::roam_map(&content, &venue, &own.ride).await,
+        )),
         _ => None,
     };
+    if pilot && let (Some(own), Some(map)) = (riding.as_mut(), roam.as_ref()) {
+        own.pilot = Some(game_cpu::Pilot::new(map.clone()));
+    }
     let hud_assets = if riding.is_some() {
         // The radar's tinted racers take the rider's colour assistance.
         atv_ui::hud::palette::set(
@@ -3628,6 +3639,8 @@ impl App {
             state["active"] = active.into();
             // The live Free Ride main menu (home.rs).
             state["home"] = self.home.report();
+            state["home"]["piloting"] =
+                (riding.pilot.is_some() && riding.paused && riding.menu_open).into();
             state["shadows"] = serde_json::json!({
                 "contact": self.meter.shadows.0,
                 "map": self.meter.shadows.1,
@@ -6141,6 +6154,7 @@ impl ApplicationHandler<Message> for App {
             user_course: None,
             editor: false,
             lamps: false,
+            pilot: false,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -9051,6 +9065,7 @@ impl App {
                 .and(self.user_course.clone()),
             editor: race.is_none() && self.editor.is_some(),
             lamps: false,
+            pilot: false,
             // Only a local game or a plain free ride takes CPU riders
             // (never a room, a race, an objective, Training or the editor).
             cpus: if self.cpu_request.roam {
@@ -9194,6 +9209,7 @@ impl App {
             });
         let (mut world, ride) = self.ride_setup(&front, quad, rider, race);
         world.lamps = room.is_some();
+        world.pilot = self.home.riding;
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
@@ -11127,6 +11143,7 @@ impl App {
             user_course: None,
             editor: false,
             lamps: true,
+            pilot: false,
         };
         let future = async move {
             let mut ready = match prepare(

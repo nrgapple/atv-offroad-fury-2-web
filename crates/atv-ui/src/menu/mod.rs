@@ -299,6 +299,8 @@ impl<'a> Look<'a> {
         let home = state.page == "home";
         let pause = state.page == "pause" || home;
         let (row, font) = match (narrow, short, pause) {
+            // The main menu's eight rows leave the world in view.
+            (true, _, true) if home => (48., 18.),
             (true, _, true) => (if h <= 640. { 46. } else { 50. }, 19.),
             (true, _, false) => (48., 17.),
             (_, true, true) => (44., 18.),
@@ -322,7 +324,9 @@ impl<'a> Look<'a> {
             Classic {
                 s,
                 panel,
-                text: 75. * s,
+                // The narrower main menu keeps the lettering's share of
+                // the panel.
+                text: if home && !narrow { 52. * s } else { 75. * s },
                 nav: (32. * s).max(44.),
             }
         });

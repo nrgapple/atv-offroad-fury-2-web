@@ -26,9 +26,18 @@ world.
   A rides at once; Up from the first menu row reaches it and Down from the
   last wraps to it. Back (Escape, B/Y) and Start also ride. A click or tap on
   the world outside the panel and Hop in rides too.
-- **While the menu is open** the rider waits with neutral input (an online
-  ride keeps running under its menus, research/MULTIPLAYER.md), so the other
-  riders and the room's presence carry on.
+- **Autopilot while the menu is open.** The player's own rider does not sit
+  idle: a free ride's roaming CPU (`atv_core::roam_cpu` with the
+  `atv_core::game_cpu` driver, skill and stuck rules, exactly as Game
+  Settings' Free Ride CPU riders roam; research/CPU_MINIGAMES.md "Free
+  roam") rides it from where it is. It is the same ride stepped with the
+  CPU's controls instead of the player's (an online ride keeps stepping
+  under its menus, research/MULTIPLAYER.md), so the room sees it riding
+  normally and the camera keeps following it. Hop in hands that same ride
+  back where it stands, at its speed (no respawn or teleport); the next
+  steps take the player's input. Pause gives it to the autopilot again,
+  over Options too. A stuck autopilot recovers as a roaming CPU does
+  (turned in place, or its Reset after the stall time).
 - **Pause** in this ride opens the same Main Menu (not the Free Ride pause
   rows; Change ATV and Rider is reached through Single Player → Garage).
 - **Options** opens over the world: the ride's Options pages (Pause →
@@ -56,6 +65,10 @@ world.
 - `atv_ui::menu`: `PauseMenu::home(rows)`; its rows other than Hop in,
   Options and Dev log return `Event::Home(action)`; the layout draws Hop in
   beside the panel (`SHEET` is the panel's hit id for the outside tap).
+- `atv_app::game_cpu::Pilot`: the roaming CPU's brain on the player's
+  `Riding` (`Riding::pilot`), used by the online paused-step branch while
+  the menu is open; the venue's roam map is read with the ride
+  (`World::pilot`).
 - `atv_app::home`: when the world may open (a fresh server answer, no recent
   failure), and the hooks in `front_frame` (`home_check`), `Message::Ready`
   (open the menu, pause the rider), `Message::Failed`, `room_ended` and
@@ -63,14 +76,17 @@ world.
 - Browser tests open on the static menu: `tools/browser/harness.mjs` saves
   `atv-start-in=menu` in every context unless the test saved a choice.
   `tools/test_engine_freeride_menu.mjs` (multiplayer group) covers the boot,
-  Hop in, Pause, the outside click, Single Player and Back, the phone layout,
-  an aborted game server and Start in: Menu.
+  the autopilot moving the rider under the menu, Hop in handing it over in
+  place (then coasting without input and riding on the player's throttle),
+  Pause returning it to the autopilot, the outside click, Single Player and
+  Back, the phone layout, an aborted game server and Start in: Menu.
 
 ## Not done / unverified
 
 - Against the production game server (venue rotation, a full room): only a
   local fury-server was used.
-- No slow camera while the menu is open; the chase camera holds still.
+- The autopilot avoids no room riders (it roams as a lone CPU does) and its
+  route quality is the roaming CPU's; checked on one venue on a local server.
 - Free Ride's own pause rows (Players, Change ATV and Rider, Jukebox, Copy
   invite link) are not on this menu, nor are the main menu Options' Jukebox
   and Credits.
