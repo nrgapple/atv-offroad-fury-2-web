@@ -1043,14 +1043,12 @@ impl Renderer {
                     instance.color = [alpha; 4];
                 }
             }
-            Some(Fill::Scene(image)) => {
-                if self.images.contains_key(image) {
-                    source = Source::Image(*image);
-                    instance.params = [0., 0., paint.rotation, 3.];
-                    instance.color = [alpha; 4];
-                }
+            Some(Fill::Scene(image)) if self.images.contains_key(image) => {
+                source = Source::Image(*image);
+                instance.params = [0., 0., paint.rotation, 3.];
+                instance.color = [alpha; 4];
             }
-            None => {}
+            Some(Fill::Scene(_)) | None => {}
         }
         if paint.ring {
             instance.params[1] = 1.;
