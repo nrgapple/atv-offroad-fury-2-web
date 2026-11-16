@@ -53,7 +53,7 @@ async function rider(browser, errors, hooks, viewport, extra = '') {
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
   await page.goto(
-    url(`/play.html?uiDiagnostics=1&mode=multiplayer&room=FREERD01&map=env08&play=1&hubTest=${hooks}${extra}`)
+    url(`/play.html?uiDiagnostics=1&mode=multiplayer&room=FREERD01&map=env08&play=1&freerideSpawn=meet&hubTest=${hooks}${extra}`)
   );
   await wait(page, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
   const e = await engine(page);

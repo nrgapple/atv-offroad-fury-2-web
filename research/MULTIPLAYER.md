@@ -486,7 +486,9 @@ original-game online mode.
   - The remote rig and GPU model caches hold one model per possible rider (20)
     instead of eight.
   - The Players page uses columns when 20 rows do not fit above Back.
-  - Arrivals spawn beside a random rider rather than slot 0.
+  - Arrivals spawn beside a random rider rather than slot 0. Since issue
+    #710 (2026-11-16) shared-room arrivals start at the venue's validated
+    spawn spots instead (research/FREERIDE_HUB.md "Spawn spots").
 
 Host evidence (one Mac, Chromium/Metal headless, local `wrangler dev` relay,
 original content, 2026-10-16) from `tools/test_freeride.mjs`. Two real

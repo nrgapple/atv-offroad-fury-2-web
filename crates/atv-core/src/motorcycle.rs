@@ -840,6 +840,9 @@ impl Motorcycle {
     pub fn set_scene(&mut self, scene: Option<crate::scene_collision::SceneCollision>) {
         self.scene = scene;
     }
+    pub fn scene_collision(&self) -> Option<&crate::scene_collision::SceneCollision> {
+        self.scene.as_ref()
+    }
     pub fn scene_collision_mut(&mut self) -> Option<&mut crate::scene_collision::SceneCollision> {
         self.scene.as_mut()
     }
