@@ -35,6 +35,10 @@ export const TESTS = {
     group: 'manual', timeout: 900,
     reason: 'The Glades host pixel regression uses a fixed GPU crop and private MX content; it is not a physical-phone or native-render comparison'
   },
+  'test_engine_sun_flares.mjs': {
+    group: 'manual', timeout: 900,
+    reason: 'Fixed host cameras on private ATV2 and MX content; terrain-ray occlusion state, not a native-render or phone comparison'
+  },
   'test_engine_mx_hidden_scene.mjs': {
     group: 'manual', timeout: 900,
     reason: 'Keweni Falls host scene regression uses private MX content and a fixed camera; it is not a native-render comparison'
