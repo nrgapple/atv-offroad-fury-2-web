@@ -1,0 +1,14 @@
+{
+  "id": "gallery-tioga-valley-on-a-phone-cdc0d332407842bd8a2ca70ff72f384b",
+  "timestamp": "2026-11-16T20:39:13.177674+00:00",
+  "recorded_at": "2026-11-16T20:39:32.929962+00:00",
+  "kind": "verification",
+  "title": "Gallery: Tioga Valley on a phone",
+  "summary": "Portrait phone layout on Tioga Valley: one-handed hold-anywhere riding and the circular GPS with speed.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-tioga-valley-on-a-phone-cdc0d332407842bd8a2ca70ff72f384b.png",
+  "caption": "Portrait phone view on Tioga Valley"
+}

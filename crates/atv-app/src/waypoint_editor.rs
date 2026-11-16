@@ -172,6 +172,7 @@ impl Session {
             .enumerate()
             .map(|(i, w)| atv_ui::hud::peers::Peer {
                 slot: 3,
+                paint: 0,
                 name: format!("Gate {}", i + 1),
                 position: [w.x, self.heights.get(i).copied().unwrap_or(0.), w.z],
                 stale: false,

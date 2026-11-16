@@ -646,7 +646,7 @@ fn batch(interval_ms: u16, poses: &[Vec<u8>]) -> Result<()> {
 }
 
 fn links(mask: u32) -> Result<()> {
-    if mask >> MAX_PLAYERS == 0 {
+    if mask.checked_shr(MAX_PLAYERS as u32).unwrap_or(0) == 0 {
         Ok(())
     } else {
         Err(Error::InvalidValue)
@@ -683,15 +683,17 @@ fn lobby(l: &Lobby) -> Result<()> {
     if l.players.is_empty() || l.players.len() > MAX_PLAYERS {
         return Err(Error::InvalidValue);
     }
+    // A server may run shared rooms above the default capacity, never
+    // above the protocol bound.
     let capacity = if l.public {
-        crate::PUBLIC_CAPACITY
+        MAX_PLAYERS
     } else {
         crate::PRIVATE_CAPACITY
     };
     if l.players.len() > capacity {
         return Err(Error::InvalidValue);
     }
-    let mut mask = 0u32;
+    let mut mask = 0u64;
     for p in &l.players {
         participant(p)?;
         if mask & (1 << p.id) != 0 {

@@ -127,7 +127,8 @@ class DevlogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             baseline(root)
-            checkpoint(root, 'new', image='/devlog-images/new.png', caption='Private pixels')
+            checkpoint(root, 'new', image='/devlog-images/new.png', caption='Private pixels',
+                       images=[{'path': '/devlog-images/more.png', 'caption': 'More'}])
             for name in package_release.STATIC_FILES:
                 path = root / 'web/dist' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +139,7 @@ class DevlogTests(unittest.TestCase):
             self.assertEqual([entry['id'] for entry in log['entries']], ['historical', 'new'])
             self.assertNotIn('image', log['entries'][-1])
             self.assertNotIn('caption', log['entries'][-1])
+            self.assertNotIn('images', log['entries'][-1])
             self.assertFalse(any(path.name.endswith('.png') and path.name == 'new.png' for path in (root / 'work/release').rglob('*')))
 
     def test_live_http_log_aggregates_and_head_matches_get_without_exposing_entries(self):

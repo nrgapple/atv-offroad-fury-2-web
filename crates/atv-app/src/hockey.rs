@@ -525,6 +525,7 @@ impl HockeySession {
         let [x, y, z] = self.puck.position;
         vec![atv_ui::hud::peers::Peer {
             slot: 1,
+            paint: 0,
             name: "Puck".into(),
             // screen_marker lifts tags 7 ft.
             position: [x, y - 5., z],

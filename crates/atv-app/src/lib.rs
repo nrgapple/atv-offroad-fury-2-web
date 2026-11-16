@@ -827,6 +827,7 @@ impl ObjectiveSession {
             .filter(|(i, _)| untouched.get(*i).copied().unwrap_or(false))
             .map(|(_, t)| atv_ui::hud::peers::Peer {
                 slot: if red { 0 } else { 2 },
+                paint: 0,
                 name: "Target".into(),
                 position: [t.position[0], t.position[1] - 7., t.position[2]],
                 stale: false,
@@ -1716,6 +1717,45 @@ async fn prepare_inner(
     })
 }
 
+/// Shared Free Ride (issue #710, research/FREERIDE_HUB.md "Spawn spots"):
+/// reads the venue's spawn spots for the ride's Reset ATV and starts the
+/// arrival at one instead of the venue's start. `moved`: the whole room
+/// arrived together with a map rotation. A reload in place (Change ATV and
+/// Rider) keeps the spots but not a new placement; a race keeps its own.
+async fn scatter(ready: &mut Ready, net: &mut multiplayer::Net, moved: bool) {
+    // `freerideSpawn=meet` (tests that need riders together, such as the
+    // hub's challenge range): arrivals meet a rider as before.
+    if !net.shared() || url_flag("freerideSpawn=meet") {
+        return;
+    }
+    let Some(riding) = ready.riding.as_mut().filter(|r| r.ride.race().is_none()) else {
+        return;
+    };
+    let content = net.content();
+    let spots = match atv_game::multiplayer::spots::free_ride_spots(
+        &content,
+        &ready.venue.environment,
+        &riding.ride,
+        ready.venue.scene.crowd_present,
+    )
+    .await
+    {
+        Ok(spots) if !spots.is_empty() => Rc::new(spots),
+        Ok(_) => return,
+        Err(error) => {
+            status(&format!("Free Ride spawn spots unavailable: {error}"));
+            return;
+        }
+    };
+    let place = net.resume_at.is_none();
+    if let Some(spot) = net.scatter(spots.clone(), &riding.ride, moved, place)
+        && let Err(error) = riding.place_beside(spot.origin, spot.yaw, [0.; 3])
+    {
+        status(&format!("Free Ride spawn failed: {error}"));
+    }
+    riding.spots = Some(spots);
+}
+
 /// Native room captures: run the room (poses, remote models) until
 /// `FURY_ROOM_PEERS` other riders (default 1) are drawn, then two more
 /// seconds of presentation; at most `FURY_ROOM_WAIT` seconds (default 20).
@@ -2247,7 +2287,7 @@ impl App {
                     Err(error) => status(&format!("CPU rider {}: {error}", cpu.player)),
                 }
             }
-            ready.scene.pose_peers(&ready.gpu, &poses);
+            ready.scene.pose_peers(&ready.gpu, &poses, &[]);
             for (id, pose) in &poses {
                 riding.recorder.add(instant_replay::Kind::Peer(*id), pose);
             }
@@ -2298,6 +2338,9 @@ impl App {
             }
             riding.server_clock = net.server_clock();
             net.present(&ready.gpu, &mut ready.scene, &ready.venue, &riding.ride);
+            if riding.spots.is_some() {
+                net.rider_positions(&mut riding.spot_riders);
+            }
             // The room ended for good (multiplayer.js onLeave).
             if let Some(closed) = &net.closed {
                 ended = Some((room_page(net.shared()), closed.clone()));
@@ -3145,6 +3188,7 @@ impl App {
                     .into_iter()
                     .map(|[x, y, z]| atv_ui::hud::peers::Peer {
                         slot: 3,
+                        paint: 0,
                         name: "Marker".into(),
                         // screen_marker lifts tags 7 ft.
                         position: [x, y - 7., z],
@@ -3165,6 +3209,7 @@ impl App {
                             .map_or(if m.label == "Treasure" { 19 } else { 9 }, |o| {
                                 o.min(3) as u8
                             }),
+                        paint: 0,
                         // King of the Hills draws its hills as score pills
                         // (`002eac20`); treasures keep a tag.
                         pill: m
@@ -3265,6 +3310,7 @@ impl App {
                             .sqrt();
                         atv_ui::hud::peers::Peer {
                             slot: id - 1,
+                            paint: 0,
                             name: format!("P{id} · {distance:.0} ft"),
                             position: *position,
                             stale: false,
@@ -6218,7 +6264,7 @@ impl ApplicationHandler<Message> for App {
             let content = Rc::new(Content::open(store).await?);
             // A room decides the course: the host starts it on the venue, a
             // guest rides whatever the room is riding.
-            let (net, environment) = match (room, profile) {
+            let (mut net, environment) = match (room, profile) {
                 (Some(room), Some(profile)) => {
                     status("Joining the multiplayer room…");
                     let (net, environment) =
@@ -6254,6 +6300,9 @@ impl ApplicationHandler<Message> for App {
                 && let Some(riding) = &mut ready.riding
             {
                 riding.online = true;
+            }
+            if let Some(net) = &mut net {
+                scatter(&mut ready, net, false).await;
             }
             ready.net = net;
             Ok::<_, String>(ready)
@@ -9171,7 +9220,7 @@ impl App {
         let future = async move {
             // A room ride claims its slot first; the room decides the course.
             // Returning from the garage/course picker resumes the held room.
-            let (net, environment) = match (held, room) {
+            let (mut net, environment) = match (held, room) {
                 (Some(mut net), _) => {
                     if !fresh {
                         net.loaded(&environment);
@@ -9214,6 +9263,9 @@ impl App {
                 && let Some(riding) = &mut ready.riding
             {
                 riding.online = true;
+            }
+            if let Some(net) = &mut net {
+                scatter(&mut ready, net, false).await;
             }
             ready.net = net;
             Ok::<_, String>(ready)
@@ -11477,6 +11529,8 @@ impl App {
             if let Some(riding) = &mut ready.riding {
                 riding.online = true;
             }
+            // A Free Ride rotation moves the whole room at once.
+            scatter(&mut ready, &mut net, true).await;
             ready.net = Some(net);
             Ok::<_, String>(ready)
         };
@@ -11775,6 +11829,15 @@ pub fn start() {
     }
     if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
+    }
+    // Measurement hooks (research/GAME_SERVER.md "Shared room capacity"):
+    // `?riderCap=N` draws at most N other riders, `?halfRate=0` poses far
+    // riders every frame.
+    if let Some(cap) = param("riderCap").and_then(|v| v.parse::<u32>().ok()) {
+        multiplayer::DRAWN_CAP.store(cap.min(255), std::sync::atomic::Ordering::Relaxed);
+    }
+    if param("halfRate").as_deref() == Some("0") {
+        multiplayer::HALF_RATE.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if param("p2p").as_deref() == Some("0") {
         multiplayer::P2P.store(false, std::sync::atomic::Ordering::Relaxed);

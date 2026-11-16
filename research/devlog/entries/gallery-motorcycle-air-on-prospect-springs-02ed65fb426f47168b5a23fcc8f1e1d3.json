@@ -1,0 +1,14 @@
+{
+  "id": "gallery-motorcycle-air-on-prospect-springs-02ed65fb426f47168b5a23fcc8f1e1d3",
+  "timestamp": "2026-11-16T20:39:05.982253+00:00",
+  "recorded_at": "2026-11-16T20:39:32.471581+00:00",
+  "kind": "verification",
+  "title": "Gallery: motorcycle air on Prospect Springs",
+  "summary": "A motorcycle (physics recovered from MX vs. ATV Unleashed) catching air over the Prospect Springs jumps.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-motorcycle-air-on-prospect-springs-02ed65fb426f47168b5a23fcc8f1e1d3.png",
+  "caption": "Motorcycle airborne on Prospect Springs"
+}

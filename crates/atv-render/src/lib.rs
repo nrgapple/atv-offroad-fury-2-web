@@ -507,6 +507,20 @@ impl Gpu {
     }
 }
 
+/// A box holding a rider at `position` (its quad's origin) and a detached
+/// rider's torso: a quad is about 6 ft long, a seated rider 6 ft tall.
+fn rider_bounds(position: [f32; 3], torso: Option<[f32; 16]>) -> ([f32; 3], [f32; 3]) {
+    let mut min = [position[0] - 6., position[1] - 3., position[2] - 6.];
+    let mut max = [position[0] + 6., position[1] + 8., position[2] + 6.];
+    if let Some(t) = torso {
+        for a in 0..3 {
+            min[a] = min[a].min(t[12 + a] - 3.);
+            max[a] = max[a].max(t[12 + a] + 3.);
+        }
+    }
+    (min, max)
+}
+
 fn targets(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
@@ -841,6 +855,10 @@ pub struct SceneRenderer {
     /// Multiplayer riders by slot: their (quad, rider) model, pass and
     /// whether this frame presents them.
     peers: std::collections::BTreeMap<u8, (PeerLook, vehicle::VehiclePass, bool)>,
+    /// The last frame's view planes ([`Self::in_last_view`]) and how many
+    /// presented riders it drew inside them.
+    peer_view: Vec<[f32; 4]>,
+    peers_in_view: usize,
     /// Lap Attack ghosts by local player (0 player 1): the player's own
     /// quad and rider at GhostOpacity, and whether this frame shows them.
     ghosts: Vec<Option<(vehicle::VehiclePass, bool)>>,
@@ -993,6 +1011,8 @@ impl SceneRenderer {
             vehicle: None,
             cpus: Vec::new(),
             peers: Default::default(),
+            peer_view: Vec::new(),
+            peers_in_view: 0,
             ghosts: Vec::new(),
             shared_vehicle: None,
             profiler: profile::Profiler::default(),
@@ -1699,20 +1719,52 @@ impl SceneRenderer {
         self.peers.values().filter(|(.., visible)| *visible).count()
     }
 
-    /// Poses the presented multiplayer riders; others are hidden. Unlike race
-    /// CPUs, riders draw at any distance (drawRemotePlayers in game.js), as
-    /// their name tags do. Returns those drawn.
-    pub fn pose_peers(&mut self, gpu: &Gpu, poses: &[(u8, atv_game::ride::Pose)]) -> usize {
-        let mut drawn = 0;
+    /// Poses the presented multiplayer riders; `held` riders stay presented
+    /// in their last pose (a far rider posed every other frame); others are
+    /// hidden. A presented rider is drawn when it is inside the frame's view
+    /// (checked as the frame is drawn, so nobody pops in a turn); callers
+    /// present riders within [`Self::rider_distance`]. Returns those
+    /// presented.
+    pub fn pose_peers(
+        &mut self,
+        gpu: &Gpu,
+        poses: &[(u8, atv_game::ride::Pose)],
+        held: &[u8],
+    ) -> usize {
+        let mut shown = 0;
         for (peer, (_, pass, visible)) in &mut self.peers {
             let pose = poses.iter().find(|(id, _)| id == peer).map(|(_, p)| p);
-            *visible = pose.is_some();
+            *visible = pose.is_some() || (held.contains(peer) && pass.placed().is_some());
             if let Some(pose) = pose {
                 pass.pose(gpu, pose);
-                drawn += 1;
             }
+            shown += usize::from(*visible);
         }
-        drawn
+        shown
+    }
+
+    /// How far other riders are drawn: the fog end, or 768 ft without fog
+    /// (game.js farDistance/fogEnd, as ambient effects fade). Past the fog
+    /// end a rider is fully fogged, so leaving it out changes no pixel.
+    pub fn rider_distance(&self) -> f32 {
+        if self.world.globals.fog[2] > 0.5 {
+            self.far
+        } else {
+            768.
+        }
+    }
+
+    /// Whether a rider at `position` was inside the last frame's view (true
+    /// before the first frame). Only orders riders for a safety cap; the
+    /// draw itself checks the current view.
+    pub fn in_last_view(&self, position: [f32; 3]) -> bool {
+        let (min, max) = rider_bounds(position, None);
+        !cull::outside(&self.peer_view, min, max)
+    }
+
+    /// Presented riders the last frame drew inside its view.
+    pub fn peers_in_view(&self) -> usize {
+        self.peers_in_view
     }
 
     /// Uploads local player `player`'s Lap Attack ghost (0 player 1): its
@@ -1838,6 +1890,11 @@ impl SceneRenderer {
     }
 
     /// Phones and tablets get fewer blur taps (speedRushTaps).
+    /// A phone or tablet ((pointer: coarse)).
+    pub fn coarse_pointer(&self) -> bool {
+        self.coarse_pointer
+    }
+
     pub fn set_coarse_pointer(&mut self, coarse: bool) {
         self.coarse_pointer = coarse;
         if let Some(pass) = &mut self.speed_rush {
@@ -2082,6 +2139,17 @@ impl SceneRenderer {
                 .view_projection(aspect, view.focal_length, 1., self.far),
             self.view_shift,
         ));
+        self.peers_in_view = self
+            .peers
+            .values()
+            .filter(|(.., visible)| *visible)
+            .filter_map(|(_, pass, _)| pass.placed())
+            .filter(|(quad, torso)| {
+                let (min, max) = rider_bounds([quad[12], quad[13], quad[14]], *torso);
+                !cull::outside(&cull, min, max)
+            })
+            .count();
+        self.peer_view.clone_from(&cull);
         let eye = view.camera.eye();
         // High: the vehicle-only sun shadow map around the ride, received by
         // terrain and scenery (renderVehicleShadows).
@@ -2520,6 +2588,14 @@ impl SceneRenderer {
                 pass.set_stencil_reference(1);
                 vehicle.draw(&mut pass);
             }
+            // Other riders are drawn only inside the view (their shadows,
+            // posed above, may fall into it from outside).
+            let peer_in_view = |pass: &vehicle::VehiclePass| {
+                pass.placed().is_some_and(|(quad, torso)| {
+                    let (min, max) = rider_bounds([quad[12], quad[13], quad[14]], torso);
+                    !cull::outside(&cull, min, max)
+                })
+            };
             let others = || {
                 self.cpus
                     .iter()
@@ -2529,7 +2605,8 @@ impl SceneRenderer {
                         self.peers
                             .values()
                             .filter(|(.., visible)| *visible)
-                            .map(|(_, pass, _)| pass),
+                            .map(|(_, pass, _)| pass)
+                            .filter(|pass| peer_in_view(pass)),
                     )
             };
             for rider in others().filter(|p| !p.translucent()) {

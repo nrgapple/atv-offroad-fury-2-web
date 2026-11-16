@@ -64,6 +64,9 @@ pub struct Config {
     /// Free Ride hub timers (`FURY_HUB_EVENT_SECS`, `FURY_HUB_JOIN_SECS`,
     /// `FURY_HUB_ROTATION_SECS`; research/FREERIDE_HUB.md "Settings").
     pub hub: crate::engine::hub::HubConfig,
+    /// Riders in a shared Free Ride room (`FURY_FREERIDE_CAPACITY`,
+    /// 2..=`atv_net::MAX_PLAYERS`; research/GAME_SERVER.md "Load testing").
+    pub freeride_capacity: usize,
 }
 
 /// `MIN-MAX` or `N` seconds as a millisecond range; `0` or `off` is None.
@@ -158,6 +161,18 @@ impl Config {
                         .ok_or("FURY_HUB_ROTATION_SECS must be seconds, MIN-MAX seconds or off")?;
                 }
                 hub
+            },
+            freeride_capacity: match get("FURY_FREERIDE_CAPACITY") {
+                Some(text) => match text.trim().parse::<usize>() {
+                    Ok(n) if (2..=atv_net::MAX_PLAYERS).contains(&n) => n,
+                    _ => {
+                        return Err(format!(
+                            "FURY_FREERIDE_CAPACITY must be 2-{} riders",
+                            atv_net::MAX_PLAYERS
+                        ));
+                    }
+                },
+                None => atv_net::PUBLIC_CAPACITY,
             },
         })
     }

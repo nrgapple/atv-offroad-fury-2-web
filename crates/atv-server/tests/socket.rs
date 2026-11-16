@@ -343,10 +343,20 @@ async fn riders_meet_in_free_ride_get_frames_and_survive_a_restart() {
             .await
             .1,
     );
-    let (code_b, key_b) = claim_of(
-        &http(address, "POST", "/multiplayer/freeride", Some(ORIGIN), "")
-            .await
-            .1,
+    // B is a newer build: it says the slots it takes; the claim says the
+    // riders a shared room holds.
+    let (_, claim_b) = http(
+        address,
+        "POST",
+        "/multiplayer/freeride",
+        Some(ORIGIN),
+        &format!(r#"{{"riders":{}}}"#, atv_net::MAX_PLAYERS),
+    )
+    .await;
+    let (code_b, key_b) = claim_of(&claim_b);
+    assert!(
+        claim_b.contains(&format!(r#""max":{}"#, atv_net::PUBLIC_CAPACITY)),
+        "{claim_b}"
     );
     assert_eq!((code.as_str(), code_b.as_str()), ("FREERD01", "FREERD01"));
     let mut a = connect(address, &code, &key_a).await;

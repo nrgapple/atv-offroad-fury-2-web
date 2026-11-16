@@ -10,7 +10,7 @@ import subprocess
 from urllib.request import Request, urlopen
 
 from ci_changes import ROOT, changed_paths, classify, output
-from devlog import read_devlog
+from devlog import read_devlog, without_screenshots
 from fetch_site_release import eligible_run, gh_json
 from package_release import validate_release
 
@@ -46,9 +46,7 @@ def refresh(base, destination, commit, root=ROOT):
     (destination / 'static/deployment.json').write_text(json.dumps({
         'commit': commit, 'application_commit': application}) + '\n')
     log = read_devlog(root, commit)
-    for entry in log['entries']:
-        entry.pop('image', None)
-        entry.pop('caption', None)
+    without_screenshots(log)
     (destination / 'static/devlog.json').write_text(json.dumps(log, indent=2) + '\n')
     hashes = {name: hashlib.sha256((destination / name).read_bytes()).hexdigest()
               for name in metadata['sha256']}

@@ -13,35 +13,61 @@ const IDENTITY: [f32; 16] = [
     1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
 ];
 
-/// The highest surface of `mesh` under `point`, within `depth` feet.
-fn surface(
+/// The hit fractions of the segment `from`-`to` against `mesh` placed at
+/// `matrix` (0 at `from`, 1 at `to`).
+fn hit_fractions(
     mesh: &CollisionMesh,
     matrix: &[f32; 16],
-    point: [f32; 3],
-    depth: f32,
-) -> Result<Option<f32>> {
+    from: [f32; 3],
+    to: [f32; 3],
+) -> Result<Vec<f32>> {
     let rays = CollisionRayTree {
         transform: IDENTITY,
         query_capacity: 8,
         nodes: vec![],
         rays: vec![CollisionRay {
             start: [0., 0., 0.],
-            end: [0., -depth, 0.],
+            end: std::array::from_fn(|i| to[i] - from[i]),
         }],
     };
     let mut world = IDENTITY;
-    world[12..15].copy_from_slice(&point);
-    let hits = query_bundle_from_root(
+    world[12..15].copy_from_slice(&from);
+    Ok(query_bundle_from_root(
         &rays,
         mesh,
         &relative_transform(&world, matrix),
         &relative_transform(matrix, &world),
         0x8000,
-    )?;
-    Ok(hits
+    )?
+    .into_iter()
+    .map(|h| h.hit.fraction)
+    .collect())
+}
+
+/// The highest surface of `mesh` under `point`, within `depth` feet.
+pub(crate) fn surface(
+    mesh: &CollisionMesh,
+    matrix: &[f32; 16],
+    point: [f32; 3],
+    depth: f32,
+) -> Result<Option<f32>> {
+    let below = [point[0], point[1] - depth, point[2]];
+    Ok(hit_fractions(mesh, matrix, point, below)?
         .into_iter()
-        .map(|h| point[1] - h.hit.fraction * depth)
+        .map(|fraction| point[1] - fraction * depth)
         .max_by(f32::total_cmp))
+}
+
+/// The first hit of the segment `from`-`to` against `mesh` (its fraction).
+pub(crate) fn ray_hits(
+    mesh: &CollisionMesh,
+    matrix: &[f32; 16],
+    from: [f32; 3],
+    to: [f32; 3],
+) -> Result<Option<f32>> {
+    Ok(hit_fractions(mesh, matrix, from, to)?
+        .into_iter()
+        .min_by(f32::total_cmp))
 }
 
 /// A clear spot beside `target` (a fresh, Riding snapshot), its heading and

@@ -36,6 +36,12 @@ pub struct Riding {
     /// The live Free Ride main menu's autopilot (research/FREERIDE_MENU.md):
     /// a roaming CPU rides this ride while its menu is open.
     pub pilot: Option<crate::game_cpu::Pilot>,
+    /// Shared Free Ride's spawn spots (`atv_game::multiplayer::spots`, issue
+    /// #710): Reset ATV (the player's, the autopilot's) goes to the nearest
+    /// one clear of `spot_riders`, the other riders' last presented
+    /// positions, instead of the venue's one start.
+    pub spots: Option<std::rc::Rc<atv_game::multiplayer::spots::Spots>>,
+    pub spot_riders: Vec<[f32; 3]>,
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     /// Split screen: players 2-4's origins this frame, each of which gets
@@ -221,6 +227,8 @@ impl Riding {
             held: false,
             locked: false,
             pilot: None,
+            spots: None,
+            spot_riders: Vec::new(),
             center: cells(venue, origin),
             split_origin: Vec::new(),
             split_center: Vec::new(),
@@ -289,6 +297,14 @@ impl Riding {
     /// Reset ATV (Backspace/R, or Pause → Reset ATV).
     pub fn reset(&mut self) -> Result<(), String> {
         self.clear_input();
+        if self.ride.race().is_none()
+            && let Some(spot) = self
+                .spots
+                .as_ref()
+                .and_then(|s| s.nearest(self.ride.frame().origin, &self.spot_riders))
+        {
+            self.ride.set_start_pose((spot.origin, spot.yaw));
+        }
         self.ride.reset()?;
         self.hype.reset();
         self.burst.reset();

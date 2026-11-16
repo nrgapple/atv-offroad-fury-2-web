@@ -86,8 +86,17 @@ pub struct Net {
     locals: BTreeMap<u8, Local>,
     /// Why the room ended (closed socket, leave, protocol error).
     pub closed: Option<String>,
-    /// Remote riders drawn on the latest frame.
+    /// Remote riders presented (posed or held) on the latest frame, and
+    /// how many of them the frame before drew inside its view.
     pub drawn: usize,
+    pub in_view: usize,
+    /// The nearest riders ([`LISTED_RIDERS`]) on the latest frame: those
+    /// the pause menu lists in a room above 20.
+    nearest: Vec<u8>,
+    /// Frames presented, and when each rider was last posed (local ms):
+    /// a far rider posed every other frame advances by its own interval.
+    frame: u64,
+    posed_at: BTreeMap<u8, u64>,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
     /// Each posed rider's slot, vehicle and rider bone count (tests).
@@ -118,6 +127,12 @@ pub struct Net {
     saved_key: String,
     /// The latest arrival beside another rider (tests): slot and distance.
     pub met: Option<(u8, f32)>,
+    /// Shared Free Ride's spawn spots on this venue (issue #710): arrivals
+    /// start at one clear of the other riders instead of meeting one.
+    spots: Option<Rc<atv_game::multiplayer::spots::Spots>>,
+    /// The latest Free Ride spot (tests): the spot, its index and how it was
+    /// chosen ("random", "slot" for a room that moved, "recheck").
+    pub spawned: Option<(atv_game::multiplayer::spots::Spot, usize, &'static str)>,
     /// The room was listed as a public (Free Ride) room before its state
     /// was dropped by a closed socket.
     public: bool,
@@ -198,6 +213,69 @@ const PRIVATE_LOOP_STALE_MS: u64 = 6_000;
 /// Distinct remote quad/rider models kept loaded: one per possible rider
 /// (web/multiplayer.js `MAX_REMOTE_MODELS`).
 const MAX_REMOTE_MODELS: usize = 20;
+
+/// The Players page of a room above 20 lists this rider and the nearest
+/// this many others (its layout fits a 20-rider room).
+pub const LISTED_RIDERS: usize = 19;
+/// Other riders past this many feet, or outside the last frame's view, are
+/// posed every other frame (their last pose drawn between): small on
+/// screen, they move under half a foot a frame; off screen, only their
+/// shadow shows it. Nearer riders in view are posed every frame.
+pub const HALF_RATE_FT: f32 = 150.;
+/// Riders are presented out to the scene's rider distance (the fog end)
+/// from the camera; measured from this rider, plus the chase camera's
+/// reach behind it.
+const CAMERA_REACH_FT: f32 = 100.;
+/// The most other riders posed and drawn in one frame: a safety net for an
+/// extreme pack, not a draw distance (research/GAME_SERVER.md "Shared room
+/// capacity"): every rider of a full room on a computer, fewer on a phone
+/// or tablet ((pointer: coarse)). Past it the farthest go first, riders
+/// outside the last frame's view before any inside it. `?riderCap=`
+/// overrides it for measurements, `?halfRate=0` poses every rider every
+/// frame.
+pub const RIDER_CAP: usize = 63;
+pub const PHONE_RIDER_CAP: usize = 32;
+/// `?riderCap=`; 0 keeps the device's cap.
+pub static DRAWN_CAP: AtomicU32 = AtomicU32::new(0);
+pub static HALF_RATE: AtomicBool = AtomicBool::new(true);
+
+/// The riders to present, by slot with their distance (ft) from `own` and
+/// whether they are `in_view`: those within `reach`, riders in view first
+/// and then the nearest, at most `cap`.
+fn draw_order(
+    present: &[(u8, [f32; 3])],
+    own: [f32; 3],
+    reach: f32,
+    in_view: impl Fn([f32; 3]) -> bool,
+    cap: usize,
+) -> Vec<(u8, f32, bool)> {
+    let mut order: Vec<(bool, f32, u8)> = present
+        .iter()
+        .map(|&(peer, p)| {
+            let d = [p[0] - own[0], p[1] - own[1], p[2] - own[2]];
+            let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            (!in_view(p), distance, peer)
+        })
+        .filter(|&(_, distance, _)| distance <= reach)
+        .collect();
+    order.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+    order
+        .into_iter()
+        .take(cap)
+        .map(|(outside, distance, peer)| (peer, distance, !outside))
+        .collect()
+}
+
+/// The paint a rider chose for their ATV (`rider_gear::PAINTS`, the
+/// appearance's last byte): their HUD colour. Motorcycles keep their
+/// original livery, so they keep their slot colour (0, Original).
+fn paint_of(p: &atv_game::multiplayer::Participant) -> u8 {
+    if atv_game::multiplayer::is_motorcycle(p.atv_model) {
+        0
+    } else {
+        p.appearance[7]
+    }
+}
 
 /// Before caching another remote model: once `MAX_REMOTE_MODELS` are held,
 /// drop every model no rider in the room still uses (game.js
@@ -316,14 +394,14 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
         let url = format!("{server}/multiplayer/freeride");
-        // A friend's Join asks for their shared room first.
-        let body = start
-            .code
-            .as_deref()
-            .filter(|_| shared)
-            .map_or(String::new(), |code| {
-                serde_json::json!({ "room": code }).to_string()
-            });
+        // A friend's Join asks for their shared room first. `riders`: the
+        // slots this build takes, so the server may seat it in a room above
+        // the 20 riders older builds take (research/GAME_SERVER.md).
+        let body = serde_json::json!({
+            "room": start.code.as_deref().filter(|_| shared),
+            "riders": atv_game::multiplayer::MAX_PLAYERS,
+        })
+        .to_string();
         let (status, text) = net::post(&url, &origin, &body).await?;
         match status {
             200 => {}
@@ -477,6 +555,10 @@ impl Net {
             locals: BTreeMap::new(),
             closed: None,
             drawn: 0,
+            in_view: 0,
+            nearest: Vec::new(),
+            frame: 0,
+            posed_at: BTreeMap::new(),
             presented: Vec::new(),
             posed: Vec::new(),
             riders: Vec::new(),
@@ -492,6 +574,8 @@ impl Net {
             train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
             met: None,
+            spots: None,
+            spawned: None,
             public: false,
             held_accumulator: 0.,
             hub: Default::default(),
@@ -734,9 +818,38 @@ impl Net {
                 };
                 let cars = |car| ride.train_car(car);
                 let others = self.session.positions(now, &cars);
+                // Free Ride spots: with the others' poses in, move only when
+                // one stands near the spot this rider has not left yet.
+                if let Some(spots) = &self.spots {
+                    let crowded = others
+                        .iter()
+                        .any(|p| distance(*p, origin) < atv_game::multiplayer::spots::RIDER_CLEAR);
+                    // Horizontal: the ATV settles below the spawn height and
+                    // an idle one rolls a few feet on a gentle slope.
+                    let staying = self.spawned.is_some_and(|(spot, _, _)| {
+                        atv_core::math::Det::hypot_d(
+                            spot.origin[0] - origin[0],
+                            spot.origin[2] - origin[2],
+                        ) < 12.
+                    });
+                    if !waiting {
+                        if crowded
+                            && staying
+                            && let Some((spot, index)) =
+                                spots.pick(crate::random::below(spots.spots.len()), &others)
+                        {
+                            self.spawned = Some((spot, index, "recheck"));
+                            tick.place = Some((spot.origin, spot.yaw, [0.; 3]));
+                            self.session.ghost(now);
+                        }
+                        self.meet = None;
+                    }
+                }
                 for target in self
                     .session
                     .meet_candidates(now, crate::random::bits(), &cars)
+                    .into_iter()
+                    .filter(|_| self.spots.is_none())
                 {
                     if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
                         let d = spot
@@ -1009,7 +1122,8 @@ impl Net {
         if self.closed.is_some() {
             return Vec::new();
         }
-        self.session.contact_bodies(now, &|car| ride.train_car(car))
+        self.session
+            .contact_bodies(now, &|car| ride.train_car(car), Some(ride.frame().origin))
     }
 
     /// The room's mini-game: the host's latest state, and the host
@@ -1231,6 +1345,8 @@ impl Net {
         self.met = None;
         self.meet = None;
         self.meet_wait = None;
+        self.spots = None;
+        self.spawned = None;
     }
 
     /// Simulates a dropped connection (tests: `?dropSocket` / reconnect gate).
@@ -1301,10 +1417,13 @@ impl Net {
         if self.closed.is_some() {
             scene.retain_peers(|_, _| false);
             self.locals.clear();
+            self.nearest.clear();
             self.presented.clear();
             self.posed.clear();
             self.riders.clear();
             self.drawn = 0;
+            self.in_view = 0;
+            self.posed_at.clear();
             return;
         }
         let own = ride.frame().origin;
@@ -1323,10 +1442,52 @@ impl Net {
         scene.retain_peers(|peer, key| roster.contains(&(peer, key)));
         self.locals
             .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
-        // One new GPU upload per frame, so a full room arriving at once does
-        // not stall a frame.
+        self.posed_at
+            .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
+        let cars = |car| ride.train_car(car);
+        let present = self.session.present(now, Some(own), &cars);
+        let positions: Vec<(u8, [f32; 3])> = present
+            .iter()
+            .map(|(peer, s)| (*peer, s.snapshot.atv.position))
+            .collect();
+        self.nearest = draw_order(&positions, own, f32::INFINITY, |_| true, LISTED_RIDERS)
+            .into_iter()
+            .map(|(peer, ..)| peer)
+            .collect();
+        // Riders within the fog end are uploaded, posed and presented; the
+        // renderer draws those inside the view (research/GAME_SERVER.md
+        // "Shared room capacity").
+        let cap = match DRAWN_CAP.load(Ordering::Relaxed) as usize {
+            0 if scene.coarse_pointer() => PHONE_RIDER_CAP,
+            0 => RIDER_CAP,
+            cap => cap,
+        };
+        let drawn = draw_order(
+            &positions,
+            own,
+            scene.rider_distance() + CAMERA_REACH_FT,
+            |p| scene.in_last_view(p),
+            cap,
+        );
+        self.frame += 1;
+        let half_rate = HALF_RATE.load(Ordering::Relaxed);
+        let held: Vec<u8> = drawn
+            .iter()
+            .filter(|&&(peer, distance, in_view)| {
+                half_rate
+                    && (distance > HALF_RATE_FT || !in_view)
+                    && (self.frame + u64::from(peer)) % 2 == 1
+                    && self.posed_at.contains_key(&peer)
+            })
+            .map(|&(peer, ..)| peer)
+            .collect();
+        // One new GPU upload per frame, nearest first, so a full room
+        // arriving at once does not stall a frame.
         let mut uploaded = false;
-        for &(peer, key) in &roster {
+        for &(peer, ..) in &drawn {
+            let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
+                continue;
+            };
             if !uploaded
                 && scene.peer_model(peer) != Some(key)
                 && let Some(Loaded::Ready(model)) = self.models.get(&key)
@@ -1351,9 +1512,8 @@ impl Net {
         self.presented.clear();
         self.posed.clear();
         self.riders.clear();
-        let cars = |car| ride.train_car(car);
         let mut forked = false;
-        for (peer, sampled) in self.session.present(now, Some(own), &cars) {
+        for (peer, sampled) in present {
             self.presented.push((
                 peer,
                 sampled.snapshot.atv.position,
@@ -1376,6 +1536,9 @@ impl Net {
                 engine: None,
                 cpu: false,
             });
+            if !drawn.iter().any(|&(id, ..)| id == peer) || held.contains(&peer) {
+                continue;
+            }
             // The roster lists the rider's look; the session only admits
             // snapshots whose models match it.
             let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
@@ -1406,6 +1569,10 @@ impl Net {
                 }
             }
             let local = self.locals.get_mut(&peer).expect("remote rig");
+            // A rider posed every other frame advances by its own interval.
+            let dt = self.posed_at.insert(peer, now).map_or(dt, |last| {
+                (now.saturating_sub(last) as f32 * 0.001).clamp(0., 0.1)
+            });
             match local.pose(&sampled.snapshot, dt, sampled.stale) {
                 Ok(pose) => {
                     self.posed
@@ -1415,7 +1582,8 @@ impl Net {
                 Err(error) => crate::status(&format!("Remote rider pose: {error}")),
             }
         }
-        self.drawn = scene.pose_peers(gpu, &poses);
+        self.drawn = scene.pose_peers(gpu, &poses, &held);
+        self.in_view = scene.peers_in_view();
     }
 
     /// The room as the pause menu shows it (frontend.js lobby fields).
@@ -1435,7 +1603,11 @@ impl Net {
             status: if quickplay {
                 format!("Quick Play / {}/4 riders", lobby.players.len())
             } else if lobby.public {
-                format!("Arlington Free Ride / {}/20 riders", lobby.players.len())
+                format!(
+                    "Arlington Free Ride / {}/{} riders",
+                    lobby.players.len(),
+                    atv_game::multiplayer::PUBLIC_CAPACITY
+                )
             } else {
                 format!(
                     "{}/4 riders / {}",
@@ -1470,9 +1642,16 @@ impl Net {
                 .filter(|p| Some(p.id) != me && self.chat.blocked_slot(p.id, &p.name))
                 .map(|p| p.id)
                 .collect(),
+            // A room above 20 lists this rider and the nearest others, as
+            // many as a 20-rider room listed (the page's layout fits that).
             players: lobby
                 .players
                 .iter()
+                .filter(|p| {
+                    lobby.players.len() <= atv_game::multiplayer::LEGACY_PLAYERS
+                        || Some(p.id) == me
+                        || self.nearest.contains(&p.id)
+                })
                 .map(|p| {
                     if Some(p.id) == me {
                         (p.id, format!("{} (You)", p.name), "self")
@@ -1484,6 +1663,62 @@ impl Net {
                 })
                 .collect(),
         })
+    }
+
+    /// Shared Free Ride: keeps the venue's spawn spots and returns where
+    /// this rider starts (a random spot clear of the riders known so far;
+    /// after a map rotation, `moved` gives each slot its own spot so the
+    /// whole room does not land together). Once the others' poses arrive,
+    /// the meet step moves it once more if one stands too close. Without
+    /// `place` (a reload in place) it only keeps the spots.
+    pub fn scatter(
+        &mut self,
+        spots: Rc<atv_game::multiplayer::spots::Spots>,
+        ride: &Ride,
+        moved: bool,
+        place: bool,
+    ) -> Option<atv_game::multiplayer::spots::Spot> {
+        if !place {
+            self.spots = Some(spots);
+            return None;
+        }
+        let now = now_ms(self.clock);
+        let cars = |car| ride.train_car(car);
+        let others = self.session.positions(now, &cars);
+        let (start, how) = match (moved, self.session.peer) {
+            (true, Some(slot)) => {
+                let seed = self
+                    .session
+                    .code
+                    .bytes()
+                    .chain(self.environment.bytes())
+                    .fold(0x811c_9dc5u32, |h, b| {
+                        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+                    });
+                (spots.slot_start(slot, seed), "slot")
+            }
+            _ => (crate::random::below(spots.spots.len().max(1)), "random"),
+        };
+        let picked = spots.pick(start, &others);
+        if let Some((spot, index)) = picked {
+            self.spawned = Some((spot, index, how));
+            self.meet = Some((0., 12));
+            self.meet_wait = None;
+            self.session.ghost(now);
+        }
+        self.spots = Some(spots);
+        picked.map(|(spot, _)| spot)
+    }
+
+    /// Other riders' presented positions (Free Ride Reset ATV keeps clear).
+    pub fn rider_positions(&self, into: &mut Vec<[f32; 3]>) {
+        into.clear();
+        into.extend(
+            self.presented
+                .iter()
+                .filter(|(_, _, stale, _)| !stale)
+                .map(|(_, p, _, _)| *p),
+        );
     }
 
     /// Players → Spawn beside a rider (atv-web `spawn`): a clear spot next
@@ -1583,7 +1818,10 @@ impl Net {
                 .find(|(peer, _, stale, _)| *peer == slot && !*stale)
                 .map(|(_, position, ..)| *position)
         };
-        self.chat.update(available, position, ready, now as f64);
+        let paints: BTreeMap<u8, u8> = self.session.others().map(|p| (p.id, paint_of(p))).collect();
+        let paint = |slot: u8| paints.get(&slot).copied().unwrap_or(0);
+        self.chat
+            .update(available, position, paint, ready, now as f64);
         horn
     }
 
@@ -1646,17 +1884,19 @@ impl Net {
 
     /// Other riders for the HUD: roster names at their presented positions.
     pub fn hud_peers(&self) -> Vec<atv_ui::hud::peers::Peer> {
-        let names: BTreeMap<u8, &str> = self
+        let names: BTreeMap<u8, (&str, u8)> = self
             .session
             .others()
-            .map(|p| (p.id, p.name.as_str()))
+            .map(|p| (p.id, (p.name.as_str(), paint_of(p))))
             .collect();
         self.presented
             .iter()
             .filter_map(|(peer, position, stale, _)| {
+                let &(name, paint) = names.get(peer)?;
                 Some(atv_ui::hud::peers::Peer {
                     slot: *peer,
-                    name: (*names.get(peer)?).to_string(),
+                    paint,
+                    name: name.to_string(),
                     position: *position,
                     stale: *stale,
                     pill: None,
@@ -1696,6 +1936,8 @@ impl Net {
             "environment": self.session.environment(),
             "players": self.session.lobby.as_ref().map(|l| l.players.len()),
             "drawn": self.drawn,
+            "inView": self.in_view,
+            "posedRate": self.posed.len(),
             "models": self.models.len(),
             "rttMs": self.session.rtt_ms,
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
@@ -1706,6 +1948,10 @@ impl Net {
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),
             "met": self.met.map(|(peer, d)| serde_json::json!({"peer": peer, "distanceFt": d})),
+            "spawn": self.spawned.map(|(spot, index, how)| serde_json::json!({
+                "origin": spot.origin, "yaw": spot.yaw, "index": index, "how": how,
+                "spots": self.spots.as_ref().map(|s| s.spots.len()),
+            })),
             "remote": self.presented.iter().map(|(peer, position, stale, platform)| {
                 serde_json::json!({
                     "peer": peer, "position": position, "stale": stale, "platform": platform,
@@ -1808,6 +2054,29 @@ pub fn room_games(environment: &str, content: &Content) -> Vec<(u8, &'static str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn riders_within_reach_are_drawn_in_view_first_and_the_farthest_dropped() {
+        let at = |x: f32| [x, 0., 0.];
+        let present = [
+            (1, at(500.)),
+            (2, at(-20.)),
+            (3, at(900.)),
+            (4, at(100.)),
+            (5, at(-300.)),
+        ];
+        // Past the reach (the fog end) nobody is drawn: they are fogged out.
+        let all = super::draw_order(&present, [0.; 3], 800., |_| true, 63);
+        assert_eq!(
+            all.iter().map(|r| r.0).collect::<Vec<_>>(),
+            vec![2, 4, 5, 1]
+        );
+        assert_eq!((all[0].1, all[0].2), (20., true));
+        // The safety cap keeps riders in view (here ahead, x > 0) before
+        // those behind, and drops the farthest.
+        let capped = super::draw_order(&present, [0.; 3], 800., |p| p[0] > 0., 2);
+        assert_eq!(capped.iter().map(|r| r.0).collect::<Vec<_>>(), vec![4, 1]);
+    }
+
     use super::*;
 
     fn key(quad: u16) -> Key {

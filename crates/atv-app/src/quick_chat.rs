@@ -438,6 +438,7 @@ impl QuickChat {
         &mut self,
         available: bool,
         position: impl Fn(u8) -> Option<[f32; 3]>,
+        paint: impl Fn(u8) -> u8,
         ready: [bool; 3],
         now: f64,
     ) {
@@ -463,6 +464,7 @@ impl QuickChat {
             if let Some(position) = position(*slot) {
                 v.bubbles.push(Bubble {
                     slot: *slot,
+                    paint: paint(*slot),
                     position,
                     said: said(*kind, *id),
                     age: ((now - at) / 1000.) as f32,
@@ -474,6 +476,7 @@ impl QuickChat {
         for (slot, name, kind, id, at) in &self.feed {
             v.feed.push(Feed {
                 slot: *slot,
+                paint: slot.map_or(0, &paint),
                 name: name.clone(),
                 said: said(*kind, *id),
                 age: ((now - at) / 1000.) as f32,
@@ -494,11 +497,11 @@ mod tests {
     fn muted_and_blocked_riders_stay_hidden_but_horns_survive_mute_all() {
         let mut c = QuickChat::default();
         assert!(!c.receive(event(1, chat::LINE, 0), "Bo", Some(0), 0.));
-        c.update(true, |_| Some([0.; 3]), [true; 3], 100.);
+        c.update(true, |_| Some([0.; 3]), |_| 0, [true; 3], 100.);
         assert_eq!(c.view.bubbles.len(), 1);
         assert_eq!(c.view.feed[0].said, Said::Line("Nice!"));
         c.toggle_mute(1);
-        c.update(true, |_| Some([0.; 3]), [true; 3], 200.);
+        c.update(true, |_| Some([0.; 3]), |_| 0, [true; 3], 200.);
         assert!(c.view.bubbles.is_empty());
         c.receive(event(1, chat::EMOTE, 2), "Bo", Some(0), 300.);
         assert_eq!((c.shown, c.hidden), (1, 1));
@@ -514,10 +517,10 @@ mod tests {
         assert!(c.receive(event(3, chat::HORN, 0), "Di", Some(0), 300.));
         // The player's own lines always reach the feed.
         c.receive(event(0, chat::LINE, 7), "Me", Some(0), 300.);
-        c.update(true, |_| None, [true; 3], 400.);
+        c.update(true, |_| None, |_| 0, [true; 3], 400.);
         assert_eq!(&*c.view.feed.last().unwrap().name, "You");
         // Bubbles and the feed fade out.
-        c.update(true, |_| Some([0.; 3]), [true; 3], 10_000.);
+        c.update(true, |_| Some([0.; 3]), |_| 0, [true; 3], 10_000.);
         assert!(c.view.bubbles.is_empty() && c.view.feed.is_empty());
     }
 

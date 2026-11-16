@@ -4,8 +4,11 @@
 //!
 //! Slots 0-3 use the original CompassArrow tints (0x002e68e0: red, blue,
 //! green, yellow); slots 4-19 exist only in shared Free Ride rooms and their
-//! colours are authored. The tag placement and arrow artwork are authored
-//! browser presentation, not recovered PS2 behaviour.
+//! colours are authored. A rider who painted their ATV is shown in that
+//! paint's colour instead ([`rider_color`]), so riders of a 64-rider room
+//! keep distinct colours; slot colours remain for the Original paint,
+//! motorcycles and objective markers. The tag placement and arrow artwork
+//! are authored browser presentation, not recovered PS2 behaviour.
 use super::Viewport;
 use crate::{
     color::Color,
@@ -31,10 +34,66 @@ pub fn color(slot: u8) -> Color {
     Color::hex(PLAYER_COLORS[usize::from(slot) % PLAYER_COLORS.len()])
 }
 
+/// The HUD colour of each ATV paint (`rider_gear::PAINTS`; Original has
+/// none): the paint's hue (atv-game `gear::PAINT_PALETTE`: red 0, orange
+/// 0.075, yellow 0.15, green 0.33, teal 0.48, blue 0.62, purple 0.76, pink
+/// 0.9) at 85% saturation and full value, then white and black.
+pub const PAINT_COLORS: [Option<Color>; 11] = [
+    None,
+    Some(Color::rgb(255, 38, 38)),
+    Some(Color::rgb(255, 136, 38)),
+    Some(Color::rgb(255, 233, 38)),
+    Some(Color::rgb(42, 255, 38)),
+    Some(Color::rgb(38, 255, 229)),
+    Some(Color::rgb(38, 99, 255)),
+    Some(Color::rgb(160, 38, 255)),
+    Some(Color::rgb(255, 38, 168)),
+    Some(Color::rgb(255, 255, 255)),
+    Some(Color::rgb(24, 24, 24)),
+];
+
+/// A rider's tag, map dot and chat colour: the paint they chose for their
+/// ATV (`paint`, a `PAINTS` index), else their slot's. Colour assistance
+/// overrides paints: with it on, riders keep its slot colours.
+pub fn rider_color(slot: u8, paint: u8) -> Color {
+    rider_color_in(super::palette::mode(), slot, paint)
+}
+
+/// [`rider_color`] under colour assistance `mode`.
+pub fn rider_color_in(mode: super::palette::Assist, slot: u8, paint: u8) -> Color {
+    if mode == super::palette::Assist::Off
+        && let Some(Some(color)) = PAINT_COLORS.get(usize::from(paint))
+    {
+        return *color;
+    }
+    super::palette::slot_in(mode, slot)
+        .unwrap_or_else(|| Color::hex(PLAYER_COLORS[usize::from(slot) % PLAYER_COLORS.len()]))
+}
+
+/// A fill too dark to stand out with the usual ink outline (black paint):
+/// such marks take a light outline instead.
+pub fn dark(fill: Color) -> bool {
+    0.2126 * fill.r + 0.7152 * fill.g + 0.0722 * fill.b < 0.25
+}
+
+/// The outline of a rider mark filled with `fill`: `ink`, or a light grey
+/// around dark fills. White fills keep the ink, which already sets them
+/// apart from bright ground.
+pub fn outline(fill: Color, ink: Color) -> Color {
+    if dark(fill) {
+        Color::hex("#e6e6e6")
+    } else {
+        ink
+    }
+}
+
 /// Another rider as the HUD shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Peer {
     pub slot: u8,
+    /// The rider's ATV paint (`rider_gear::PAINTS` index; 0 Original, also
+    /// for motorcycles and markers): its tag and map dot take that colour.
+    pub paint: u8,
     pub name: String,
     /// The ATV's world position.
     pub position: [f32; 3],
@@ -190,10 +249,10 @@ pub fn paint_tags(
                 path: ARROW.into(),
                 bounds: [-9., -9., 9., 10.],
                 unit: 0.75,
-                fill: color(peer.slot),
+                fill: rider_color(peer.slot, peer.paint),
                 stroke: Some(Stroke {
                     width: 0.94,
-                    color: Color::hex("#111"),
+                    color: outline(rider_color(peer.slot, peer.paint), Color::hex("#111")),
                     join: Join::Round,
                 }),
                 drop_shadow: None,
@@ -361,6 +420,38 @@ pub fn map_marker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hud::palette::{Assist, slot_in};
+
+    #[test]
+    fn riders_take_their_paint_colour_and_assistance_still_overrides() {
+        let ink = Color::hex("#111");
+        // Painted riders keep their own colour in any slot, past 20 too.
+        assert_eq!(rider_color_in(Assist::Off, 45, 1), Color::rgb(255, 38, 38));
+        assert_eq!(rider_color_in(Assist::Off, 0, 6), Color::rgb(38, 99, 255));
+        // Original paint (and motorcycles, markers) keeps the slot colour.
+        assert_eq!(
+            rider_color_in(Assist::Off, 2, 0),
+            Color::hex(PLAYER_COLORS[2])
+        );
+        assert_eq!(
+            rider_color_in(Assist::Off, 22, 0),
+            Color::hex(PLAYER_COLORS[2])
+        );
+        // Colour assistance overrides a paint with its slot set.
+        for mode in [Assist::Protanopia, Assist::Deuteranopia, Assist::Tritanopia] {
+            assert_eq!(rider_color_in(mode, 1, 4), slot_in(mode, 1).unwrap());
+            assert_eq!(rider_color_in(mode, 30, 4), Color::hex(PLAYER_COLORS[10]));
+        }
+        // Black takes a light outline; white and the rest keep the ink.
+        let black = rider_color_in(Assist::Off, 5, 10);
+        assert!(dark(black) && outline(black, ink) != ink);
+        for paint in 1..10 {
+            let fill = rider_color_in(Assist::Off, 5, paint);
+            assert!(!dark(fill), "{paint}");
+            assert_eq!(outline(fill, ink), ink);
+        }
+        assert_eq!(PAINT_COLORS.len(), atv_core::rider_gear::PAINTS.len());
+    }
 
     #[test]
     fn bunched_tags_stack_instead_of_overlapping() {
@@ -400,6 +491,7 @@ mod tests {
         vp[15] = 1.;
         let hill = |x: f32, slot: u8| Peer {
             slot,
+            paint: 0,
             name: "Hill 1".into(),
             position: [x, -7., 0.],
             stale: false,

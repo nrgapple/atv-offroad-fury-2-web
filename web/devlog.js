@@ -111,14 +111,24 @@ function entryCard(entry) {
   if (entry.details?.length) { const list = element('ul'); for (const item of entry.details) list.append(element('li', item)); copy.append(list); }
   if (entry.limitation) copy.append(element('p', entry.limitation, 'limitation'));
   article.append(copy);
-  if (entry.image && /^\/devlog-images\/[a-z0-9-]+\.png$/.test(entry.image)) {
+  const figures = screenshots(entry).map(shot => {
     const figure = element('figure'), link = element('a'), image = element('img');
-    link.href = entry.image; link.target = '_blank'; link.rel = 'noopener';
-    link.setAttribute('aria-label', `Open full-size screenshot: ${entry.title}`);
-    image.src = entry.image; image.alt = entry.caption || entry.title; image.loading = 'lazy'; image.decoding = 'async';
-    link.append(image); figure.append(link, element('figcaption', entry.caption || 'Build screenshot · Open for full size')); article.append(figure);
-  }
+    link.href = shot.path; link.target = '_blank'; link.rel = 'noopener';
+    link.setAttribute('aria-label', `Open full-size screenshot: ${shot.caption || entry.title}`);
+    image.src = shot.path; image.alt = shot.caption || entry.title; image.loading = 'lazy'; image.decoding = 'async';
+    link.append(image); figure.append(link, element('figcaption', shot.caption || 'Build screenshot · Open for full size'));
+    return figure;
+  });
+  if (figures.length === 1) article.append(figures[0]);
+  else if (figures.length) { const shots = element('div', undefined, 'entry-shots'); shots.append(...figures); article.append(shots); }
   return article;
+}
+// An entry's `image` (with `caption`) and its `images` list ({path, caption} or a path), approved paths only.
+function screenshots(entry) {
+  const shots = entry.image ? [{ path: entry.image, caption: entry.caption }] : [];
+  for (const item of Array.isArray(entry.images) ? entry.images : []) shots.push(typeof item === 'string' ? { path: item } : item);
+  const seen = new Set();
+  return shots.filter(shot => /^\/devlog-images\/[a-z0-9-]+\.png$/.test(shot?.path) && !seen.has(shot.path) && seen.add(shot.path));
 }
 async function refresh() {
   try {

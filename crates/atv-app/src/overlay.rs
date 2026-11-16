@@ -1100,7 +1100,7 @@ impl Overlay {
                 peers
                     .iter()
                     .filter(|p| !p.stale)
-                    .map(|p| (p.slot, p.position))
+                    .map(|p| (p.slot, p.paint, p.position))
                     .collect()
             })
             .unwrap_or_default();

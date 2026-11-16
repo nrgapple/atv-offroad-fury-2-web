@@ -455,6 +455,10 @@ original-game online mode.
   arrivals fill the lowest-numbered room with space, so riders gather together.
 - **Room rules.**
   - A shared room holds 20 riders; private rooms keep the original four.
+    Since #710 (2026-11-16) a shared room on the game server holds 64
+    (`FURY_FREERIDE_CAPACITY`), kept at 20 while an older build is in it;
+    clients draw every rider within the fog end and inside the view
+    (research/GAME_SERVER.md "Shared room capacity").
   - The map is fixed and nobody gets host controls: the relay ignores map
     changes.
   - There is no invite link and no 12-hour age limit.
@@ -482,11 +486,18 @@ original-game online mode.
   - At most eight name tags are shown, of which at most three are off-screen
     arrows.
   - Slots 4–19 use authored colors after the original red, blue, green and
-    yellow.
+    yellow. Since #710 a rider who painted their ATV is shown in that
+    paint's colour (name tag, minimap dot, chat), so the 64 riders of a
+    shared room do not share 20 slot colours; Original paint, motorcycles
+    and objective markers keep the slot colour, colour assistance still
+    overrides, and black marks take a light outline
+    (`atv_ui::hud::peers::rider_color`).
   - The remote rig and GPU model caches hold one model per possible rider (20)
     instead of eight.
   - The Players page uses columns when 20 rows do not fit above Back.
-  - Arrivals spawn beside a random rider rather than slot 0.
+  - Arrivals spawn beside a random rider rather than slot 0. Since issue
+    #710 (2026-11-16) shared-room arrivals start at the venue's validated
+    spawn spots instead (research/FREERIDE_HUB.md "Spawn spots").
 
 Host evidence (one Mac, Chromium/Metal headless, local `wrangler dev` relay,
 original content, 2026-10-16) from `tools/test_freeride.mjs`. Two real

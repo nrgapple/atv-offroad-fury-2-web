@@ -10,6 +10,29 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = 'research/devlog.json'
 ENTRIES = 'research/devlog/entries'
 OVERRIDES = ('status', 'working_on')
+# Screenshot fields reach the public log only through the approved R2 gallery.
+SCREENSHOT_FIELDS = ('image', 'caption', 'images')
+SCREENSHOT = re.compile(r'/devlog-images/[a-z0-9-]+\.png')
+
+
+def screenshot_path(item):
+    """An `images` item is a path or a {path, caption} record."""
+    return item.get('path') if isinstance(item, dict) else item
+
+
+def screenshots(entry):
+    """Every screenshot an entry names: its `image`, then its `images` list."""
+    paths = [entry['image']] if entry.get('image') else []
+    paths += [screenshot_path(item) for item in entry.get('images', [])]
+    return list(dict.fromkeys(paths))
+
+
+def without_screenshots(log):
+    """The text-only log CI packages; the Worker overlays approved screenshots."""
+    for entry in log['entries']:
+        for key in SCREENSHOT_FIELDS:
+            entry.pop(key, None)
+    return log
 
 
 def instant(value):

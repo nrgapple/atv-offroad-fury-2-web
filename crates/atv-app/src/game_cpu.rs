@@ -250,21 +250,8 @@ pub async fn roam_map(
     ride: &Ride,
 ) -> roam::Map {
     const INSIDE: f32 = 40.;
-    let terrain = ride.terrain();
-    let bounds = atv_core::tag::Bounds::from_cells(
-        terrain.width_cells,
-        terrain.depth_cells,
-        terrain.spacing,
-    );
-    let margin = atv_core::tag::boundary_margin(venue.scene.crowd_present);
-    let min = [
-        margin * bounds.cell[0] + INSIDE,
-        margin * bounds.cell[1] + INSIDE,
-    ];
-    let max = [
-        bounds.cell[0] * (bounds.tiles[0] * 256. - margin) - INSIDE,
-        bounds.cell[1] * (bounds.tiles[1] * 256. - margin) - INSIDE,
-    ];
+    let (min, max) =
+        atv_game::multiplayer::spots::rideable_area(ride, venue.scene.crowd_present, INSIDE);
     let start = venue.scene.start_position;
     let mut map = roam::Map {
         min,
@@ -660,6 +647,7 @@ impl Cpu {
     pub fn tag(&self, index: usize) -> atv_ui::hud::peers::Peer {
         atv_ui::hud::peers::Peer {
             slot: self.player - 1,
+            paint: 0,
             name: NAMES[index.min(NAMES.len() - 1)].into(),
             position: self.riding.ride.frame().origin,
             stale: false,
