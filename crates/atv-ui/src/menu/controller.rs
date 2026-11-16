@@ -1857,6 +1857,7 @@ mod parity_tests {
                 "sound-configuration",
                 "new-profiles",
                 "free-ride-cpus",
+                "start-in",
                 "back"
             ]
         );
