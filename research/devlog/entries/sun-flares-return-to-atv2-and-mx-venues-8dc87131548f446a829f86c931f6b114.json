@@ -1,0 +1,23 @@
+{
+  "id": "sun-flares-return-to-atv2-and-mx-venues-8dc87131548f446a829f86c931f6b114",
+  "timestamp": "2026-11-16T23:25:13.539449+00:00",
+  "recorded_at": "2026-11-16T23:25:51.749244+00:00",
+  "kind": "build",
+  "title": "Sun flares return to ATV2 and MX venues",
+  "summary": "Both games author sun flares in their venue data (25 ATV Offroad Fury 2 venues and every MX venue), but the port never drew them. The flare now shows centered on the sun while it is on screen, with the original's size, color and additive blend, and fades when terrain blocks the sun. Code in PR #725; issue #722.",
+  "details": [
+    "Recovered from the original ATV2 executable: the flare loader and the screen-object sprite size and alpha rule. The original's GS depth-occlusion trick cannot run in WebGL, so the port casts rays against the terrain instead.",
+    "Verification: host Chromium fixed-camera checks (test_engine_sun_flares.mjs) for sun visible, sun hidden by terrain and sun behind the camera, on ATV2 ENV02, MX Goblin Gulch and MX The Glades. Unit tests pass. The screenshots show ATV2 ENV02 (the authored starburst over a mountain ridge), then MX Goblin Gulch (a golden flare at the painted sunset)."
+  ],
+  "limitation": "Host-only screenshots, not a phone or native PS2 comparison. Only terrain blocks the flare; scenery and trees do not. MX's flare brightness uses its authored alpha because MX's exact sprite path was not recovered. The authored saturation tint is not drawn. Flares are not shown in split screen.",
+  "images": [
+    {
+      "path": "/devlog-images/sun-flares-return-to-atv2-and-mx-venues-8dc87131548f446a829f86c931f6b114.png",
+      "caption": "ATV Offroad Fury 2 ENV02: the authored sun starburst over a mountain ridge."
+    },
+    {
+      "path": "/devlog-images/sun-flares-return-to-atv2-and-mx-venues-8dc87131548f446a829f86c931f6b114-2.png",
+      "caption": "MX Goblin Gulch: a golden sun flare at the painted sunset."
+    }
+  ]
+}
