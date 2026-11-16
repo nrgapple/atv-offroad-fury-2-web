@@ -166,7 +166,7 @@ pub fn material_settings(psm: &str) -> MaterialSettings {
         MaterialSettings {
             sample_size: get("OcclusionSampleSize").unwrap_or(32.),
             color: vector::<3>(value(&entries, "Prologue", "flareColor")).unwrap_or([128.; 3]),
-            alpha: (get("FlareMaxAlpha").unwrap_or(128.).max(80.).min(255.) as u32 >> 2) as f32,
+            alpha: (get("FlareMaxAlpha").unwrap_or(128.).clamp(80., 255.) as u32 >> 2) as f32,
             size: width * get("FlareMaxScale").unwrap_or(3.25),
             texture,
         }
