@@ -6,7 +6,7 @@ from pathlib import Path
 import base64
 import hashlib
 import json
-from devlog import read_devlog
+from devlog import read_devlog, without_screenshots
 import struct
 import shutil
 import sys
@@ -22,9 +22,7 @@ SHELL_FILES = ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'ins
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
 log = read_devlog(ROOT)
-for entry in log['entries']:
-    entry.pop('image', None)
-    entry.pop('caption', None)
+without_screenshots(log)
 (dist / 'devlog.json').write_text(json.dumps(log, indent=2) + '\n')
 for name in SHELL_FILES:
     shutil.copy2(ROOT / 'web' / name, dist / name)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Package and verify authored browser files and WASM for public Sites hosting."""
 import argparse
-from devlog import read_devlog
+from devlog import read_devlog, without_screenshots
 import hashlib
 import json
 import re
@@ -90,9 +90,7 @@ def package(commit, destination, release_scoped=False):
     # The CI artifact excludes checkpoint screenshots. Public Sites can retain
     # an explicitly authorized gallery in their own separate hosting checkout.
     log = read_devlog(ROOT)
-    for entry in log['entries']:
-        entry.pop('image', None)
-        entry.pop('caption', None)
+    without_screenshots(log)
     (destination / 'static/devlog.json').write_text(json.dumps(log, indent=2) + '\n')
     hashes = {}
     for path in sorted(destination.rglob('*')):
