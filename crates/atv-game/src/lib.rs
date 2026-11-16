@@ -22,6 +22,7 @@ pub mod ride;
 pub mod scenery;
 pub mod sky;
 pub mod snow;
+pub mod sun_flare;
 pub mod terrain_mesh;
 pub mod tire_tracks;
 pub mod train;

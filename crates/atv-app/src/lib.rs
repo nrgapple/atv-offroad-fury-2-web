@@ -3811,6 +3811,17 @@ impl App {
                     serde_json::json!({"clock": r.clock, "streaks": r.streaks,
                     "splashes": r.splashes, "beads": r.beads})
                 });
+            // Authored sun flares (tools/test_engine_sun_flares.mjs).
+            state["sunFlares"] = ready
+                .scene
+                .sun_flare_state()
+                .iter()
+                .map(|f| {
+                    serde_json::json!({"visible": f.visible, "coverage": f.coverage,
+                    "ndc": f.ndc})
+                })
+                .collect::<Vec<_>>()
+                .into();
             // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
             // scene clock, draw statistics and each actor's posed root.
             state["actors"] =

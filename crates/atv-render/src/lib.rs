@@ -9,6 +9,7 @@ mod blood;
 mod burst;
 pub mod camera;
 mod cull;
+pub mod flare;
 mod lingering_dust;
 pub mod preview;
 mod profile;
@@ -783,6 +784,8 @@ pub struct SceneRenderer {
     )>,
     /// Remastered rain on a venue whose Weather selected rain (authored).
     rain: Option<rain::RainPass>,
+    /// Authored sun flares (TOY [SunFlares]); single-view frames only.
+    sun_flares: Option<flare::FlarePass>,
     raining: bool,
     /// Whether the view is the live riding camera, which takes lens beads.
     rain_lens: bool,
@@ -965,6 +968,7 @@ impl SceneRenderer {
             )
         });
         let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
+        let sun_flares = flare::FlarePass::new(gpu, &world, &venue.sun_flares);
         let mut scene = Self {
             terrain,
             world,
@@ -976,6 +980,7 @@ impl SceneRenderer {
             ambient,
             snow,
             rain: None,
+            sun_flares,
             rain_lens: true,
             raining: venue.weather.as_ref().is_some_and(|w| {
                 w.active
@@ -1079,6 +1084,13 @@ impl SceneRenderer {
     /// venue under the Remastered preset).
     pub fn rain_state(&self) -> Option<RainState> {
         self.rain.as_ref().map(rain::RainPass::state)
+    }
+
+    /// Authored sun flares as last prepared (empty without any).
+    pub fn sun_flare_state(&self) -> Vec<flare::FlareState> {
+        self.sun_flares
+            .as_ref()
+            .map_or_else(Vec::new, |f| f.state())
     }
 
     /// Whether the next frames are the live riding view. Lens beads belong
@@ -2118,7 +2130,9 @@ impl SceneRenderer {
         depth: &wgpu::TextureView,
         region: Option<Region>,
     ) -> (wgpu::CommandEncoder, FrameStats) {
-        let aspect = if view.turns % 2 == 1 {
+        let turned = view.turns % 2 == 1;
+        let (eye_position, focal_length) = (view.camera.eye(), view.focal_length);
+        let aspect = if turned {
             size.1 as f32 / size.0 as f32
         } else {
             size.0 as f32 / size.1 as f32
@@ -2513,6 +2527,20 @@ impl SceneRenderer {
                 Some(Region { clear: false, .. }) => wgpu::LoadOp::Load,
                 _ => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a: 1. }),
             };
+            // Sun flares probe and draw in single-view frames only.
+            if region.is_none()
+                && let Some(flares) = &mut self.sun_flares
+            {
+                flares.prepare(
+                    gpu,
+                    &view_projection,
+                    size,
+                    turned,
+                    eye_position,
+                    focal_length,
+                    &self.ground,
+                );
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
                 timestamp_writes: self
@@ -2657,6 +2685,12 @@ impl SceneRenderer {
             // Last in the scene pass: its lens beads sit on top.
             if let Some(rain) = &self.rain {
                 rain.draw(&mut pass, &self.world);
+            }
+            // The sun flare is a screen object over everything.
+            if region.is_none()
+                && let Some(flares) = &self.sun_flares
+            {
+                flares.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.effects");
         }

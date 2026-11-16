@@ -63,6 +63,8 @@ pub struct Venue {
     pub scene: Scene,
     pub terrain: Terrain,
     pub sky: Option<Sky>,
+    /// Authored sun flares (TOY `[SunFlares]`), drawn by the flare pass.
+    pub sun_flares: Vec<crate::sun_flare::SunFlare>,
     pub scenery: Scenery,
     pub vegetation: Option<Vegetation>,
     /// Shared live field: the renderer and physics read the same surface.
@@ -344,18 +346,33 @@ async fn load_selected(
     // weather removes its model from the scene.
     // The browser compares this index with the ambient mode TOY's course
     // index even when it came from the placements archive; keep that.
-    let (toy, toy_index) = match member_named(&archive, &format!("{source_stem}.toy")) {
-        Some(index) => (Some(archive.extract(index)?), Some(index)),
+    // Sun flare materials and images sit beside the TOY that declares them.
+    let flares = |archive: &Resource, toy: &[u8]| {
+        crate::sun_flare::load(archive, toy).unwrap_or_else(|error| {
+            eprintln!("sun flares: {error}");
+            Vec::new()
+        })
+    };
+    let (toy, toy_index, sun_flares) = match member_named(&archive, &format!("{source_stem}.toy")) {
+        Some(index) => {
+            let toy = archive.extract(index)?;
+            let sun_flares = flares(&archive, &toy);
+            (Some(toy), Some(index), sun_flares)
+        }
         None => match &course.placements {
             Some(path) => {
                 let bytes = content.file(path).await?;
                 let placements = Resource::parse(&bytes)?;
                 match member_named(&placements, &format!("{source_stem}.toy")) {
-                    Some(index) => (Some(placements.extract(index)?), Some(index)),
-                    None => (None, None),
+                    Some(index) => {
+                        let toy = placements.extract(index)?;
+                        let sun_flares = flares(&placements, &toy);
+                        (Some(toy), Some(index), sun_flares)
+                    }
+                    None => (None, None, Vec::new()),
                 }
             }
-            None => (None, None),
+            None => (None, None, Vec::new()),
         },
     };
     // MX weather selection has not been recovered. Preserve SCN fog and sky;
@@ -883,6 +900,7 @@ async fn load_selected(
             Default::default()
         },
         sky,
+        sun_flares,
         scenery,
         vegetation,
         water,
