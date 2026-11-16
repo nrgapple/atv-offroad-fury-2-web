@@ -345,6 +345,8 @@ impl Front {
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
         self.previews = [None, None];
+        // Its layouts and pipeline belong to the old device too.
+        self.preview_pipeline = None;
         self.stash.clear();
         self.jukebox_art = None;
         self.renderer = None;

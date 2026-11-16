@@ -2,7 +2,8 @@
 // sizes including the visible area under Safari's toolbars (390x664 portrait,
 // 844x330 landscape), iPad and desktop, the menus keep every fixed control on
 // screen, rows never run under Back, Single Player shows its modes without
-// scrolling, the title keeps Press Start visible, and Single Race's course
+// scrolling on a full-height phone (and scrolls its last mode into view
+// under Safari's toolbars), the title keeps Press Start visible, and Single Race's course
 // picker opens from its Course row and closes on a pick, by touch, keyboard
 // and controller. ATV_PHONE_SHOTS=<dir> saves screenshots.
 // Run: node tools/run_browser_tests.mjs --only test_engine_menu_phone_layout.mjs
@@ -146,12 +147,33 @@ try {
       }
       assertFixed(await front(page), `${name} ${p}`, viewport);
     }
-    // Single Player: its modes fit without scrolling on every phone.
+    // Single Player: its ten modes fit without scrolling on a full-height
+    // portrait phone (the stage gives up room). Under Safari's toolbars they
+    // cannot fit with 44px targets and a stage, so the rows scroll and the
+    // last mode glides fully into view above Back.
     await page.goto(url('/play.html?uiDiagnostics=1&front=single'));
     await onPage(page, 'single');
     f = await front(page);
     if (viewport.height > viewport.width) {
-      assert.ok(f.kinetic.rows[1] <= 12, `${name}: Single Player modes fit (${f.kinetic.rows[1]}px to scroll)`);
+      const modes = f.choices.filter(a => a !== 'back').length;
+      if (viewport.height >= 800) {
+        assert.ok(f.kinetic.rows[1] <= 12, `${name}: Single Player's ${modes} modes fit (${f.kinetic.rows[1]}px to scroll)`);
+      } else {
+        assert.ok(f.kinetic.rows[1] > 12, `${name}: Single Player's rows scroll (${f.kinetic.rows[1]})`);
+        await key(page, 'ArrowUp');
+        await page.waitForFunction(
+          () => !JSON.parse(document.querySelector('#ui-state').textContent).front.kinetic.active,
+          null,
+          { timeout: 10000 }
+        );
+        f = await front(page);
+        assert.equal(f.choices[f.selection], f.choices.filter(a => a !== 'back').at(-1), `${name}: Up wraps to the last mode`);
+        const [rows, last, back] = [hit(f, ROWS), hit(f, ROW + f.selection), hit(f, BACK)];
+        assert.ok(rows && last, `${name}: rows pane and last mode`);
+        assert.ok(last.y >= rows.y - 0.5 && last.y + last.height <= rows.y + rows.height + 0.5, `${name}: the last mode scrolls into the pane ${JSON.stringify([last, rows])}`);
+        assert.ok(!overlaps(last, back), `${name}: the last mode clear of Back`);
+        assert.ok(last.height >= 44, `${name}: mode target ${JSON.stringify(last)}`);
+      }
     }
 
     // Pickers show three whole entries (two on a landscape phone).

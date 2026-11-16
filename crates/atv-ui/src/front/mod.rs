@@ -797,12 +797,12 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
 
 /// Portrait: the stage's share of the page height. `most` is the page's
 /// usual share; a list of rows that would not fit under it takes some of it
-/// (down to a fifth of the page) rather than scroll while the stage has
-/// room to give: a folding phone, closed or open, falls between the phone
-/// and tablet sizes those shares were chosen on.
-/// A portrait stage page's share of the height. Seven main rows need more
-/// of it than the others; phones give the rows the room (Safari's toolbars
-/// take ~150px more): Single Player's six modes stay on screen.
+/// (down to a fifth of the page, or 124px on a taller one) rather than
+/// scroll while the stage has room to give: a folding phone, closed or
+/// open, falls between the phone and tablet sizes those shares were chosen
+/// on. Seven main rows need more of it than the others; phones give the
+/// rows the room. Single Player's ten modes fit a full-height phone; under
+/// Safari's toolbars (~150px less) they scroll, with the scroll cue.
 fn portrait_stage_share(m: &Metrics, s: &Screen) -> f32 {
     let most = if s.page == "main" {
         if m.h <= 640. { 0.26 } else { 0.36 }
@@ -818,11 +818,20 @@ fn portrait_stage_share(m: &Metrics, s: &Screen) -> f32 {
 
 fn stage_share(m: &Metrics, s: &Screen, most: f32) -> f32 {
     let rows = s.choices.iter().filter(|(a, _)| a != "back").count().max(1) as f32;
-    let heading = clamp(24., m.w * 0.07, 32.) * 1.2 + 14.;
+    // The portrait heading: its line, the strip's padding (6, 8) and the
+    // heading's own (10, 6).
+    let heading = clamp(24., m.w * 0.07, 32.) * 1.05 + 30.;
     let list = 34. + rows * m.row + (rows - 1.) * 2. + ROWS_PADDING;
     let hints = 56. + m.safe[2];
-    ((m.h - heading - list - hints) / m.h).clamp(most.min(0.2), most)
+    // The stage keeps room for its vehicle and name plate (124px, about its size on a
+    // phone under Safari's toolbars): a long list such as Single Player's
+    // ten modes then fits a full-height phone without scrolling.
+    let least = (STAGE_LEAST / m.h).min(0.2).min(most);
+    ((m.h - heading - list - hints) / m.h).clamp(least, most)
 }
+
+/// The smallest portrait stage a long list of rows may leave (CSS px).
+const STAGE_LEAST: f32 = 124.;
 
 trait Pipe: Sized {
     fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {

@@ -3142,6 +3142,12 @@ impl Frontend {
         settings: &mut Settings,
     ) -> Option<Event> {
         let at = self.pressed.iter().position(|p| p.pointer == pointer)?;
+        // The lift's own position is the drag's last move: a finger that
+        // moved and lifted within one frame (the move not yet seen) still
+        // scrolls there and flings with that move's speed.
+        if self.pressed[at].at != (x, y) {
+            self.drag(pointer, x, y);
+        }
         let pressed = self.pressed.remove(at);
         // A held arrow stepped while held; letting go does not step again.
         if pressed.repeated {
@@ -5013,6 +5019,39 @@ mod tests {
             "the release of a repeated arrow"
         );
         assert!(!front.repeating());
+    }
+
+    #[test]
+    fn a_lift_after_an_unseen_move_scrolls_to_the_lift() {
+        let view = view(390., 844.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("tracks", &view);
+        front.list.set_bounds(1000., 400.);
+        let pane = Rect {
+            x: 0.,
+            y: 0.,
+            w: 390.,
+            h: 844.,
+        };
+        let hits = [(pane, LIST)];
+        front.press(&hits, 1, 200., 600.);
+        front.drag(1, 200., 580.);
+        front.drag(1, 200., 560.);
+        assert_eq!(front.list.offset(), 20.);
+        // The finger moved on to 500 and lifted before that move arrived.
+        assert_eq!(
+            front.release(&hits, 1, 200., 500., &view, &mut settings),
+            None
+        );
+        assert_eq!(front.list.offset(), 80., "the lift's position counts");
+        // A lift where the finger last was adds nothing.
+        front.press(&hits, 2, 200., 600.);
+        front.drag(2, 200., 580.);
+        front.drag(2, 200., 560.);
+        let held = front.list.offset();
+        front.release(&hits, 2, 200., 560., &view, &mut settings);
+        assert_eq!(front.list.offset(), held);
     }
 
     #[test]

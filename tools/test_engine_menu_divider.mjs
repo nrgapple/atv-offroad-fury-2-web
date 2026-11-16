@@ -20,11 +20,11 @@ const onPage = (page, name) =>
   );
 
 /** Rim positions (CSS px) along the edge, measured in an about:blank page. */
-async function rim(browser, png, { width, height, dpr, portrait }) {
+async function rim(browser, png, { width, height, dpr, portrait }, below) {
   const page = await browser.newPage();
   try {
     return await page.evaluate(
-      async ({ data, width, height, dpr, portrait }) => {
+      async ({ data, width, height, dpr, portrait, below }) => {
         const image = new Image();
         image.src = `data:image/png;base64,${data}`;
         await image.decode();
@@ -43,10 +43,11 @@ async function rim(browser, png, { width, height, dpr, portrait }) {
         const out = [];
         const step = 1 / dpr;
         if (portrait) {
-          // Lowest white pixel with the red backdrop 3px below, per column.
+          // Lowest white pixel with the red backdrop 3px below, per column,
+          // above the rows (their white labels sit on the red too).
           for (let x = 6; x <= width - 6; x += 2) {
             let found = null;
-            for (let y = height * 0.65; y >= height * 0.2; y -= step) {
+            for (let y = Math.min(height * 0.65, below); y >= height * 0.2; y -= step) {
               if (white(at(x, y)) && red(at(x, y + 3))) {
                 found = y;
                 break;
@@ -70,7 +71,7 @@ async function rim(browser, png, { width, height, dpr, portrait }) {
         }
         return out;
       },
-      { data: png.toString('base64'), width, height, dpr, portrait }
+      { data: png.toString('base64'), width, height, dpr, portrait, below }
     );
   } finally {
     await page.close();
@@ -97,7 +98,10 @@ for (const engine of ['chromium', 'webkit']) {
       await unlockStore(page);
       await page.goto(url('/play.html?uiDiagnostics=1&front=single'));
       await onPage(page, 'single');
-      const points = await rim(browser, await page.screenshot(), c);
+      // The rows pane starts at the rim; its first row (the gold pill) is
+      // further down.
+      const rows = JSON.parse(await page.evaluate(() => document.querySelector('#ui-state').textContent)).front.hits.find(h => h.id === 2450);
+      const points = await rim(browser, await page.screenshot(), c, rows ? rows.y + 8 : c.height);
       const label = `${engine} ${c.width}x${c.height}@${c.dpr}`;
       const missing = points.filter(([, v]) => v === null).map(([k]) => k);
       assert.deepEqual(missing, [], `${label}: rim missing at ${missing.join(',')}`);

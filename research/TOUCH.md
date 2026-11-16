@@ -192,7 +192,9 @@ pause/settings panels (including over the main menu):
 - Tracking starts once the finger crosses 6px, anchored there (no jump).
 - Release throws the content with the finger's velocity over the last 100 ms
   (none if the finger rested 60 ms before lifting) and decays it at
-  UIScrollView's normal rate, 0.998 per ms.
+  UIScrollView's normal rate, 0.998 per ms. A lift away from the last move
+  seen (a move and the lift in one frame) counts as that last move first, so
+  it still scrolls there and flings (#691).
 - Past either end the content stretches with UIScrollView's 0.55 resistance
   and springs back (critically damped, ~400 ms); a fling into an end
   overshoots a little and returns.
