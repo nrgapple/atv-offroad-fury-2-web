@@ -64,6 +64,8 @@ const SPOT_MS: u64 = 2_000;
 /// Free roam venues the rotation offers: the eight Environment venues
 /// (`env01`-`env08`, map ids 1-8; research/FREERIDE_HUB.md "Venues").
 pub const ROTATION_MAPS: [u16; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+/// The default time between rotations: two hours (owner decision, #710).
+const ROTATION_MS: u64 = 2 * 60 * 60_000;
 /// Stunt-off reports above this are refused.
 const MAX_STUNT_POINTS: f32 = 10_000_000.;
 /// Results points by place, and for taking part.
@@ -86,12 +88,58 @@ impl Default for HubConfig {
         HubConfig {
             events: Some((4 * 60_000, 6 * 60_000)),
             join_ms: 45_000,
-            rotation: Some((20 * 60_000, 25 * 60_000)),
+            rotation: Some((ROTATION_MS, ROTATION_MS)),
         }
     }
 }
 
 static CONFIG: OnceLock<HubConfig> = OnceLock::new();
+
+/// The venue a newly opened shared room rides, so riders land where the
+/// others went: the last venue a room moved to. When a rotation falls due
+/// with no room open to move, the next room opens on another venue at
+/// random, so Free Ride does not start on one fixed venue.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Venue {
+    map: u16,
+    since: u64,
+}
+
+impl Venue {
+    /// A random venue from `seed`, current from `now`.
+    pub fn new(seed: u64, now: u64) -> Self {
+        Venue {
+            map: ROTATION_MAPS[(seed % ROTATION_MAPS.len() as u64) as usize],
+            since: now,
+        }
+    }
+
+    /// The venue a room opening at `now` rides; `seed` picks the next one
+    /// when a rotation fell due since the last move.
+    pub fn current(&mut self, now: u64, seed: u64) -> u16 {
+        let due = config()
+            .rotation
+            .is_some_and(|(low, _)| now.saturating_sub(self.since) >= low);
+        if due {
+            let others: Vec<u16> = ROTATION_MAPS
+                .iter()
+                .copied()
+                .filter(|&m| m != self.map)
+                .collect();
+            self.map = others[(seed % others.len() as u64) as usize];
+            self.since = now;
+        }
+        self.map
+    }
+
+    /// A shared room moved to `map` at `now`.
+    pub fn moved(&mut self, map: u16, now: u64) {
+        if ROTATION_MAPS.contains(&map) {
+            self.map = map;
+            self.since = now;
+        }
+    }
+}
 
 /// Sets the server's hub timers once, at start.
 pub fn configure(config: HubConfig) {
