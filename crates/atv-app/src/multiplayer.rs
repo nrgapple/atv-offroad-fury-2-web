@@ -211,33 +211,38 @@ const MAX_REMOTE_MODELS: usize = 20;
 /// The Players page of a room above 20 lists this rider and the nearest
 /// this many others (its layout fits a 20-rider room).
 pub const LISTED_RIDERS: usize = 19;
-/// Other riders past this many feet are posed every other frame (their
-/// last pose drawn between): small on screen, they move under half a foot
-/// a frame. Nearer riders are posed every frame.
+/// Other riders past this many feet, or outside the last frame's view, are
+/// posed every other frame (their last pose drawn between): small on
+/// screen, they move under half a foot a frame; off screen, only their
+/// shadow shows it. Nearer riders in view are posed every frame.
 pub const HALF_RATE_FT: f32 = 150.;
 /// Riders are presented out to the scene's rider distance (the fog end)
 /// from the camera; measured from this rider, plus the chase camera's
 /// reach behind it.
 const CAMERA_REACH_FT: f32 = 100.;
 /// The most other riders posed and drawn in one frame: a safety net for an
-/// extreme pack on a phone, not a draw distance (research/GAME_SERVER.md
-/// "Shared room capacity"). Past it the farthest go first, riders outside
-/// the last frame's view before any inside it. `?riderCap=` overrides it
-/// for measurements, `?halfRate=0` poses far riders every frame.
+/// extreme pack, not a draw distance (research/GAME_SERVER.md "Shared room
+/// capacity"): every rider of a full room on a computer, fewer on a phone
+/// or tablet ((pointer: coarse)). Past it the farthest go first, riders
+/// outside the last frame's view before any inside it. `?riderCap=`
+/// overrides it for measurements, `?halfRate=0` poses every rider every
+/// frame.
 pub const RIDER_CAP: usize = 63;
-pub static DRAWN_CAP: AtomicU32 = AtomicU32::new(RIDER_CAP as u32);
+pub const PHONE_RIDER_CAP: usize = 32;
+/// `?riderCap=`; 0 keeps the device's cap.
+pub static DRAWN_CAP: AtomicU32 = AtomicU32::new(0);
 pub static HALF_RATE: AtomicBool = AtomicBool::new(true);
 
-/// The riders to present, by slot with their distance (ft) from `own`:
-/// those within `reach`, riders `in_view` first and then the nearest, at
-/// most `cap`.
+/// The riders to present, by slot with their distance (ft) from `own` and
+/// whether they are `in_view`: those within `reach`, riders in view first
+/// and then the nearest, at most `cap`.
 fn draw_order(
     present: &[(u8, [f32; 3])],
     own: [f32; 3],
     reach: f32,
     in_view: impl Fn([f32; 3]) -> bool,
     cap: usize,
-) -> Vec<(u8, f32)> {
+) -> Vec<(u8, f32, bool)> {
     let mut order: Vec<(bool, f32, u8)> = present
         .iter()
         .map(|&(peer, p)| {
@@ -251,7 +256,7 @@ fn draw_order(
     order
         .into_iter()
         .take(cap)
-        .map(|(_, distance, peer)| (peer, distance))
+        .map(|(outside, distance, peer)| (peer, distance, !outside))
         .collect()
 }
 
@@ -1080,7 +1085,8 @@ impl Net {
         if self.closed.is_some() {
             return Vec::new();
         }
-        self.session.contact_bodies(now, &|car| ride.train_car(car))
+        self.session
+            .contact_bodies(now, &|car| ride.train_car(car), Some(ride.frame().origin))
     }
 
     /// The room's mini-game: the host's latest state, and the host
@@ -1407,12 +1413,16 @@ impl Net {
             .collect();
         self.nearest = draw_order(&positions, own, f32::INFINITY, |_| true, LISTED_RIDERS)
             .into_iter()
-            .map(|(peer, _)| peer)
+            .map(|(peer, ..)| peer)
             .collect();
         // Riders within the fog end are uploaded, posed and presented; the
         // renderer draws those inside the view (research/GAME_SERVER.md
         // "Shared room capacity").
-        let cap = DRAWN_CAP.load(Ordering::Relaxed) as usize;
+        let cap = match DRAWN_CAP.load(Ordering::Relaxed) as usize {
+            0 if scene.coarse_pointer() => PHONE_RIDER_CAP,
+            0 => RIDER_CAP,
+            cap => cap,
+        };
         let drawn = draw_order(
             &positions,
             own,
@@ -1424,18 +1434,18 @@ impl Net {
         let half_rate = HALF_RATE.load(Ordering::Relaxed);
         let held: Vec<u8> = drawn
             .iter()
-            .filter(|&&(peer, distance)| {
+            .filter(|&&(peer, distance, in_view)| {
                 half_rate
-                    && distance > HALF_RATE_FT
+                    && (distance > HALF_RATE_FT || !in_view)
                     && (self.frame + u64::from(peer)) % 2 == 1
                     && self.posed_at.contains_key(&peer)
             })
-            .map(|&(peer, _)| peer)
+            .map(|&(peer, ..)| peer)
             .collect();
         // One new GPU upload per frame, nearest first, so a full room
         // arriving at once does not stall a frame.
         let mut uploaded = false;
-        for &(peer, _) in &drawn {
+        for &(peer, ..) in &drawn {
             let Some(&(_, key)) = roster.iter().find(|(id, _)| *id == peer) else {
                 continue;
             };
@@ -1487,7 +1497,7 @@ impl Net {
                 engine: None,
                 cpu: false,
             });
-            if !drawn.iter().any(|&(id, _)| id == peer) || held.contains(&peer) {
+            if !drawn.iter().any(|&(id, ..)| id == peer) || held.contains(&peer) {
                 continue;
             }
             // The roster lists the rider's look; the session only admits
@@ -1961,7 +1971,7 @@ mod tests {
             all.iter().map(|r| r.0).collect::<Vec<_>>(),
             vec![2, 4, 5, 1]
         );
-        assert_eq!(all[0].1, 20.);
+        assert_eq!((all[0].1, all[0].2), (20., true));
         // The safety cap keeps riders in view (here ahead, x > 0) before
         // those behind, and drops the farthest.
         let capped = super::draw_order(&present, [0.; 3], 800., |p| p[0] > 0., 2);

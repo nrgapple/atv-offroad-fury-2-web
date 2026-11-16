@@ -359,18 +359,61 @@ sit below slot 20 (`Room::bound`, `Room::open_slot`); once it leaves, the room
 can grow to 64. Older builds therefore still fill rooms of 20 and send
 newer riders on to the next room.
 
-Client side (code reading; no phone measured): every presented remote rider
-was drawn every frame, with its own GPU buffers, bone uploads (about 4.3 KB
-per rider per frame) and draw calls, and no culling or level of detail. Rooms
-of 64 would have meant drawing 63 riders on phones. The client now uploads,
-poses and draws only the nearest 19 others (`multiplayer::DRAWN_RIDERS`, the
-most a 20-rider room drew, measured on the host at 79 fps:
-research/PERFORMANCE.md "full Free Ride room"); the others keep minimap dots,
-engine sounds (already the nearest six), contacts and name tags (already the
-nearest eight). The pause menu's Players page lists this rider and the same
-nearest 19 in a room above 20 (its layout fits 20). Decoding up to about 400
-poses a second into per-rider buffers is the remaining per-rider client cost;
-it is small beside drawing but was not measured on a phone. Riders past the
-nearest 19 pop in as they come nearer; slots 20-63 reuse the 20 rider colors.
-Unverified: physical phones in a full room of 64, and the droplet itself.
+Client side. Before this change every presented remote rider was drawn
+every frame (own GPU buffers, about 4.3 KB of bone uploads per rider per
+frame, its draw calls), with no culling or level of detail. Now (owner
+direction 2026-11-16: no pop-in from a fixed count):
+
+- **Drawn by visibility.** Every rider within the scene's rider distance
+  (`SceneRenderer::rider_distance`: the fog end, or 768 ft without fog, as
+  ambient effects fade; past it a rider is fully fogged) is posed, and the
+  renderer draws those inside the camera's view, tested as the frame is
+  drawn, so turning never reveals an undrawn rider. Their shadows are kept
+  (posed riders cast them from outside the view too).
+- **Cheaper far and off-screen riders.** Riders past 150 ft, or outside the
+  last frame's view, are posed every other frame (their last pose drawn in
+  between; `multiplayer::HALF_RATE_FT`). Contacts skip riders over 60 ft
+  away before sampling them (`CONTACT_REACH_FT`).
+- **Safety cap.** At most 63 riders (all of a full room) on a computer and
+  32 on a phone or tablet ((pointer: coarse)) are posed and drawn; past it
+  riders outside the last view go first, then the farthest
+  (`multiplayer::RIDER_CAP`, `PHONE_RIDER_CAP`; `?riderCap=N` overrides
+  it for measurements, `?halfRate=0` poses every rider every frame).
+- **Colours.** Name tags, minimap dots and quick chat show each rider in the
+  colour of the paint they chose for their ATV (`hud::peers::rider_color`);
+  riders on the Original paint, motorcycles and objective markers keep the
+  slot colour. Colour assistance (Options → Accessibility) still overrides
+  them with its slot set; black marks take a light outline. Riders on the
+  Original paint in slots 20-63 still share the 20 slot colours.
+- **Lists.** Name tags stay at the nearest eight, engine sounds at the
+  nearest six; the pause menu's Players page lists this rider and the
+  nearest 19 in a room above 20 (its layout fits 20).
+
+Measured in the browser, host only (`tools/test_engine_freeride_full.mjs`
+against a CI build of this branch: headless Chromium on the M4, 1280x720,
+bots circling 30-90 ft from the rider at 20 Hz on Rockbridge Park, the host
+loaded by other agents at load average 7-24; medians over 20 one-second
+samples; engine CPU is the page's own main-thread time per frame):
+
+| Bots | Drawn (presented) | In view | Frame | Engine CPU | fps |
+| --- | --- | --- | --- | --- | --- |
+| 19 | 19 | 9 | 27.1 ms | 10.5 ms | 37 |
+| 40 | 40 | 16 | 30.4 ms | 17.7 ms | 33 |
+| 63 | 63 | 26 | 32.6 ms | 21.1 ms | 31 |
+| 63, `?riderCap=19` | 19 | 19 | 30.8 ms | 17.2 ms | 33 |
+
+Frames sat near 30-33 ms in every run (the busy host's pacing), so the
+engine CPU column carries the comparison. 63 riders cost about 10.6 ms more
+than 19; capping the drawn riders at 19 saved only 3.9 ms of it: posing and
+drawing a rider costs about 0.09 ms, and the rest (about 0.15 ms per rider)
+is receiving, presenting, sounds, tags and contacts, which every rider
+costs, drawn or not. That is why the safety net is a cap rather than a draw
+distance, and why contacts and off-screen poses were made cheaper. Those two
+savings came after these runs (not yet measured). The phone cap of 32 keeps
+an extreme pack's drawing within about 5 ms of the 19 riders a full room of
+20 drew, assuming a phone is 3-5 times slower than this host. This is an
+estimate, not a phone measurement.
+
+Unverified: physical phones in a full room of 64 (frame time and memory for
+up to 63 riders' GPU buffers), and the droplet itself.
 

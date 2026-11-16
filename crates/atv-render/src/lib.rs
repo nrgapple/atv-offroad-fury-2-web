@@ -1830,6 +1830,11 @@ impl SceneRenderer {
     }
 
     /// Phones and tablets get fewer blur taps (speedRushTaps).
+    /// A phone or tablet ((pointer: coarse)).
+    pub fn coarse_pointer(&self) -> bool {
+        self.coarse_pointer
+    }
+
     pub fn set_coarse_pointer(&mut self, coarse: bool) {
         self.coarse_pointer = coarse;
         if let Some(pass) = &mut self.speed_rush {

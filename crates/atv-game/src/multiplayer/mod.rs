@@ -33,6 +33,12 @@ use std::collections::BTreeMap;
 /// The wire protocol version (atv-net), shared with the JavaScript game.
 pub const PROTOCOL: u8 = atv_net::VERSION;
 
+/// Riders farther than this (ft) from the player's own ride are not tested
+/// for contact ([`Session::contact_bodies`]): a quad is about 6 ft long and
+/// riders close at most a few feet in a 60 Hz step; the margin also covers
+/// the newest pose leading the sampled one.
+pub const CONTACT_REACH_FT: f32 = 60.;
+
 /// The reserved Arlington Free Ride rooms `FREERD01`-`FREERD25`.
 pub fn is_shared_room(code: &str) -> bool {
     atv_net::parse_room_code(code).is_ok_and(|c| atv_net::is_public_room_code(&c))
@@ -1345,16 +1351,26 @@ impl Session {
     }
 
     /// Other riders' current (unbuffered) bodies for contacts, unless ghosted
-    /// (atv-web `collide`).
-    pub fn contact_bodies(&self, now_ms: u64, cars: Cars) -> Vec<PeerBody> {
+    /// (atv-web `collide`). With `near`, riders whose newest pose is over
+    /// [`CONTACT_REACH_FT`] from it (horizontally, off the train) are left
+    /// out before sampling: they cannot touch within a step, and a room of
+    /// 64 samples every buffer up to four times a frame.
+    pub fn contact_bodies(&self, now_ms: u64, cars: Cars, near: Option<[f32; 3]>) -> Vec<PeerBody> {
         let Some(own) = self.peer else {
             return Vec::new();
         };
         if now_ms < self.ghost_until {
             return Vec::new();
         }
+        let far = |buffer: &PoseBuffer| {
+            near.zip(buffer.latest()).is_some_and(|(o, (s, _))| {
+                s.platform.is_none()
+                    && (s.atv.position[0] - o[0]).hypot(s.atv.position[2] - o[2]) > CONTACT_REACH_FT
+            })
+        };
         self.buffers
             .iter()
+            .filter(|(_, buffer)| !far(buffer))
             .filter_map(|(&peer, buffer)| {
                 let mut pose = buffer.sample_current(now_ms).filter(|p| !p.stale)?;
                 rebase(&mut pose.snapshot, cars);

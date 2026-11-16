@@ -457,8 +457,8 @@ original-game online mode.
   - A shared room holds 20 riders; private rooms keep the original four.
     Since #710 (2026-11-16) a shared room on the game server holds 64
     (`FURY_FREERIDE_CAPACITY`), kept at 20 while an older build is in it;
-    clients draw the nearest 19 others (research/GAME_SERVER.md "Shared
-    room capacity").
+    clients draw every rider within the fog end and inside the view
+    (research/GAME_SERVER.md "Shared room capacity").
   - The map is fixed and nobody gets host controls: the relay ignores map
     changes.
   - There is no invite link and no 12-hour age limit.
@@ -486,7 +486,12 @@ original-game online mode.
   - At most eight name tags are shown, of which at most three are off-screen
     arrows.
   - Slots 4–19 use authored colors after the original red, blue, green and
-    yellow.
+    yellow. Since #710 a rider who painted their ATV is shown in that
+    paint's colour (name tag, minimap dot, chat), so the 64 riders of a
+    shared room do not share 20 slot colours; Original paint, motorcycles
+    and objective markers keep the slot colour, colour assistance still
+    overrides, and black marks take a light outline
+    (`atv_ui::hud::peers::rider_color`).
   - The remote rig and GPU model caches hold one model per possible rider (20)
     instead of eight.
   - The Players page uses columns when 20 rows do not fit above Back.
