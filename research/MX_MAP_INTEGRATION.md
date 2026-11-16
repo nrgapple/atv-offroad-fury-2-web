@@ -123,9 +123,8 @@ passes, scaled/constant-color behavior, and the Northern
 Lights material's second UV set are not established as native equivalents.
 Source-generated stadium RenderTarget displays retain their geometry with an
 explicit black texture until a live screen camera is implemented.
-The renderer still uses its existing authored detail UV scale; the MX loader's
-`DetailMapTilingMultiplier` values (6, 8 or 16) are known, but their runtime UV
-consumer is not recovered. No MX scene declares the existing animated water
+Terrain detail tiling and blend strength are now recovered (see "Terrain and
+foliage rendering recovery" below). No MX scene declares the existing animated water
 heightfield resource; water-looking scenery still uses its source materials.
 SCN fog and sky are retained. Source `IsWater`/`ResetTime` and `CleanVehicle`
 metadata remain in the TOYs but are not yet connected to the shared reset and
@@ -256,3 +255,51 @@ ordering and multiplayer IDs remain intact. Source collider omissions,
 secondary reflection omissions, original weather/LOD/contact behavior and MX
 multiplayer integration remain open as described above. Runtime assets are
 published separately to R2; none belong in Git or CI.
+
+## Terrain and foliage rendering recovery
+
+Visual review on 2026-11-16 found MX venues dark and murky, with palms and
+bushes drawn half transparent. The causes are ATV2 constants applied to MX
+data. Evidence comes from the exact-build module and its shipped VU1
+microprograms, read privately and summarized here without code or bytes.
+
+Foliage alpha. MX selection (004702a0) scales the near/far fade phase by
+`128 / (outer - inner)`, twice ATV2's 64. Near meshes (004730a0) use vertex
+alpha `min(128, 128 - (phase - 32) * 4/3)` and a GREATER alpha test against
+`int(alpha * 0.5)`. Billboards (00474350) fade in to `min(128, phase * 4/3)`,
+and the billboard/near switch is phase 97. Each value is ATV2's doubled. The
+port kept ATV2's 64-unit vertex alpha, so GS modulation halved every MX texel.
+Covered leaves blended at about 50%, and billboards mostly failed the PSM
+reference of 120. The earlier one-byte alpha-margin workaround is replaced by
+an explicit MX profile in `vegetation.wgsl`. It doubles the shared 0-64
+selection phase, so the MX switch at 97 matches the shared switch at 49 exactly.
+ATV2 arithmetic is unchanged. Billboard colors clamp at 128, as in 00474350.
+
+Plant light colors come from the Ambient light only: ambient times
+`EcoAmbientScale` and ambient times `EcoDiffuseScale` (00471a40, colors
+stored /255 by 0012e8e0). All scenes author both scales as 1.0, giving ranges
+close to the shared adapter. This lighting is not changed here.
+
+Terrain. `Vu1TerrainRenderer` reads no light matrices. Each vertex receives one
+constant RGBA (`vf14`, from VU 0x40/0x41) for both base and detail passes, so
+terrain shading is baked into the PLN layers. The stored normals are not used
+for terrain color. All 56 `TerrainPlain.psm` files declare
+`TerrainColor = 128,128,128,128`. ATV2's fixed packet is RGB 127, A 64. MX
+therefore blends its detail texture at full texel alpha, twice ATV2's strength.
+Per-venue `DetailReplacementColor` values (101-134, the far-terrain stand-in)
+corroborate this. They match each venue's average full-strength detail
+darkening, not a half-strength one. The row loop advances detail U/V by
+ShaderParameter8.w, which 00481610 sets to the terrain loader's multiplier / 64.
+That is the SCN `DetailMapTilingMultiplier`: default 8 (0031e0c0); authored 6,
+8 or 16. Base U advances by 15/1024 per cell, the existing 240/256 inset.
+The renderer now takes per-venue detail tiling, blend alpha and base modulation
+from the loader. ATV2 keeps 32/textureWidth, 255/256 and 127/128 exactly.
+
+Checked and unchanged: MX fog uses ATV2's formula, including the constant 64
+passed by 0031af40 to 00124200. No venue authors per-zone fog. Static props
+mostly use `Vu1StripDiffuse`, whose clamped ambient-plus-directional sum
+matches the existing prop lighting scale. `HighDynamicRange` is a vehicle and
+rider material (`Veh/Tex/HighDynamicRange.psm`), not a venue grade.
+Remaining: far-terrain `DetailReplacementColor` modulation (mip averaging
+stands in), sun flares (authored in MX and ATV2 TOYs, absent from the port),
+and the native framebuffer comparison.

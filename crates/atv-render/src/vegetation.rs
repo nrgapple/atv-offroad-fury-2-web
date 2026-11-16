@@ -156,7 +156,7 @@ impl VegetationPass {
                         ],
                         flags: [
                             pass.texture.is_some() as u8 as f32,
-                            vegetation.mx_alpha_margin as u8 as f32,
+                            vegetation.mx as u8 as f32,
                             0.,
                             0.,
                         ],
@@ -178,7 +178,7 @@ impl VegetationPass {
             let indices: [u32; 12] = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5];
             let params = |cutoff| MaterialUniform {
                 params: [cutoff, pass.fog() as u8 as f32, blend as u8 as f32, 1.],
-                flags: [1., 0., 0., 0.],
+                flags: [1., vegetation.mx as u8 as f32, 0., 0.],
             };
             let far = material(params(pass.alpha_test));
             let transition = material(params(1. / 255.));

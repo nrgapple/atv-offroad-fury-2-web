@@ -27,7 +27,7 @@ struct Globals {
 struct Material {
   // alpha cutoff, fog enabled, scenery blend, billboard
   params: vec4<f32>,
-  // use texture
+  // use texture, MX ecosystem profile
   flags: vec4<f32>,
 };
 struct Unused {
@@ -67,6 +67,20 @@ fn place(origin: vec3<f32>, rotation: vec2<f32>, scaled: vec3<f32>) -> vec3<f32>
     rotation.y * scaled.x + rotation.x * scaled.z);
 }
 
+// Near-mesh GS vertex alpha and its GREATER alpha-test reference (0-1).
+// ATV2 (002fe710): alpha 64 at unity, reference equal to it. MX (004730a0):
+// alpha 128 at unity over a 0-128 fade phase (004702a0), twice the shared
+// selection's 0-64 phase, with reference int(alpha * 0.5). A covered MX
+// texel therefore passes and blends opaque instead of at half alpha.
+fn near_alpha(phase: f32) -> vec2<f32> {
+  if (m.flags.y > 0.5) {
+    let alpha = min(128.0, 128.0 - (phase * 2.0 - 32.0) * 1.3333334);
+    return vec2<f32>(alpha, trunc(alpha * 0.5) / 255.0);
+  }
+  let alpha = min(64.0, 64.0 - (phase - 16.0) * 1.3333334);
+  return vec2<f32>(alpha, trunc(alpha) / 255.0);
+}
+
 @vertex
 fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
     @location(4) eco_position: vec3<f32>, @location(5) eco_scale: vec2<f32>, @location(9) eco_state: vec3<f32>) -> Varyings {
@@ -78,16 +92,12 @@ fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @lo
   let local_light = vec3<f32>((rotation.x * eco_scale.x) * sun.x + (rotation.y * eco_scale.x) * sun.z,
     sun.y * eco_scale.y, (-rotation.y * eco_scale.x) * sun.x + (rotation.x * eco_scale.x) * sun.z);
   let weight = max((local_light.x * normal.x + local_light.y * normal.y) + local_light.z * normal.z, 0.0);
-  let alpha = min(64.0, 64.0 - (eco_state.z - 16.0) * 1.3333334);
+  let near = near_alpha(eco_state.z);
+  let alpha = near.x;
   var biased = vec4<f32>(8388608.0) + vec4<f32>(g.eco_ambient.xyz, alpha);
   biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
   let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
-  // A fully covered MX texel at GS alpha 128 modulated by near alpha 64
-  // reaches the same byte as its GREATER reference. Give this imported
-  // material a one-byte margin, while retaining ATV2's reference exactly.
-  // This is a visibility repair; native MX equivalence remains unverified.
-  return finish(place(eco_position, rotation, scaled), uv, color,
-    select(trunc(alpha) / 255.0, max(trunc(alpha) - 1.0, 0.0) / 255.0, m.flags.y > 0.5));
+  return finish(place(eco_position, rotation, scaled), uv, color, near.y);
 }
 
 // Remastered preset: near plants lean in a gusting wind, more with height.
@@ -111,12 +121,12 @@ fn vs_mesh_wind(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>
   let local_light = vec3<f32>((rotation.x * eco_scale.x) * sun.x + (rotation.y * eco_scale.x) * sun.z,
     sun.y * eco_scale.y, (-rotation.y * eco_scale.x) * sun.x + (rotation.x * eco_scale.x) * sun.z);
   let weight = max((local_light.x * normal.x + local_light.y * normal.y) + local_light.z * normal.z, 0.0);
-  let alpha = min(64.0, 64.0 - (eco_state.z - 16.0) * 1.3333334);
+  let near = near_alpha(eco_state.z);
+  let alpha = near.x;
   var biased = vec4<f32>(8388608.0) + vec4<f32>(g.eco_ambient.xyz, alpha);
   biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
   let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
-  return finish(place(eco_position, rotation, scaled) + sway(eco_position, scaled.y), uv, color,
-    select(trunc(alpha) / 255.0, max(trunc(alpha) - 1.0, 0.0) / 255.0, m.flags.y > 0.5));
+  return finish(place(eco_position, rotation, scaled) + sway(eco_position, scaled.y), uv, color, near.y);
 }
 
 @vertex
@@ -140,8 +150,11 @@ fn vs_billboard(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>
   var sun = vec3<f32>(0.0);
   if (sun_length > 0.0) { sun = vec3<f32>(horizontal_sun.x / sun_length, 0.0, horizontal_sun.y / sun_length); }
   let diffuse = max(dot(normalize(light_normal), sun), 0.0);
-  let color = vec4<f32>(trunc(min(g.eco_ambient.xyz + g.eco_sunlight.xyz * diffuse, vec3<f32>(127.0))),
-    min(64.0, trunc(eco_state.z * 1.3333334)));
+  // 00474350 (MX) fades in to 128 over its doubled phase and clamps the
+  // color at 128; ATV2 stops at 64 and 127.
+  let mx = m.flags.y > 0.5;
+  let color = vec4<f32>(trunc(min(g.eco_ambient.xyz + g.eco_sunlight.xyz * diffuse, vec3<f32>(select(127.0, 128.0, mx)))),
+    select(min(64.0, trunc(eco_state.z * 1.3333334)), min(128.0, trunc(eco_state.z * 2.0 * 1.3333334)), mx));
   return finish(place(eco_position, rotation, scaled), uv, color, 0.0);
 }
 
