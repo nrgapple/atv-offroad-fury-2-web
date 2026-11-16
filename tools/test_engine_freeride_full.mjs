@@ -1,12 +1,14 @@
-// Host-only measurement: a full Arlington Free Ride room in the Rust engine.
-// One Rust browser rides Free Ride from its main menu; synthetic riders (the
-// Rust codec over Node WebSockets, test_freeride.mjs's bots) circle it at the
-// near/fast 20 Hz cadence until the room holds 20. Over a 30 s window (ATV_FREERIDE_SECONDS) the
-// Rust page's frame rate and CPU, drawn riders, name tags, engine voices,
-// relay round trip and received/sent bandwidth are sampled.
+// Host-only measurement: a full Free Ride room in the Rust engine.
+// One Rust browser boots into Free Ride (Press Start, then Hop in); synthetic
+// riders (the Rust codec over Node WebSockets, claiming as builds that take
+// 64 slots) circle it 30-90 ft away at the near/fast 20 Hz cadence. Over a
+// 30 s window (ATV_FREERIDE_SECONDS) the Rust page's frame rate and CPU,
+// presented and in-view riders, name tags, engine voices, round trip and
+// received/sent bandwidth are sampled.
 //   ATV_CODEC=target/.../debug/examples/codec PLAYWRIGHT_MODULE=... \
 //   ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_full.mjs
-// ATV_FREERIDE_BOTS (default 19), ATV_FREERIDE_HZ (default 20),
+// ATV_FREERIDE_BOTS (default 19, up to 63), ATV_FREERIDE_HZ (default 20),
+// ATV_FREERIDE_QUERY adds page parameters (e.g. `&riderCap=19&halfRate=0`),
 // ATV_FREERIDE_REPORT writes the JSON report, ATV_MP_SCREENSHOT a capture.
 // Local relay only: never point this at the production site.
 import assert from 'node:assert/strict';
@@ -21,7 +23,8 @@ const BOTS = Number(process.env.ATV_FREERIDE_BOTS ?? 19);
 const HZ = Number(process.env.ATV_FREERIDE_HZ ?? 20);
 const SECONDS = Number(process.env.ATV_FREERIDE_SECONDS ?? 30);
 const PING = Number(process.env.ATV_FREERIDE_PING ?? 1000);
-const report = { bots: BOTS, hz: HZ, samples: [] };
+const QUERY = process.env.ATV_FREERIDE_QUERY ?? '';
+const report = { bots: BOTS, hz: HZ, query: QUERY, samples: [] };
 const relayRtt = [];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -43,12 +46,17 @@ const encode = packet =>
   });
 
 async function claim() {
-  const response = await fetch(base + '/multiplayer/freeride', { method: 'POST', headers: { Origin: base } });
+  // A build that takes 64 slots, as the game says since #710.
+  const response = await fetch(base + '/multiplayer/freeride', {
+    method: 'POST',
+    headers: { Origin: base, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ riders: 64 })
+  });
   assert.equal(response.status, 200, await response.clone().text());
   return response.json();
 }
 const transform = position => ({ position, rotation: [1, 0, 0, 0], scale: [1, 1, 1], shear: [0, 0, 0] });
-async function bot(index, centre, name) {
+async function bot(index, centre, name, map) {
   const { code, key } = await claim();
   const socket = new WebSocket(`${base.replace('http', 'ws')}/multiplayer/rooms/${code}?key=${key}`, {
     headers: { Origin: base }
@@ -67,7 +75,7 @@ async function bot(index, centre, name) {
       }
     })
   );
-  socket.send(await encode({ Ready: { map: 8 } }));
+  socket.send(await encode({ Ready: { map } }));
   const started = Date.now(),
     radius = 30 + (index % 6) * 12,
     speed = 25 / radius,
@@ -158,33 +166,40 @@ try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
+    localStorage.setItem('atv-start-in', 'freeride');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
   // Pings each second (the room default is 15 s) give a steady round trip.
-  await page.goto(url(`/play.html?uiDiagnostics=1${PING ? `&pingMs=${PING}` : ''}`));
+  await page.goto(url(`/play.html?uiDiagnostics=1${PING ? `&pingMs=${PING}` : ''}${QUERY}`));
   await page.waitForFunction(
     () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title',
     null,
     { timeout: 120000 }
   );
+  // Press Start boots into Free Ride (research/FREERIDE_MENU.md) on
+  // whichever venue the room rides; Hop in (selected first) takes the ride.
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
-  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).front?.page === 'main');
-  // Main Menu → Multiplayer → Arlington Free Ride.
-  await key(page, 'ArrowDown');
+  await page.waitForFunction(
+    () => /^FREERD/.test(JSON.parse(window.furyMultiplayer ?? 'null')?.code ?? '') &&
+      Boolean(JSON.parse(window.furyMultiplayer).environment),
+    null,
+    { timeout: 180000 }
+  );
+  await page.waitForFunction(
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.choices?.[0] === 'resume',
+    null,
+    { timeout: 120000 }
+  );
   await key(page, 'Enter');
-  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).front?.page === 'multiplayer');
-  const choices = (await read(page)).front.choices;
-  for (let i = 0; i < choices.indexOf('freeride'); i++) await key(page, 'ArrowDown');
-  await key(page, 'Enter');
-  await page.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, {
-    timeout: 180000
-  });
   // Let the ride's own start (sound bank decode, map raster) finish first,
   // so the arrival window measures arrivals.
   await sleep(8000);
   const me = await engine(page);
   report.room = me.code;
+  report.venue = me.environment;
+  // The shared rooms' venues are env01-env08, map ids 1-8.
+  const map = Number(/^env0(\d)$/.exec(me.environment)?.[1] ?? 8);
   // Fill the room around the Rust rider.
   // Riders arrive together, as a busy room brings them; the worst frame
   // while their models and engine sounds load is sampled too.
@@ -209,10 +224,11 @@ try {
   }, 1000);
   // Joins are paced: simultaneous claims have stalled the local workerd.
   for (let i = 0; i < BOTS; i++) {
-    bots.push(await bot(i, me.origin, `Bot ${i + 1}`));
+    bots.push(await bot(i, me.origin, `Bot ${i + 1}`, map));
     await sleep(250);
   }
-  await page.waitForFunction(n => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= n, Math.min(BOTS, 19), {
+  const cap = Number(/riderCap=(\d+)/.exec(QUERY)?.[1] ?? 63);
+  await page.waitForFunction(n => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= n, Math.min(BOTS, cap), {
     timeout: 180000
   });
   report.allDrawnSeconds = (Date.now() - filling) / 1000;
@@ -245,6 +261,7 @@ try {
       worst,
       room,
       drawn: m.drawn,
+      inView: m.inView,
       tags: m.tags,
       voices: m.remoteSound?.voices
     });
@@ -261,6 +278,7 @@ try {
   report.summary = {
     players: last.players,
     drawn: stat('drawn'),
+    inView: stat('inView'),
     tags: stat('tags'),
     fps: stat('fps'),
     frameMs: stat('frame'),
@@ -286,7 +304,7 @@ try {
     closed: last.closed
   };
   assert.equal(last.closed, null);
-  assert.ok(report.summary.drawn.min >= Math.min(BOTS, 19) - 1, JSON.stringify(report.summary));
+  assert.ok(report.summary.drawn.min >= Math.min(BOTS, cap) - 1, JSON.stringify(report.summary));
   if (process.env.ATV_MP_SCREENSHOT) await page.screenshot({ path: process.env.ATV_MP_SCREENSHOT });
   if (process.env.ATV_FREERIDE_REPORT) writeJson(process.env.ATV_FREERIDE_REPORT, report);
   assertNoErrors(errors);
