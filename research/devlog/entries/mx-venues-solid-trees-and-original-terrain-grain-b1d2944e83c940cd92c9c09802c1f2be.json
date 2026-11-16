@@ -1,0 +1,31 @@
+{
+  "id": "mx-venues-solid-trees-and-original-terrain-grain-b1d2944e83c940cd92c9c09802c1f2be",
+  "timestamp": "2026-11-16T22:30:46.522690+00:00",
+  "recorded_at": "2026-11-16T22:32:01.118628+00:00",
+  "kind": "build",
+  "title": "MX venues: solid trees and original terrain grain",
+  "summary": "MX vs. ATV Unleashed fades plants on a 0-128 alpha scale, but the port used ATV2's 64, so every MX palm and bush drew about half transparent and far tree billboards mostly vanished. Plants are now opaque, and distant dead trees and brush appear. MX terrain also blends its detail texture at full strength and tiles it per venue (DetailMapTilingMultiplier/64: 6, 8 or 16), restoring the fine dirt grain. ATV2 maps are unchanged. Code in PR #723; issue #722.",
+  "details": [
+    "Recovered from the exact MX build's ecosystem code and its shipped Vu1TerrainRenderer microprogram. Fog, prop lighting and the vehicle HDR glint were checked and already match the original.",
+    "Verification: host Chromium before/after screenshots on four venues (The Glades, Glamis, Goblin Gulch and an MX freestyle arena); test_engine_mx_foliage.mjs and test_engine_mx_hidden_scene.mjs pass. The screenshots show The Glades and Glamis, after first, then before."
+  ],
+  "limitation": "Host-only screenshots, not a phone or native PS2 framebuffer comparison. Far-terrain DetailReplacementColor modulation is approximated by mipmaps. Sun flares, authored in both the MX and ATV2 TOYs, are not implemented yet; that follow-up is tracked in #722.",
+  "images": [
+    {
+      "path": "/devlog-images/mx-venues-solid-trees-and-original-terrain-grain-b1d2944e83c940cd92c9c09802c1f2be.png",
+      "caption": "After: The Glades with opaque palms and bushes."
+    },
+    {
+      "path": "/devlog-images/mx-venues-solid-trees-and-original-terrain-grain-b1d2944e83c940cd92c9c09802c1f2be-2.png",
+      "caption": "Before: the same view with half-transparent plants."
+    },
+    {
+      "path": "/devlog-images/mx-venues-solid-trees-and-original-terrain-grain-b1d2944e83c940cd92c9c09802c1f2be-3.png",
+      "caption": "After: Glamis with finer dirt grain and fuller brush."
+    },
+    {
+      "path": "/devlog-images/mx-venues-solid-trees-and-original-terrain-grain-b1d2944e83c940cd92c9c09802c1f2be-4.png",
+      "caption": "Before: Glamis with washed-out terrain detail and fewer plants."
+    }
+  ]
+}
