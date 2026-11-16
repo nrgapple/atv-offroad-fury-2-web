@@ -29,11 +29,12 @@ pub use transform::Transform;
 
 pub const VERSION: u8 = 6;
 /// Protocol bound on participant slots. Private rooms keep the original four
-/// riders ([`PRIVATE_CAPACITY`]); shared Arlington Free Ride rooms hold more.
+/// riders ([`PRIVATE_CAPACITY`]); shared Free Ride rooms hold more.
 pub const MAX_PLAYERS: usize = 20;
 pub const PRIVATE_CAPACITY: usize = 4;
 pub const PUBLIC_CAPACITY: usize = 20;
-/// Shared Free Ride rooms ride Arlington Stream (`env08`) only.
+/// The venue a shared Free Ride room rides when the server names none
+/// (Arlington Stream, `env08`); the server rotates rooms across venues.
 pub const PUBLIC_MAP: u16 = 8;
 /// Shared rooms are numbered from 1; a full room opens the next one.
 pub const PUBLIC_ROOMS: u8 = 25;
