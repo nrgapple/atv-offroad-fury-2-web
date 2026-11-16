@@ -4147,7 +4147,7 @@ impl App {
         let ease = if self.home.live && self.home.fade() < 1. {
             1.
         } else {
-            1. - (-dt * 8.).exp()
+            1. - (-dt * 8.).exp_d()
         };
         for (shift, target) in self.view_shift.iter_mut().zip(target) {
             *shift += (target - *shift) * ease;
