@@ -161,6 +161,12 @@ async fn close_frame(socket: &mut Socket) -> Option<CloseFrame> {
 }
 
 async fn join(socket: &mut Socket, code: &str, name: &str) -> u8 {
+    join_map(socket, code, name).await.0
+}
+
+/// Joins and returns the peer and the room's map (shared rooms open on the
+/// current rotation venue).
+async fn join_map(socket: &mut Socket, code: &str, name: &str) -> (u8, u16) {
     send(
         socket,
         &Packet::Join {
@@ -176,7 +182,7 @@ async fn join(socket: &mut Socket, code: &str, name: &str) -> u8 {
     )
     .await;
     match expect(socket, |p| matches!(p, Packet::Welcome { .. })).await {
-        Packet::Welcome { peer, .. } => peer,
+        Packet::Welcome { peer, lobby, .. } => (peer, lobby.map),
         _ => unreachable!(),
     }
 }
@@ -345,9 +351,13 @@ async fn riders_meet_in_free_ride_get_frames_and_survive_a_restart() {
     assert_eq!((code.as_str(), code_b.as_str()), ("FREERD01", "FREERD01"));
     let mut a = connect(address, &code, &key_a).await;
     let mut b = connect(address, &code, &key_b).await;
-    let peer_a = join(&mut a, &code, "Alpha").await;
+    let (peer_a, map) = join_map(&mut a, &code, "Alpha").await;
     let peer_b = join(&mut b, &code, "Bravo").await;
     assert_ne!(peer_a, peer_b);
+    assert!(
+        atv_server::engine::hub::ROTATION_MAPS.contains(&map),
+        "{map}"
+    );
     // B takes frames; A is an older build.
     send(
         &mut b,
@@ -359,13 +369,7 @@ async fn riders_meet_in_free_ride_get_frames_and_survive_a_restart() {
     )
     .await;
     for socket in [&mut a, &mut b] {
-        send(
-            socket,
-            &Packet::Ready {
-                map: atv_net::PUBLIC_MAP,
-            },
-        )
-        .await;
+        send(socket, &Packet::Ready { map }).await;
     }
     // Ping answers with the server's clock.
     send(&mut b, &Packet::Ping { nonce: 42 }).await;
@@ -451,7 +455,7 @@ async fn uncounted_addresses_ride_but_stay_out_of_the_public_counts() {
     let (_, body) = http(address, "POST", "/multiplayer/freeride", Some(ORIGIN), "").await;
     let (code, key) = claim_of(&body);
     let mut tester = connect_from(address, &code, &key, Some("198.51.100.5")).await;
-    let tester_peer = join(&mut tester, &code, "Tester").await;
+    let (tester_peer, map) = join_map(&mut tester, &code, "Tester").await;
     metric(address, "fury_riders_all 1").await;
     let health = public("/healthz").await;
     assert_eq!(
@@ -486,13 +490,7 @@ async fn uncounted_addresses_ride_but_stay_out_of_the_public_counts() {
     let days = public("/multiplayer/freeride/days").await;
     assert_eq!(days["days"][0]["busiest"]["riders"], 1, "{days}");
     for socket in [&mut tester, &mut rider] {
-        send(
-            socket,
-            &Packet::Ready {
-                map: atv_net::PUBLIC_MAP,
-            },
-        )
-        .await;
+        send(socket, &Packet::Ready { map }).await;
     }
     send(&mut tester, &pose(tester_peer, 1)).await;
     expect(
