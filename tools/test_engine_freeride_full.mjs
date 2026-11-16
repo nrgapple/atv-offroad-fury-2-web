@@ -5,7 +5,8 @@
 // 30 s window (ATV_FREERIDE_SECONDS) the Rust page's frame rate and CPU,
 // presented and in-view riders, name tags, engine voices, round trip and
 // received/sent bandwidth are sampled.
-//   ATV_CODEC=target/.../debug/examples/codec PLAYWRIGHT_MODULE=... \
+//   cargo build --release -p atv-loadtest --example codec
+//   ATV_CODEC=target/release/examples/codec PLAYWRIGHT_MODULE=... \
 //   ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_full.mjs
 // ATV_FREERIDE_BOTS (default 19, up to 63), ATV_FREERIDE_HZ (default 20),
 // ATV_FREERIDE_QUERY adds page parameters (e.g. `&riderCap=19&halfRate=0`),
@@ -35,7 +36,7 @@ const metadata = spawnSync(
   { encoding: 'utf8', cwd: new URL('..', import.meta.url) }
 );
 const codecPath =
-  process.env.ATV_CODEC ?? path.join(JSON.parse(metadata.stdout).target_directory, 'debug/examples/codec');
+  process.env.ATV_CODEC ?? path.join(JSON.parse(metadata.stdout).target_directory, 'release/examples/codec');
 const codec = spawn(codecPath, ['stream'], { stdio: ['pipe', 'pipe', 'inherit'] });
 const pending = [];
 createInterface({ input: codec.stdout }).on('line', line => pending.shift()(Buffer.from(line, 'hex')));
@@ -71,7 +72,9 @@ async function bot(index, centre, name, map) {
     await encode({
       Join: {
         code: [...Buffer.from(code)],
-        player: { id: 0, name, atv_model: quad, rider_model: index % 2, appearance: [0, 0, 0, 0, 0, 0, 0, 0] }
+        // Every ATV paint in turn (Original first): tags and map dots
+        // take the paint's colour.
+        player: { id: 0, name, atv_model: quad, rider_model: index % 2, appearance: [0, 0, 0, 0, 0, 0, 0, index % 11] }
       }
     })
   );
