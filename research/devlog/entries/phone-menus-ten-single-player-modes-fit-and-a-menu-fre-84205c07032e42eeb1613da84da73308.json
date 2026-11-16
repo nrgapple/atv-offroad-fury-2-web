@@ -1,0 +1,17 @@
+{
+  "id": "phone-menus-ten-single-player-modes-fit-and-a-menu-fre-84205c07032e42eeb1613da84da73308",
+  "timestamp": "2026-11-16T17:48:37.592058+00:00",
+  "recorded_at": "2026-11-16T17:52:54.959383+00:00",
+  "kind": "verification",
+  "title": "Phone menus: ten Single Player modes fit, and a menu freeze is fixed",
+  "summary": "Single Player's ten modes now fit a 390x844 portrait phone (the stage above the list shrinks); on shorter Safari screens the list scrolls and the last mode scrolls into view above Back.",
+  "details": [
+    "Fixed a freeze: after a failed ride load, the shared garage preview pipeline stayed tied to the old GPU device and the next menu page crashed; it is now released with the GPU.",
+    "Scroll: lifting a finger after a fast flick now keeps its momentum.",
+    "Two stale tests were corrected: an old six-mode assumption, and a divider check that mistook row labels for the rim.",
+    "Verification: menu_flows, menu_phone_layout and menu_divider pass on the host build; menu_scroll passed 1 of 2 (timing-sensitive, #707)."
+  ],
+  "limitation": "Host Chromium/WebKit only; no physical phone.",
+  "image": "/devlog-images/phone-menus-ten-single-player-modes-fit-and-a-menu-fre-84205c07032e42eeb1613da84da73308.png",
+  "caption": "Single Player at 390x844 portrait with all ten modes"
+}
