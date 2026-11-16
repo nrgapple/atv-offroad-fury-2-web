@@ -863,7 +863,9 @@ about 390x664 in portrait and 844x330 in landscape) and a WebKit audit at DPR 3.
   room for the vehicle and its name) instead of a fifth of the page, so the
   ten fit a full-height 390x844 phone. Under Safari's toolbars (390x664)
   they cannot fit with 44px targets and a stage: the rows scroll with the
-  cue and the last mode glides fully into view above Back.
+  cue and the last mode glides fully into view above Back. At that 124px floor
+  the model slot's minimum drops from 72px to 60px; at 72 the name plate
+  overflowed onto the rim (seen while the model loaded).
 - **Landscape** rows columns run to the bottom edge; Back (and Copy ride
   link) sit under the stage at the bottom right. The status bar gets a dark
   band so the profile chip (on red) and the others (on silver) read as one
