@@ -1364,8 +1364,8 @@ impl Session {
         }
         let far = |buffer: &PoseBuffer| {
             near.zip(buffer.latest()).is_some_and(|(o, (s, _))| {
-                s.platform.is_none()
-                    && (s.atv.position[0] - o[0]).hypot(s.atv.position[2] - o[2]) > CONTACT_REACH_FT
+                let (dx, dz) = (s.atv.position[0] - o[0], s.atv.position[2] - o[2]);
+                s.platform.is_none() && dx * dx + dz * dz > CONTACT_REACH_FT * CONTACT_REACH_FT
             })
         };
         self.buffers
