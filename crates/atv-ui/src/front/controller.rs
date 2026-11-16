@@ -45,6 +45,9 @@ pub enum Event {
     Stats,
     /// Open Settings over the frontend.
     Settings,
+    /// Hop in: ride the live Free Ride world behind the menus (research/
+    /// FREERIDE_MENU.md).
+    HopIn,
     /// Main menu → Jukebox: the soundtrack player over the frontend.
     Jukebox,
     /// A Jukebox (or Settings → Audio song) control for the page's
@@ -490,6 +493,9 @@ pub struct Frontend {
     /// The game server runs Quick Play (research/QUICK_PLAY.md): the main
     /// menu leads with its row.
     pub quickplay: bool,
+    /// The live Free Ride world behind the menus and Hop in (set by the
+    /// host; research/FREERIDE_MENU.md).
+    pub live: Option<super::LiveWorld>,
     /// The Host/Join forms (frontend.js playerName, createCode, roomCode).
     pub player_name: String,
     pub create_code: String,
@@ -698,6 +704,7 @@ impl Frontend {
             freeride_riders: None,
             freeride_map: None,
             quickplay: false,
+            live: None,
             player_name: String::new(),
             create_code: String::new(),
             room_code: String::new(),
@@ -810,8 +817,29 @@ impl Frontend {
         self.save(settings);
     }
 
-    /// ui_menu rows for the page (labels and keyboard order).
+    /// ui_menu rows for the page (labels and keyboard order), then Hop in
+    /// while the live Free Ride world is there (drawn beside Back).
     pub fn refresh(&mut self, view: &Viewport) {
+        self.refresh_rows(view);
+        if self.live.is_some()
+            && super::hop_page(&self.page)
+            && !self.choices.iter().any(|(a, _)| a == "hopin")
+        {
+            self.choices.push(("hopin".into(), "Hop in".into()));
+        }
+    }
+
+    /// The live Free Ride world (None: none, or it went): Hop in comes and
+    /// goes with it.
+    pub fn set_live(&mut self, live: Option<super::LiveWorld>, view: &Viewport) {
+        let changed = live.is_some() != self.live.is_some();
+        self.live = live;
+        if changed {
+            self.refresh(view);
+        }
+    }
+
+    fn refresh_rows(&mut self, view: &Viewport) {
         if store_page(&self.page) {
             self.choices = self.store_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -2036,34 +2064,6 @@ impl Frontend {
         &self.choices
     }
 
-    /// The main menu's rows (action, label) as it would list them now, for
-    /// the main menu over the live Free Ride world (research/
-    /// FREERIDE_MENU.md). The current page is left as it is.
-    pub fn main_rows(&mut self, view: &Viewport) -> Vec<(String, String)> {
-        let page = std::mem::replace(&mut self.page, "main".into());
-        let (choices, selection) = (self.choices.clone(), self.selection);
-        self.refresh(view);
-        let rows = std::mem::replace(&mut self.choices, choices);
-        self.page = page;
-        self.selection = selection;
-        rows
-    }
-
-    /// Chooses `action` on the page shown (the live Free Ride main menu
-    /// hands the frontend's main menu the row picked over the world).
-    pub fn choose(
-        &mut self,
-        action: &str,
-        view: &Viewport,
-        settings: &mut Settings,
-    ) -> Option<Event> {
-        if let Some(at) = self.choices.iter().position(|(a, _)| a == action) {
-            self.selection = at;
-        }
-        let event = self.run(action, view, settings);
-        self.seat_gate(event, view)
-    }
-
     fn current(&self) -> Option<&str> {
         self.choices.get(self.selection).map(|(a, _)| a.as_str())
     }
@@ -2232,7 +2232,7 @@ impl Frontend {
     }
 
     /// The remembered rider name, or `Rider`.
-    fn room_name(&self) -> String {
+    pub fn room_name(&self) -> String {
         if valid_name(&self.player_name) {
             self.player_name.trim().to_string()
         } else {
@@ -2627,6 +2627,7 @@ impl Frontend {
                 self.notice = notice;
             }
             "back" => return self.back(view),
+            "hopin" => return Some(Event::HopIn),
             "devlog" => return Some(Event::DevLog),
             "downloads" => return Some(Event::Downloads),
             "stats" => return Some(Event::Stats),
@@ -2945,6 +2946,11 @@ impl Frontend {
         }
         // Start accepts, except over a held room: there it leaves the
         // garage or course picker for the ride (frontend.js pause action).
+        // With the live Free Ride world it hops in, as on the ride's pause.
+        if fresh & 1 << 2 != 0 && event.is_none() && self.choices.iter().any(|(a, _)| a == "hopin")
+        {
+            return Some(Event::HopIn);
+        }
         if fresh & 1 << 2 != 0 && event.is_none() {
             let room = self.room == Some(self.page.as_str());
             event = self.key(if room { "Escape" } else { "Enter" }, view, settings);
@@ -3215,6 +3221,7 @@ impl Frontend {
         self.focus = None;
         match id {
             super::DICE => return self.run("dicename", view, settings),
+            super::HOP_IN | super::WORLD => return Some(Event::HopIn),
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
@@ -3491,6 +3498,7 @@ impl Frontend {
             },
             medal_strip: (self.page == "profile-overview")
                 .then(|| (self.medals.counts(), self.medals.badge_counts())),
+            live: self.live.clone(),
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
             } else if self.vehicle_sheet && self.page == "garage" {

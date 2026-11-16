@@ -209,6 +209,8 @@ enum Message {
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
     FreeRideRiders(Option<net::FreeRide>),
+    /// The live Free Ride world behind the menus loaded (its attempt).
+    HomeReady(u32, Box<Result<Ready, String>>),
     /// A Host/Join form field's text from the browser's input.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     FrontText(&'static str, String),
@@ -1003,8 +1005,14 @@ struct App {
     requested: HashSet<String>,
     /// When the Free Ride rider count was last requested.
     riders_polled: Option<Instant>,
-    /// The main menu over the live Free Ride world (home.rs).
+    /// The live Free Ride world behind the menus (home.rs), and its load
+    /// attempt (a stale load's result is dropped).
     home: home::Home,
+    home_attempt: u32,
+    /// The scene's off-axis framing (NDC): the world under the menus sits in
+    /// their stage; it eases back to the middle once ridden.
+    view_shift: [f32; 2],
+    view_target: [f32; 2],
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
@@ -1793,6 +1801,15 @@ impl App {
             return;
         };
         if ready.riding.is_some() {
+            // The menus over the live Free Ride world: their input and
+            // layout first (they may leave it), then the world's frame
+            // draws them over its scene (home.rs).
+            if self.home.live {
+                self.front_frame();
+                if self.ready.is_none() {
+                    return;
+                }
+            }
             self.ride_frame(dt);
             return;
         }
@@ -1861,7 +1878,10 @@ impl App {
         let focused = self.effective_focused();
         let suspended = !self.visible || self.suspended;
         let device = self.window.as_ref().map_or(1., |w| w.scale_factor());
-        self.sync_shell(None);
+        // The menus over the live Free Ride world keep their shell page.
+        if !self.home.live {
+            self.sync_shell(None);
+        }
         self.sync_usage();
         let mut rescale = false;
         if let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) {
@@ -3637,8 +3657,13 @@ impl App {
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
             state["active"] = active.into();
-            // The live Free Ride main menu (home.rs).
+            // The live Free Ride world behind the menus (home.rs).
             state["home"] = self.home.report();
+            if self.home.live
+                && let Some(front) = &self.front
+            {
+                state["front"] = front.borrow().diagnostics();
+            }
             state["home"]["piloting"] =
                 (riding.pilot.is_some() && riding.paused && riding.menu_open).into();
             state["shadows"] = serde_json::json!({
@@ -4065,7 +4090,29 @@ impl App {
                 && self.replay.is_none()
                 && self.overlay.as_ref().is_none_or(|o| o.menu.is_none()),
         );
+        // The world under the menus is framed in their stage; ridden, it
+        // eases back to the middle (home.rs). It settles at once while the
+        // world fades in.
+        let target = if self.home.live {
+            self.view_target
+        } else {
+            [0.; 2]
+        };
+        let ease = if self.home.live && self.home.fade() < 1. {
+            1.
+        } else {
+            1. - (-dt * 8.).exp()
+        };
+        for (shift, target) in self.view_shift.iter_mut().zip(target) {
+            *shift += (target - *shift) * ease;
+            if (target - *shift).abs() < 1e-3 {
+                *shift = target;
+            }
+        }
+        ready.scene.set_view_shift(self.view_shift);
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
+        // The menus over the live Free Ride world draw where the HUD would.
+        let menus = self.front.clone().filter(|_| self.home.live);
         let fps = &self.fps;
         let render_started = Instant::now();
         let mut acquire = 0.;
@@ -4076,9 +4123,10 @@ impl App {
         };
         let mut draw_overlay = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView| {
             // The FPS readout joins the HUD's pass; drawn alone without one.
-            match overlay {
-                Some(overlay) => overlay.draw(encoder, target, fps.renderer()),
-                None => fps.draw(encoder, target),
+            match (overlay, &menus) {
+                (Some(overlay), _) => overlay.draw(encoder, target, fps.renderer()),
+                (None, Some(front)) => front.borrow_mut().draw(encoder, target, fps.renderer()),
+                (None, None) => fps.draw(encoder, target),
             }
         };
         let rendered = match ready.split.first() {
@@ -4568,7 +4616,6 @@ impl App {
             Event::Fullscreen => {
                 self.toggle_fullscreen();
             }
-            Event::Home(action) => self.home_choice(&action),
             Event::CopyRide => self.copy_ride_link(),
             Event::SaveCourse => self.save_editor_course(),
             Event::Photo => self.open_photo(),
@@ -4708,6 +4755,11 @@ impl App {
                 self.menu_event(Event::Resume);
             }
             Event::ChangeRide | Event::SelectTrack => {
+                // Its garage holds the room as any Free Ride's does: it is
+                // no longer the world behind the menus (home.rs).
+                if self.home.world {
+                    self.home.left();
+                }
                 let garage = event == Event::ChangeRide;
                 let Some(ready) = &mut self.ready else { return };
                 if ready.net.is_none() || ready.riding.is_none() {
@@ -4740,6 +4792,8 @@ impl App {
                     ready.riding = Some(riding);
                 }
             }
+            // The live Free Ride world's Quit to Main Menu (home.rs).
+            Event::LeaveGame if self.home.world => self.home_menu(),
             Event::LeaveGame => {
                 let mut page = "main";
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
@@ -6447,139 +6501,8 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Ready(ready) => {
                 boot_loaded();
-                if let Some(front) = &self.front {
-                    front.borrow_mut().release_gpu();
-                }
-                let players = ready
-                    .net
-                    .as_ref()
-                    .and_then(|n| n.session.lobby.as_ref())
-                    .map(|l| l.players.len());
-                self.usage.started(players);
                 self.ready = Some(*ready);
-                // Lap Attack against a world board row's ghost (world.rs).
-                if let Some(rival) = self.world.rival.take()
-                    && let Some(race) = self
-                        .ready
-                        .as_mut()
-                        .and_then(|r| r.riding.as_mut())
-                        .and_then(|r| r.ride.race_mut())
-                    && race.settings().lap_attack
-                {
-                    race.set_rival(rival);
-                }
-                // Lap Attack's medals and personal best ghost (world.rs).
-                self.medals_start();
-                // The ride takes over the music bus from the menu tune.
-                self.sync_menu_music();
-                // Rides the saved settings do not reach (direct and held
-                // replays) still honour the camera and Vibration settings.
-                if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
-                    (riding.crash_camera_tight, riding.chase_assist) = self.camera_choice;
-                    riding.vibration = saved_setting("atv-vibration").as_deref() != Some("off");
-                }
-                self.sync_activity();
-                // Desktop has no autoplay rule: sound starts with the ride.
-                if !cfg!(target_arch = "wasm32") {
-                    self.gesture();
-                }
-                self.last = Instant::now();
-                if let Some(window) = &self.window {
-                    // The ride's scene draws at its render ratio from its
-                    // first frame; the surface and UI keep full density.
-                    let size = render_size(window);
-                    let ready = self.ready.as_mut().unwrap();
-                    fit_surface(window, &mut ready.gpu, size, self.suspended);
-                    ready.gpu.set_scene_targets(true);
-                    ready.gpu.set_scene_scale(scene_scale(window));
-                    if ready.riding.is_some() {
-                        let mut overlay = overlay::Overlay::new(
-                            &ready.gpu.device,
-                            ready.gpu.config.format,
-                            overlay::viewport(size.width, size.height, surface_scale(window)),
-                        );
-                        overlay.backdrop = self.ui_backdrop;
-                        overlay.frontend = self.front.is_some();
-                        overlay.set_course(&ready.venue);
-                        if let Some(assets) = ready.hud_assets.take() {
-                            overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
-                        }
-                        // Saved bindings and controller tuning (play.html's keys).
-                        if let Some(riding) = &mut ready.riding
-                            && !riding.held
-                            && riding.autodrive.is_none()
-                        {
-                            riding.bindings =
-                                atv_ui::menu::controller::load_bindings(&mut overlay.settings);
-                            overlay.set_help_keys(&riding.bindings);
-                        }
-                        device_preferences(&mut overlay.prefs, &overlay.settings);
-                        overlay.race = ready
-                            .riding
-                            .as_ref()
-                            .is_some_and(|r| r.ride.race().is_some());
-                        // Single Race's Kid difficulty: every touch is GO.
-                        overlay.kid = ready
-                            .riding
-                            .as_ref()
-                            .and_then(|r| r.ride.race())
-                            .is_some_and(|r| r.kid);
-                        overlay.set_kid_touch(overlay.kid);
-                        overlay.editor = self.editor.is_some()
-                            && ready
-                                .riding
-                                .as_ref()
-                                .is_some_and(|r| r.ride.race().is_none());
-                        if let Some(editor) = &mut self.editor {
-                            editor.restart();
-                        }
-                        overlay.user_course = ready
-                            .riding
-                            .as_ref()
-                            .and_then(|r| r.ride.race())
-                            .is_some_and(|r| {
-                                r.settings().course == atv_game::launch::RaceVariant::UserEnduro
-                            });
-                        // The profile's course record (`001f1e30` keeps lap
-                        // and race times only at the default 3 Enduro / 5
-                        // other laps).
-                        overlay.race_entry = ready.riding.as_ref().and_then(|r| {
-                            let laps = r.ride.race()?.settings().laps;
-                            let course = ready.venue.environment.clone();
-                            let enduro = atv_game::launch::split_race_course(&course).is_some_and(
-                                |(_, v)| {
-                                    matches!(
-                                        v,
-                                        atv_game::launch::RaceVariant::EnduroLong
-                                            | atv_game::launch::RaceVariant::EnduroShort
-                                    )
-                                },
-                            );
-                            let full = laps == if enduro { 3 } else { 5 };
-                            Some((course, r.ride.selection().quad, full))
-                        });
-                        self.graphics_pref = Some(overlay.prefs.graphics.clone());
-                        // The live Free Ride main menu opens over the world
-                        // at once; the rider waits under it (home.rs).
-                        if self.home.riding
-                            && let Some(front) = &self.front
-                            && let Some(riding) = &mut ready.riding
-                        {
-                            overlay.home = Some(front.borrow_mut().main_rows());
-                            riding.paused = true;
-                            riding.clear_input();
-                        }
-                        self.overlay = Some(overlay);
-                    }
-                    window.request_redraw();
-                }
-                self.apply_preferences();
-                self.remember_ride();
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(seconds) = self.lose_gpu.0.take() {
-                    self.lose_gpu.1 =
-                        Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
-                }
+                self.ride_started();
             }
             Message::Failed(error) => {
                 status(&error);
@@ -6592,12 +6515,7 @@ impl ApplicationHandler<Message> for App {
                     if self.load_failure.is_none() {
                         // The live Free Ride main menu falls back to the
                         // static one without a notice (home.rs).
-                        self.load_failure = Some(if self.home.riding {
-                            self.home.failed();
-                            ("main", String::new())
-                        } else {
-                            (self.ride_origin, error)
-                        });
+                        self.load_failure = Some((self.ride_origin, error));
                     }
                     if let Some(window) = self.window.clone() {
                         let display = self.display.clone();
@@ -6614,6 +6532,7 @@ impl ApplicationHandler<Message> for App {
                     event_loop.exit();
                 }
             }
+            Message::HomeReady(attempt, result) => self.home_ready(attempt, *result),
             Message::FreeRideRiders(riders) => {
                 self.home.probed(riders.is_some());
                 if let Some(front) = &self.front {
@@ -7581,7 +7500,7 @@ impl App {
         let Some(output) = self.activation.as_ref().and_then(|a| a.started_output()) else {
             return;
         };
-        let front_shown = self.ready.is_none() && self.gpu.is_some();
+        let front_shown = self.front_shown();
         let (enabled, volume) = self
             .front
             .as_ref()
@@ -7770,9 +7689,13 @@ impl App {
 
     /// The frontend while it owns the screen (no ride, not loading).
     fn front_input(&self) -> Option<Rc<RefCell<front::Front>>> {
-        self.front
-            .clone()
-            .filter(|_| self.ready.is_none() && self.gpu.is_some())
+        self.front.clone().filter(|_| self.front_shown())
+    }
+
+    /// The frontend's menus show: alone, or over the live Free Ride world
+    /// (home.rs).
+    fn front_shown(&self) -> bool {
+        (self.ready.is_none() && self.gpu.is_some()) || self.home.live
     }
 
     fn front_ready(&mut self, booted: Booted) {
@@ -8123,6 +8046,14 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Hop in, or Multiplayer → Free Ride while the live Free Ride world
+        // is behind the menus: ride that world (home.rs).
+        if matches!(event, Event::HopIn)
+            || (matches!(event, Event::FreeRide { .. }) && (self.home.world || self.home.loading))
+        {
+            self.home_hop_in();
+            return;
+        }
         // Online rooms carry the rider's identity (Free Ride registers in
         // `free_ride`).
         if matches!(
@@ -8621,7 +8552,7 @@ impl App {
             Event::Fullscreen => {
                 self.toggle_fullscreen();
             }
-            Event::Settings => {}
+            Event::Settings | Event::HopIn => {}
             Event::Jukebox => {
                 self.sync_menu_music();
                 self.wake();
@@ -8648,18 +8579,7 @@ impl App {
         else {
             return;
         };
-        // Many riders keep the default name: number it so strangers
-        // can tell them apart. Like frontend.js `playerName`, the
-        // number stays for the session and the next save keeps it.
-        let name = if name == "Rider" {
-            let numbered = format!("Rider {}", 1000 + random::below(9000));
-            if let Some(front) = &self.front {
-                front.borrow_mut().state.player_name.clone_from(&numbered);
-            }
-            numbered
-        } else {
-            name
-        };
+        let name = self.session_name(name);
         let room = RoomStart {
             site,
             server,
@@ -8684,6 +8604,7 @@ impl App {
     /// Claims the room and connects with the frontend still live on the
     /// Free Ride Lobby page; [`Message::RoomJoined`] then loads the ride.
     fn join_room(&mut self, environment: String, quad: u16, rider: u16, room: RoomStart) {
+        self.home_leave();
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
@@ -9123,6 +9044,8 @@ impl App {
             // A room ride has no CPU riders (game_cpu.rs).
             self.cpu_request = game_cpu::Request::default();
         }
+        // Any other ride leaves the live Free Ride world (home.rs).
+        self.home_leave();
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
@@ -9209,7 +9132,6 @@ impl App {
             });
         let (mut world, ride) = self.ride_setup(&front, quad, rider, race);
         world.lamps = room.is_some();
-        world.pilot = self.home.riding;
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
@@ -9437,7 +9359,9 @@ impl App {
         let page = front.borrow().state.page.clone();
         // The title asks too: whether Press Start opens the live Free Ride
         // main menu (home.rs).
-        if self.ready.is_some() || !matches!(page.as_str(), "multiplayer" | "main" | "title") {
+        if (self.ready.is_some() && !self.home.live)
+            || !matches!(page.as_str(), "multiplayer" | "main" | "title")
+        {
             return;
         }
         if self
@@ -9562,73 +9486,397 @@ impl App {
         }
     }
 
+    /// The ride in `self.ready` takes the screen: the frontend's GPU
+    /// objects go, the overlay, bindings and settings arrive (a load that
+    /// finished, or Hop in on the live Free Ride world, home.rs).
+    fn ride_started(&mut self) {
+        if let Some(front) = &self.front {
+            front.borrow_mut().release_gpu();
+        }
+        let players = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .and_then(|n| n.session.lobby.as_ref())
+            .map(|l| l.players.len());
+        self.usage.started(players);
+        // Lap Attack against a world board row's ghost (world.rs).
+        if let Some(rival) = self.world.rival.take()
+            && let Some(race) = self
+                .ready
+                .as_mut()
+                .and_then(|r| r.riding.as_mut())
+                .and_then(|r| r.ride.race_mut())
+            && race.settings().lap_attack
+        {
+            race.set_rival(rival);
+        }
+        // Lap Attack's medals and personal best ghost (world.rs).
+        self.medals_start();
+        // The ride takes over the music bus from the menu tune.
+        self.sync_menu_music();
+        // Rides the saved settings do not reach (direct and held
+        // replays) still honour the camera and Vibration settings.
+        if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+            (riding.crash_camera_tight, riding.chase_assist) = self.camera_choice;
+            riding.vibration = saved_setting("atv-vibration").as_deref() != Some("off");
+        }
+        self.sync_activity();
+        // Desktop has no autoplay rule: sound starts with the ride.
+        if !cfg!(target_arch = "wasm32") {
+            self.gesture();
+        }
+        self.last = Instant::now();
+        if let Some(window) = &self.window {
+            // The ride's scene draws at its render ratio from its
+            // first frame; the surface and UI keep full density.
+            let size = render_size(window);
+            let ready = self.ready.as_mut().unwrap();
+            fit_surface(window, &mut ready.gpu, size, self.suspended);
+            ready.gpu.set_scene_targets(true);
+            ready.gpu.set_scene_scale(scene_scale(window));
+            if ready.riding.is_some() {
+                let mut overlay = overlay::Overlay::new(
+                    &ready.gpu.device,
+                    ready.gpu.config.format,
+                    overlay::viewport(size.width, size.height, surface_scale(window)),
+                );
+                overlay.backdrop = self.ui_backdrop;
+                overlay.frontend = self.front.is_some();
+                overlay.set_course(&ready.venue);
+                if let Some(assets) = ready.hud_assets.take() {
+                    overlay.set_meter(&ready.gpu.device, &ready.gpu.queue, assets);
+                }
+                // Saved bindings and controller tuning (play.html's keys).
+                if let Some(riding) = &mut ready.riding
+                    && !riding.held
+                    && riding.autodrive.is_none()
+                {
+                    riding.bindings =
+                        atv_ui::menu::controller::load_bindings(&mut overlay.settings);
+                    overlay.set_help_keys(&riding.bindings);
+                }
+                device_preferences(&mut overlay.prefs, &overlay.settings);
+                overlay.race = ready
+                    .riding
+                    .as_ref()
+                    .is_some_and(|r| r.ride.race().is_some());
+                // Single Race's Kid difficulty: every touch is GO.
+                overlay.kid = ready
+                    .riding
+                    .as_ref()
+                    .and_then(|r| r.ride.race())
+                    .is_some_and(|r| r.kid);
+                overlay.set_kid_touch(overlay.kid);
+                overlay.editor = self.editor.is_some()
+                    && ready
+                        .riding
+                        .as_ref()
+                        .is_some_and(|r| r.ride.race().is_none());
+                if let Some(editor) = &mut self.editor {
+                    editor.restart();
+                }
+                overlay.user_course = ready
+                    .riding
+                    .as_ref()
+                    .and_then(|r| r.ride.race())
+                    .is_some_and(|r| {
+                        r.settings().course == atv_game::launch::RaceVariant::UserEnduro
+                    });
+                // The profile's course record (`001f1e30` keeps lap
+                // and race times only at the default 3 Enduro / 5
+                // other laps).
+                overlay.race_entry = ready.riding.as_ref().and_then(|r| {
+                    let laps = r.ride.race()?.settings().laps;
+                    let course = ready.venue.environment.clone();
+                    let enduro =
+                        atv_game::launch::split_race_course(&course).is_some_and(|(_, v)| {
+                            matches!(
+                                v,
+                                atv_game::launch::RaceVariant::EnduroLong
+                                    | atv_game::launch::RaceVariant::EnduroShort
+                            )
+                        });
+                    let full = laps == if enduro { 3 } else { 5 };
+                    Some((course, r.ride.selection().quad, full))
+                });
+                self.graphics_pref = Some(overlay.prefs.graphics.clone());
+                overlay.world = self.home.world;
+                self.overlay = Some(overlay);
+            }
+            window.request_redraw();
+        }
+        self.apply_preferences();
+        self.remember_ride();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(seconds) = self.lose_gpu.0.take() {
+            self.lose_gpu.1 = Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
+        }
+    }
+
     fn quit_to_menu(&mut self) -> bool {
         self.quit_to(Some("main"))
     }
 
-    /// The live Free Ride main menu's row: leave the world, then run the row
-    /// on the frontend's main menu, which stays static meanwhile (home.rs).
-    fn home_choice(&mut self, action: &str) {
-        if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
-            net.leave();
-        }
-        self.home.hold = true;
-        if !self.quit_to(Some("main")) {
-            return;
-        }
-        let event = self
-            .front
-            .as_ref()
-            .and_then(|f| f.borrow_mut().choose(action));
-        if let Some(event) = event {
-            self.front_event(event);
-        }
-    }
-
-    /// The main menu opens over the live Free Ride world once the game
-    /// server has answered (home.rs); returns true when that ride starts.
-    fn home_check(&mut self) -> bool {
+    /// The live Free Ride world starts loading behind the menus once the
+    /// game server has answered (home.rs): no course loader, the menus stay
+    /// and the stage keeps its art until the world is ready.
+    fn home_check(&mut self) {
         let Some(front) = self.front.clone() else {
-            return false;
+            return;
         };
-        let (page, menu) = {
+        let (page, start_menu) = {
             let f = front.borrow();
-            (f.state.page.clone(), f.menu.is_some())
+            (
+                f.state.page.clone(),
+                atv_ui::menu::prefs::start_menu(&f.settings),
+            )
         };
-        if page != "main" {
-            self.home.hold = false;
-            return false;
-        }
-        let start_menu = atv_ui::menu::prefs::start_menu(&front.borrow().settings);
-        if menu
+        if !atv_ui::front::hop_page(&page)
             || start_menu
-            || self.home.hold
-            || self.home.riding
+            || self.home.loading
+            || self.home.world
             || !self.home.available()
             || self.ready.is_some()
-            || self.gpu.is_none()
             || self.joining.is_some()
             || self.joined.is_some()
             || self.pending_room.is_some()
             || self.held_room.is_some()
         {
-            return false;
+            return;
         }
-        // Free Ride as Multiplayer starts it (the rider's ATV, rider and
-        // name); the shared room picks the venue.
-        let Some(event) = front.borrow_mut().choose("freeride") else {
-            return false;
+        let (Some(gpu), Some(content), Some((site, server))) = (
+            self.gpu.as_ref(),
+            self.content.clone(),
+            self.defaults
+                .as_ref()
+                .map(|d| (d.site.clone(), d.server.clone())),
+        ) else {
+            return;
         };
-        self.home.riding = true;
-        self.front_event(event);
-        // A load that fails returns to the (static) main menu.
-        self.ride_origin = "main";
-        if self.ready.is_none() && self.gpu.is_some() {
-            // Nothing started (no defaults yet): try again later.
-            self.home.riding = false;
-            return false;
+        // The load builds on the device while the frontend keeps presenting.
+        let shared = gpu.share();
+        let (quad, rider, name) = {
+            let f = front.borrow();
+            (f.state.quad_id, f.state.rider_id, f.state.room_name())
+        };
+        let name = self.session_name(name);
+        let (mut world, ride) = self.ride_setup(&front, quad, rider, None);
+        world.lamps = true;
+        world.pilot = true;
+        // A room ride has no CPU riders (game_cpu.rs).
+        world.cpus = game_cpu::Request::default();
+        let room = RoomStart {
+            site,
+            server,
+            code: None,
+            host: false,
+            freeride: true,
+            quickplay: None,
+            name,
+            drop_after: None,
+            train_place: None,
+        };
+        self.online_wanted();
+        self.home.loading = true;
+        self.home_attempt = self.home_attempt.wrapping_add(1);
+        let attempt = self.home_attempt;
+        let profile = atv_game::multiplayer::Profile::new(&room.name, quad, rider, ride.appearance);
+        let future = async move {
+            // The shared room decides the venue (the server's rotation).
+            let (mut net, environment) = multiplayer::Net::join(
+                &room,
+                profile,
+                atv_game::multiplayer::FREERIDE_ENVIRONMENT,
+                content.clone(),
+                ride,
+            )
+            .await?;
+            match prepare(
+                shared,
+                content,
+                environment,
+                None,
+                world,
+                Box::new(|_, _| {}),
+            )
+            .await
+            {
+                Ok(mut ready) => {
+                    if let Some(riding) = &mut ready.riding {
+                        riding.online = true;
+                    }
+                    ready.net = Some(net);
+                    Ok(ready)
+                }
+                Err(error) => {
+                    net.leave();
+                    Err(error)
+                }
+            }
+        };
+        self.spawn(future, move |result| {
+            Message::HomeReady(attempt, Box::new(result))
+        });
+    }
+
+    /// The live Free Ride world loaded: it takes the frontend's surface and
+    /// shows on the stage, a roaming CPU riding it, until Hop in.
+    fn home_ready(&mut self, attempt: u32, result: Result<Ready, String>) {
+        if attempt != self.home_attempt || !self.home.loading {
+            // Left meanwhile (another ride, or Start in: Menu).
+            if let Ok(mut ready) = result
+                && let Some(net) = &mut ready.net
+            {
+                net.leave();
+            }
+            return;
         }
-        true
+        self.home.loading = false;
+        let mut ready = match result {
+            Ok(ready) => ready,
+            Err(error) => {
+                // The stage keeps its art (offline, refused, failed load).
+                status(&format!("Free Ride behind the menus: {error}"));
+                self.home.failed();
+                self.wake();
+                return;
+            }
+        };
+        let gone = self.ready.is_some() || self.front.is_none();
+        let Some(mut gpu) = self.gpu.take().filter(|_| !gone) else {
+            if let Some(net) = &mut ready.net {
+                net.leave();
+            }
+            self.home.left();
+            return;
+        };
+        // The frontend's surface carries the world now; the load's
+        // surface-less handle shares its device.
+        if let Some(window) = &self.window {
+            let size = render_size(window);
+            fit_surface(window, &mut gpu, size, self.suspended);
+            gpu.set_scene_targets(true);
+            gpu.set_scene_scale(scene_scale(window));
+        }
+        gpu.set_scene_offscreen(true);
+        ready.gpu = gpu;
+        if let Some(riding) = &mut ready.riding {
+            riding.paused = true;
+            riding.menu_open = true;
+            riding.clear_input();
+            riding.sync_sound();
+        }
+        self.ready = Some(ready);
+        self.home.show();
+        self.last = Instant::now();
+        if std::mem::take(&mut self.home.waiting) {
+            self.home_hop_in();
+        }
+        self.wake();
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Hop in: the player rides the world from where the autopilot has it;
+    /// the menus give way to the ride's HUD. Pressed while the world still
+    /// loads, it waits (the button says so).
+    fn home_hop_in(&mut self) {
+        if !self.home.live {
+            if self.home.loading {
+                self.home.waiting = true;
+                self.wake();
+            }
+            return;
+        }
+        self.home.live = false;
+        self.home.waiting = false;
+        let Some(ready) = &mut self.ready else {
+            return;
+        };
+        ready.gpu.set_scene_offscreen(false);
+        let environment = ready.venue.environment.clone();
+        let quad = ready.riding.as_ref().map_or(1, |r| r.ride.selection().quad);
+        if let Some(riding) = &mut ready.riding {
+            riding.paused = false;
+            riding.menu_open = false;
+            riding.clear_input();
+            riding.sync_sound();
+        }
+        // Every ride starts a new song (game.js `loadGame`).
+        if let Some(music) = &self.soundtrack {
+            music.borrow_mut().new_session(fresh_seed());
+        }
+        self.usage.ended();
+        self.usage
+            .loading(usage::ride("freeride", &environment, quad, None));
+        #[cfg(target_arch = "wasm32")]
+        self.text_inputs.sync(&[], &[], &self.proxy);
+        #[cfg(target_os = "android")]
+        self.soft_keyboard.follow(false, false);
+        self.ride_started();
+        self.sync_shell(None);
+        self.wake();
+    }
+
+    /// The world's Pause → Quit to Main Menu: the menus come back over it
+    /// and the autopilot takes the ride again (home.rs).
+    fn home_menu(&mut self) {
+        let Some(ready) = &mut self.ready else {
+            return;
+        };
+        if let Some(riding) = &mut ready.riding {
+            if let Some(sound) = &mut riding.sound {
+                sound.jukebox(atv_ui::menu::jukebox::JukeboxAction::Leave);
+            }
+            riding.paused = true;
+            riding.menu_open = true;
+            riding.clear_input();
+            riding.sync_sound();
+        }
+        ready.gpu.set_scene_offscreen(true);
+        self.overlay = None;
+        self.photo = None;
+        self.replay = None;
+        self.usage.ended();
+        self.home.show();
+        if let Some(front) = &self.front {
+            front.borrow_mut().resume("main");
+        }
+        self.sync_menu_music();
+        self.last = Instant::now();
+        self.wake();
+    }
+
+    /// Another ride or room starts: the world behind the menus is left (and
+    /// a load in flight forgotten); the frontend gets its surface back.
+    fn home_leave(&mut self) {
+        if self.home.loading {
+            self.home.left();
+        }
+        if !self.home.world {
+            return;
+        }
+        if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+            net.leave();
+        }
+        self.quit_to(None);
+        self.home.left();
+    }
+
+    /// Many riders keep the default name: number it so strangers can tell
+    /// them apart. Like frontend.js `playerName`, the number stays for the
+    /// session and the next save keeps it.
+    fn session_name(&mut self, name: String) -> String {
+        if name != "Rider" {
+            return name;
+        }
+        let numbered = format!("Rider {}", 1000 + random::below(9000));
+        if let Some(front) = &self.front {
+            front.borrow_mut().state.player_name.clone_from(&numbered);
+        }
+        numbered
     }
 
     /// The room closed for good (multiplayer.js onLeave, game.js): the ride
@@ -9640,7 +9888,7 @@ impl App {
         status(&format!("Multiplayer ended: {reason}"));
         // The live Free Ride main menu's world closed: the static main menu
         // for a while (home.rs).
-        let page = if self.home.riding {
+        let page = if self.home.world {
             self.home.failed();
             "main"
         } else {
@@ -9717,8 +9965,12 @@ impl App {
         let Some(ready) = self.ready.take() else {
             return false;
         };
-        let Ready { gpu, .. } = ready;
-        self.home.riding = false;
+        let Ready { mut gpu, .. } = ready;
+        gpu.set_scene_offscreen(false);
+        // The live Free Ride world ends with its ride (home.rs).
+        if self.home.world {
+            self.home.left();
+        }
         self.usage.ended();
         self.overlay = None;
         self.gpu = Some(gpu);
@@ -9739,7 +9991,15 @@ impl App {
     /// One frontend frame: controller input, layout and present.
     fn front_frame(&mut self) {
         self.update_diagnostics();
-        let (Some(front), Some(gpu)) = (self.front.clone(), self.gpu.as_ref()) else {
+        // Over the live Free Ride world the menus lay out on its GPU and the
+        // world's frame presents them (home.rs).
+        let live = self.home.live;
+        let gpu = match (&self.gpu, &self.ready) {
+            (Some(gpu), _) => Some(gpu),
+            (None, Some(ready)) if live => Some(&ready.gpu),
+            _ => None,
+        };
+        let (Some(front), Some(gpu)) = (self.front.clone(), gpu) else {
             return;
         };
         let started = Instant::now();
@@ -9771,7 +10031,59 @@ impl App {
                 }
             }
         }
-        paint_front(gpu, &mut f, Some(&mut self.fps));
+        // The live Free Ride world: its frame on the stage, the caption's
+        // venue and riders, and Hop in (home.rs).
+        let world = if live {
+            gpu.scene_texture()
+                .and_then(|(texture, generation)| f.world_image(&gpu.device, texture, generation))
+        } else {
+            None
+        };
+        let venue = self
+            .ready
+            .as_ref()
+            .filter(|_| self.home.world)
+            .and_then(|r| r.net.as_ref())
+            .and_then(|n| n.session.environment())
+            .and_then(|v| {
+                self.course_names
+                    .get(v)
+                    .cloned()
+                    .or_else(|| hub::venue_name(v).map(String::from))
+            })
+            .or_else(|| f.state.freeride_map.clone());
+        let lobby = self
+            .ready
+            .as_ref()
+            .filter(|_| self.home.world)
+            .and_then(|r| r.net.as_ref())
+            .and_then(|n| n.session.lobby.as_ref())
+            .map(|l| l.players.len() as u32);
+        let shown = (self.home.loading || self.home.world).then(|| atv_ui::front::LiveWorld {
+            image: world,
+            fade: if live { self.home.fade() } else { 0. },
+            ready: live,
+            waiting: self.home.waiting,
+            venue,
+            // The count route lags a join: never fewer than the room's own.
+            riders: match (f.state.freeride_riders, lobby) {
+                (Some(route), Some(room)) => Some(route.max(room)),
+                (route, room) => route.or(room),
+            },
+        });
+        let view = f.view;
+        f.state.set_live(shown, &view);
+        if live {
+            // Laid out here; drawn over the world's scene in its frame.
+            f.prepare(&gpu.device, &gpu.queue, gpu.config.width, gpu.config.height);
+            f.prepare_fps(gpu, &mut self.fps);
+            // Pages without the world on their stage keep the last framing.
+            if let Some(centre) = f.world_centre() {
+                self.view_target = centre;
+            }
+        } else {
+            paint_front(gpu, &mut f, Some(&mut self.fps));
+        }
         #[cfg(target_arch = "wasm32")]
         {
             let (fields, rects) = (f.state.fields(), f.field_rects());
@@ -9829,10 +10141,8 @@ impl App {
         }
         let wants = f.wants();
         drop(f);
-        // Past the title: the main menu over the live Free Ride world.
-        if self.home_check() {
-            return;
-        }
+        // Past the title: the live Free Ride world loads behind the menus.
+        self.home_check();
         let page = front.borrow().state.page.clone();
         self.follow_menu_course(&front);
         self.sync_shell(Some(&page));
@@ -11314,6 +11624,9 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         home: home::Home::default(),
+        home_attempt: 0,
+        view_shift: [0.; 2],
+        view_target: [0.; 2],
         held_room: None,
         preload: atv_game::preload::Preloader::new(
             url_flag("preload=0"),

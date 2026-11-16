@@ -66,6 +66,49 @@ pub const ROWS: u32 = 2450;
 pub const ROWS_END: u32 = 2451;
 /// Space kept under the rows column's last child when it scrolls.
 pub const ROWS_PADDING: f32 = 12.;
+/// Hop in beside Back, and the live world on the stage (a click rides).
+pub const HOP_IN: u32 = 2418;
+pub const WORLD: u32 = 2419;
+
+/// The live Free Ride world behind the stage (research/FREERIDE_MENU.md):
+/// the host sets it while the world loads and runs under the menus.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LiveWorld {
+    /// The world's frame (a registered texture), once it draws.
+    pub image: Option<ImageId>,
+    /// The stage's own art (0) crossfading to the world (1).
+    pub fade: f32,
+    /// The world is ready: Hop in rides at once.
+    pub ready: bool,
+    /// Hop in was pressed before the world was ready.
+    pub waiting: bool,
+    /// The venue Free Ride is on and its riders now.
+    pub venue: Option<String>,
+    pub riders: Option<u32>,
+}
+
+impl LiveWorld {
+    /// The world shows (fully or crossfading) where the stage would.
+    fn shown(&self) -> Option<(ImageId, f32)> {
+        self.image
+            .map(|i| (i, self.fade.clamp(0., 1.)))
+            .filter(|(_, f)| *f > 0.)
+    }
+}
+
+/// Pages whose stage shows the world: the logo-and-vehicle showcase, and
+/// Options laid over the main menu.
+pub fn world_page(page: &str) -> bool {
+    page == "stage" || (stage_page(page) && page != "splitseats")
+}
+
+/// Pages that offer Hop in beside Back.
+pub fn hop_page(page: &str) -> bool {
+    !matches!(
+        page,
+        "title" | "loading" | "garage" | "backdrop" | "stage" | "splitseats"
+    )
+}
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -270,6 +313,8 @@ pub struct Screen {
     /// Profile Overview: courses per medal (Bronze first) and weekly
     /// badges (Top 1 % first).
     pub medal_strip: Option<([u32; 4], [u32; 5])>,
+    /// The live Free Ride world behind the stage, and Hop in.
+    pub live: Option<LiveWorld>,
 }
 
 /// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
@@ -555,7 +600,22 @@ pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     .paint(Paint::fill(Color::hex("#2a0505")))
     .children(backdrop(&m, s));
     if !m.portrait && !matches!(s.page.as_str(), "title" | "backdrop") {
-        back = back.child(panel_shape(&m));
+        let world = s
+            .live
+            .as_ref()
+            .and_then(LiveWorld::shown)
+            .filter(|_| world_page(&s.page));
+        back = match world {
+            // The live world fills the sweep; its silver fades out over it.
+            Some((image, fade)) => {
+                let mut scene = panel_shape(&m);
+                scene.paint.fill = Some(Fill::Scene(image));
+                let mut silver = panel_shape(&m);
+                silver.paint.shadows.clear();
+                back.child(scene).child(silver.opacity(1. - fade))
+            }
+            None => back.child(panel_shape(&m)),
+        };
     }
     let Some(status) = &s.status else {
         let content = page_element(&m, s);
@@ -817,7 +877,12 @@ fn portrait_stage_share(m: &Metrics, s: &Screen) -> f32 {
 }
 
 fn stage_share(m: &Metrics, s: &Screen, most: f32) -> f32 {
-    let rows = s.choices.iter().filter(|(a, _)| a != "back").count().max(1) as f32;
+    let rows = s
+        .choices
+        .iter()
+        .filter(|(a, _)| a != "back" && a != "hopin")
+        .count()
+        .max(1) as f32;
     // The portrait heading: its line, the strip's padding (6, 8) and the
     // heading's own (10, 6).
     let heading = clamp(24., m.w * 0.07, 32.) * 1.05 + 30.;
@@ -1127,15 +1192,45 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         } else {
             (-240., 0.)
         };
-        panel = panel.child(
+        let shape = || {
             El::new(absolute(
                 Some(top),
                 Some(-0.1 * m.w),
                 Some(bottom),
                 Some(-0.1 * m.w),
             ))
-            .paint(paint),
-        );
+        };
+        let world = s
+            .live
+            .as_ref()
+            .and_then(LiveWorld::shown)
+            .filter(|_| world_page(&s.page) && !loading);
+        panel = match world {
+            // The live world fills the stage; its silver fades out over it.
+            Some((image, fade)) => {
+                let mut scene = paint.clone();
+                scene.fill = Some(Fill::Scene(image));
+                let mut over = paint;
+                over.shadows.clear();
+                panel
+                    .child(shape().paint(scene))
+                    .child(shape().paint(over).opacity(1. - fade))
+            }
+            None => panel.child(shape().paint(paint)),
+        };
+    }
+    // The live world on the stage: a click there rides (Hop in).
+    let world = s
+        .live
+        .as_ref()
+        .and_then(LiveWorld::shown)
+        .filter(|_| world_page(&s.page) && !loading);
+    if world.is_some() {
+        let mut area = El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.))).id(WORLD);
+        if m.portrait {
+            area.style.inset.top = LengthPercentageAuto::length(-240.);
+        }
+        panel = panel.child(area);
     }
     match s.page.as_str() {
         "splitseats" => return panel.child(player_lineup(m, s)),
@@ -1159,14 +1254,23 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
                     height: length(least),
                 },
                 ..Default::default()
-            })
-            .id(MODEL_QUAD);
-            if let Some(image) = s.quad_model {
-                slot = slot.content(image.model());
-            } else if let Some(status) = s.model_status[0] {
-                slot = model_status(slot, status);
+            });
+            // With the live world the vehicle and its name give way to what
+            // Hop in rides into (research/FREERIDE_MENU.md).
+            let fade = world.map_or(0., |(_, f)| f);
+            if fade < 1. {
+                slot = slot.id(MODEL_QUAD);
+                if let Some(image) = s.quad_model {
+                    slot = slot.content(image.model());
+                } else if let Some(status) = s.model_status[0] {
+                    slot = model_status(slot, status);
+                }
             }
-            panel = panel.child(slot).child(plate(m, s));
+            let caption = match s.live.as_ref().filter(|_| fade >= 0.5) {
+                Some(live) => live_caption(m, live).opacity(2. * fade - 1.),
+                None => plate(m, s).opacity(1. - 2. * fade.min(0.5)),
+            };
+            panel = panel.child(slot.opacity(1. - fade)).child(caption);
         }
         // A portrait course picker gives the whole screen to the list.
         "race" if s.course_sheet && m.portrait => {}
@@ -1420,6 +1524,25 @@ fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
                 .content(logo.content(Fit::Contain)),
         ),
     )
+}
+
+/// The live world's caption where the vehicle's name plate was.
+fn live_caption(m: &Metrics, live: &LiveWorld) -> El {
+    El::new(Style {
+        display: Display::Flex,
+        justify_content: if m.portrait {
+            JustifyContent::CENTER
+        } else {
+            JustifyContent::FLEX_START
+        },
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .child(status_bar::live_caption(
+        m,
+        live.venue.as_deref(),
+        live.riders,
+    ))
 }
 
 /// `.ms-plate .ms-ride-name`.
@@ -1830,7 +1953,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action != "back" {
+                if action != "back" && action != "hopin" {
                     rows = rows.child(menu_row(m, s, index, action, label));
                 }
             }
@@ -1896,9 +2019,9 @@ fn left(m: &Metrics, s: &Screen) -> El {
             rows.style.padding = sides(0., rail + if m.portrait { 0. } else { 8. }, 0., 0.);
             // A page with nothing but Back (the Overview and Trophies)
             // keeps Back as its row.
-            let only_back = s.choices.iter().all(|(a, _)| a == "back");
+            let only_back = s.choices.iter().all(|(a, _)| a == "back" || a == "hopin");
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action == "back" && !only_back {
+                if (action == "back" && !only_back) || action == "hopin" {
                     continue;
                 }
                 rows = rows.child(if controller::stepper(action) {
@@ -1995,7 +2118,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action != "back" {
+                if action != "back" && action != "hopin" {
                     rows = rows.child(stepper_row(m, s, index, label));
                 }
             }
@@ -2038,7 +2161,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action != "back" {
+                if action != "back" && action != "hopin" {
                     rows = rows.child(menu_row(m, s, index, action, label));
                 }
             }
@@ -3236,6 +3359,46 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
             .id(SHARE)
             .child(text(s.choices[index].1.clone(), style, size))
         });
+    // Hop in beside Back while the live Free Ride world loads or runs: the
+    // gold of the selection pill, its arrow pointing on.
+    let hop = s.live.as_ref().filter(|_| hop_page(&s.page)).map(|live| {
+        let index = s.choices.iter().position(|(a, _)| a == "hopin");
+        let selected = index.is_some_and(|i| i == s.selection);
+        let hovered = s.hovered == Some(HOP_IN);
+        let ink = Color::hex("#0d0b00");
+        let style = TextStyle::new(display(size + 1., 800, true), ink)
+            .spacing(0.3)
+            .shadow(0., 1., 0., Color::hex("#fff6b066"));
+        let mut paint = pill_shadows(Paint::fill(gold_pill()).radius(5.));
+        if selected || hovered {
+            paint.border = [2.; 4];
+            paint.border_color = Color::hex("#fffbe0");
+        }
+        let label = if live.waiting && !live.ready {
+            "Loading…"
+        } else {
+            "Hop in"
+        };
+        El::new(Style {
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            justify_content: JustifyContent::CENTER,
+            gap: Size {
+                width: px(8.),
+                height: px(0.),
+            },
+            min_size: Size {
+                width: length(if m.short { 112. } else { 128. }),
+                height: length(48.),
+            },
+            padding: sides(0., 14., 0., 16.),
+            ..Default::default()
+        })
+        .paint(paint)
+        .id(HOP_IN)
+        .child(text(label, style, size + 1.))
+        .child(arrow(false, 16., ink, false))
+    });
     let mut bar = row(clamp(14., m.w * 0.024, 30.));
     bar.min_size.height = length(if m.short { 44. } else { 50. });
     if m.portrait {
@@ -3256,7 +3419,7 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
         );
         bar.padding = sides(0., m.sides().1, 0., 26.);
     }
-    Some(El::new(bar).children(share).child(back))
+    Some(El::new(bar).children(share).child(back).children(hop))
 }
 
 /// The selected choice's action.

@@ -102,6 +102,11 @@ pub struct Gpu {
     /// the surface's full density (the ride's adaptive render ratio).
     scene_scale: f64,
     scene: Option<upscale::SceneColor>,
+    /// Keep `scene` even at full density: the frontend samples it (the
+    /// live Free Ride world behind the main menu's stage).
+    scene_offscreen: bool,
+    /// Counts `scene` rebuilds, so a sampler of it knows to rebind.
+    scene_generation: u64,
     upscale: Option<upscale::Upscale>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -367,6 +372,8 @@ impl Gpu {
             depth,
             msaa,
             scene_scale: 1.,
+            scene_offscreen: false,
+            scene_generation: 0,
             scene: None,
             upscale: None,
             lost,
@@ -416,9 +423,59 @@ impl Gpu {
 
     /// Remakes the depth, multisample and (when scaled) scene targets for
     /// the surface size and scene scale.
+    /// Keeps the 3D scene in its own texture even at full density, for
+    /// [`Self::scene_texture`].
+    pub fn set_scene_offscreen(&mut self, on: bool) {
+        if self.scene_offscreen != on {
+            self.scene_offscreen = on;
+            self.make_targets();
+        }
+    }
+
+    /// The texture the 3D scene last drew into (with
+    /// [`Self::set_scene_offscreen`]) and its generation, which changes
+    /// whenever the texture is replaced.
+    pub fn scene_texture(&self) -> Option<(&wgpu::Texture, u64)> {
+        self.scene
+            .as_ref()
+            .map(|s| (&s.texture, self.scene_generation))
+    }
+
+    /// A surface-less handle on the same device and queue: a background
+    /// load builds a ride with it while this one keeps presenting. Resources
+    /// it makes belong to the shared device.
+    pub fn share(&self) -> Self {
+        let mut shared = Self {
+            surface: None,
+            generation: self.generation,
+            instance: self.instance.clone(),
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            config: self.config.clone(),
+            adapter_info: self.adapter_info.clone(),
+            timestamps: self.timestamps,
+            samples: self.samples,
+            scene_targets: false,
+            depth: self.depth.clone(),
+            msaa: None,
+            scene_scale: 1.,
+            scene: None,
+            scene_offscreen: false,
+            scene_generation: 0,
+            upscale: None,
+            lost: self.lost.clone(),
+            presented: std::cell::Cell::new(None),
+        };
+        shared.make_targets();
+        shared
+    }
+
     fn make_targets(&mut self) {
+        let full = (self.config.width.max(1), self.config.height.max(1));
         let scaled = upscale::scene_size(self.config.width, self.config.height, self.scene_scale)
+            .or(self.scene_offscreen.then_some(full))
             .filter(|_| self.scene_targets);
+        self.scene_generation += 1;
         self.scene = scaled.map(|size| {
             let upscale = self
                 .upscale
@@ -730,6 +787,8 @@ pub struct SceneRenderer {
     /// Depth range: fog end plus the largest object, so an admitted stadium
     /// stand is not sliced open into the sky (matrix() in web/game.js).
     depth_far: f32,
+    /// Clip-space offset of the view's centre (NDC; [`camera::shift_clip`]).
+    view_shift: [f32; 2],
     clock: f32,
     /// The ride's wheel dust, chunks, spray and wet births.
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
@@ -929,6 +988,7 @@ impl SceneRenderer {
             fog_color,
             far,
             depth_far,
+            view_shift: [0.; 2],
             clock: 0.,
             vehicle: None,
             cpus: Vec::new(),
@@ -1869,6 +1929,12 @@ impl SceneRenderer {
         self.profiler.counts()
     }
 
+    /// Frames the view off-centre: its centre at `shift` in NDC (0, 0 is
+    /// the screen's middle). Culling follows.
+    pub fn set_view_shift(&mut self, shift: [f32; 2]) {
+        self.view_shift = shift;
+    }
+
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
         self.render_with(gpu, view, &mut |_, _| {})
     }
@@ -2003,16 +2069,18 @@ impl SceneRenderer {
         // 0012b360 applies the active fog end to the far clipping plane.
         // Whole objects are culled there; depth extends by the largest object.
         // A turned view turns clip space; its frustum culls the same.
-        let view_projection = camera::turn_clip(
-            view.camera
-                .view_projection(aspect, view.focal_length, 1., self.depth_far),
-            view.turns,
+        let view_projection = camera::shift_clip(
+            camera::turn_clip(
+                view.camera
+                    .view_projection(aspect, view.focal_length, 1., self.depth_far),
+                view.turns,
+            ),
+            self.view_shift,
         );
-        let cull = cull::planes(&view.camera.view_projection(
-            aspect,
-            view.focal_length,
-            1.,
-            self.far,
+        let cull = cull::planes(&camera::shift_clip(
+            view.camera
+                .view_projection(aspect, view.focal_length, 1., self.far),
+            self.view_shift,
         ));
         let eye = view.camera.eye();
         // High: the vehicle-only sun shadow map around the ride, received by

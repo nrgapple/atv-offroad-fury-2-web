@@ -167,6 +167,10 @@ pub enum Fill {
         /// `ellipse` instead of `circle` (farthest-corner either way).
         ellipse: bool,
     },
+    /// A registered image seen through the box in screen space: the image
+    /// spans the whole frame and the box shows its part of it (the live
+    /// Free Ride world in the frontend's stage, research/FREERIDE_MENU.md).
+    Scene(crate::paint::ImageId),
 }
 
 impl Fill {

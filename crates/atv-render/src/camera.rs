@@ -125,9 +125,31 @@ pub fn turn_clip(matrix: [f32; 16], turns: u8) -> [f32; 16] {
     out
 }
 
+/// An off-axis frame: clip space moved by `shift` (NDC units, x right, y
+/// up), so the view's centre lands there (the live Free Ride world framed
+/// in the menus' stage rather than the screen's middle).
+pub fn shift_clip(matrix: [f32; 16], shift: [f32; 2]) -> [f32; 16] {
+    let mut out = matrix;
+    for column in 0..4 {
+        let w = matrix[column * 4 + 3];
+        out[column * 4] += shift[0] * w;
+        out[column * 4 + 1] += shift[1] * w;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shifted_clip_moves_the_centre() {
+        let identity = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        let m = shift_clip(identity, [0.5, -0.25]);
+        assert_eq!(apply(&m, [0., 0., 0.]), [0.5, -0.25, 0., 1.]);
+    }
 
     fn apply(m: &[f32; 16], p: [f32; 3]) -> [f32; 4] {
         let mut out = [0.; 4];
