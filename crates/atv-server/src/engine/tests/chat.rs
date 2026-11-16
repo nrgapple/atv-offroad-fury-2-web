@@ -23,8 +23,8 @@ fn chats(out: &[Out], to: ConnId) -> Vec<Chat> {
 /// A shared room: 1 and 2 take chat, 3 is an older build.
 fn room() -> (Fixture, String) {
     let mut f = Fixture::new(true);
-    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
-    let k2 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k1 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
+    let k2 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
     f.join(1, Some(HOST_KEY), "Ann");
     f.join(2, Some(&k1), "Bo");
     f.join(3, Some(&k2), "Cy");

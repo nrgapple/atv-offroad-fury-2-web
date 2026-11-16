@@ -340,12 +340,16 @@ impl Links {
             .is_some_and(|r| matches!(r.state, State::Open { .. }))
     }
 
-    /// One bit per rider with an open link.
+    /// One bit per rider with an open link. The relay-era `Links` packet
+    /// is 32 bits wide; slots from 32 up (rooms of the game server, which
+    /// opens no links) have no bit.
     pub fn mask(&self) -> u32 {
         self.riders
             .iter()
             .filter(|(_, r)| matches!(r.state, State::Open { .. }))
-            .fold(0, |mask, (peer, _)| mask | 1 << peer)
+            .fold(0, |mask, (peer, _)| {
+                mask | 1u32.checked_shl(u32::from(*peer)).unwrap_or(0)
+            })
     }
 
     /// The link mask to report to the relay, when it changed and the last

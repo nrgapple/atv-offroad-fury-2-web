@@ -161,7 +161,7 @@ mod tests {
         assert!(POST_LINES.iter().all(|&id| valid(LINE, id)));
         assert!(
             Chat {
-                peer: 20,
+                peer: crate::MAX_PLAYERS as u8,
                 kind: LINE,
                 id: 0
             }

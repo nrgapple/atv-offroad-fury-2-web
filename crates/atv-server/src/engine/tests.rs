@@ -281,9 +281,9 @@ fn free_ride_claims_fill_a_shared_room_and_hold_unused_claims_briefly() {
     assert!(f.room.lobby().started);
     let mut keys = Vec::new();
     for _ in 1..PUBLIC_CAPACITY {
-        keys.push(f.room.claim(f.now, &mut f.rng).unwrap());
+        keys.push(f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap());
     }
-    assert_eq!(f.room.claim(f.now, &mut f.rng), None);
+    assert_eq!(f.room.claim(f.now, &mut f.rng, MAX_PLAYERS), None);
     // A claimant takes its own slot with its key.
     let (peer, _) = f.join(1, Some(&keys[4]), "Rider");
     assert_eq!(peer, 5);
@@ -300,15 +300,55 @@ fn free_ride_claims_fill_a_shared_room_and_hold_unused_claims_briefly() {
     // Unused claims expire with the hold; the room keeps its rider.
     f.now += GRACE_MS;
     f.housekeep();
-    assert!(f.room.claim(f.now, &mut f.rng).is_some());
+    assert!(f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).is_some());
     assert_eq!(f.room.riders(), 1);
+}
+
+#[test]
+fn a_shared_room_holds_older_builds_only_while_it_stays_within_their_twenty_slots() {
+    // A room opened by an older build's claim (it takes 20 slots), which
+    // joins as the rider in slot 0.
+    let mut f = Fixture::new(true);
+    f.room = f.room.claimed_by(LEGACY_PLAYERS);
+    f.join(1, Some(HOST_KEY), "Old");
+    let mut keys = Vec::new();
+    for _ in 1..LEGACY_PLAYERS {
+        keys.push(f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap());
+    }
+    // Full for everyone while the older build is in it.
+    assert_eq!(f.room.claim(f.now, &mut f.rng, MAX_PLAYERS), None);
+    assert_eq!(f.room.claim(f.now, &mut f.rng, LEGACY_PLAYERS), None);
+    // A newer build takes its claimed slot; then the older build leaves.
+    let (peer, _) = f.join(2, Some(&keys[0]), "New");
+    assert_eq!(peer, 1);
+    let mut out = Vec::new();
+    f.room.disconnected(1, 1000, "Leaving", f.now, &mut out);
+    // The room now grows past 20 for newer builds.
+    let mut more = 0;
+    while f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).is_some() {
+        more += 1;
+    }
+    // Slots 1-19 are taken (one rider, 18 claims): the rest of the room.
+    assert_eq!(more, PUBLIC_CAPACITY - (LEGACY_PLAYERS - 1));
+    // An older build is never seated beside a slot it cannot read, and a
+    // socket without a claim counts as one.
+    assert_eq!(f.room.claim(f.now, &mut f.rng, LEGACY_PLAYERS), None);
+    let mut out = Vec::new();
+    let refused = f.room.admit(99, None, f.now, &mut f.rng, &mut out);
+    assert_eq!(refused.map_err(|r| r.status), Err(409));
+    // Unused claims expire with the hold: an older build fits again only
+    // once every slot from 20 up is free.
+    f.now += GRACE_MS;
+    f.housekeep();
+    assert_eq!(f.room.riders(), 1);
+    assert!(f.room.claim(f.now, &mut f.rng, LEGACY_PLAYERS).is_some());
 }
 
 #[test]
 fn builds_without_frames_get_each_pose_and_frame_builds_get_one_frame_per_tick() {
     let mut f = Fixture::new(true);
-    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
-    let k2 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k1 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
+    let k2 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
     f.join(1, Some(HOST_KEY), "Old");
     f.join(2, Some(&k1), "New");
     f.join(3, Some(&k2), "Sender");
@@ -348,7 +388,7 @@ fn builds_without_frames_get_each_pose_and_frame_builds_get_one_frame_per_tick()
 #[test]
 fn arrivals_catch_up_on_every_rider_and_deltas_apply_to_the_baseline() {
     let mut f = Fixture::new(true);
-    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k1 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
     f.join(1, Some(HOST_KEY), "A");
     f.ready(1);
     f.send(1, &snapshot(0, 5, 3.));
@@ -383,8 +423,8 @@ fn riders_that_never_got_a_baseline_get_whole_poses_built_from_deltas() {
     // joins (or comes into range) later never got. The server applies it
     // and sends the resulting compact snapshot, in catch-up and in frames.
     let mut f = Fixture::new(true);
-    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
-    let k2 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k1 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
+    let k2 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
     f.join(1, Some(HOST_KEY), "Sender");
     f.ready(1);
     let base = pose(0, 1, 0., true);
@@ -430,7 +470,7 @@ fn riders_that_never_got_a_baseline_get_whole_poses_built_from_deltas() {
 #[test]
 fn poses_from_a_previous_vehicle_or_before_ready_are_not_passed_on() {
     let mut f = Fixture::new(true);
-    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k1 = f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap();
     f.join(1, Some(HOST_KEY), "A");
     f.join(2, Some(&k1), "B");
     f.ready(2);
@@ -774,7 +814,7 @@ fn a_rotation_moves_the_whole_shared_room_older_builds_too() {
 fn motorcycle_poses_reach_only_builds_that_decode_them() {
     let mut f = Fixture::new(true);
     let keys: Vec<String> = (0..4)
-        .map(|_| f.room.claim(f.now, &mut f.rng).unwrap())
+        .map(|_| f.room.claim(f.now, &mut f.rng, MAX_PLAYERS).unwrap())
         .collect();
     f.join(1, Some(HOST_KEY), "Old");
     f.join(2, Some(&keys[0]), "OldFrames");

@@ -13,8 +13,10 @@ use stats::Stats;
 use std::sync::{Arc, atomic::Ordering};
 use std::time::{Duration, Instant};
 
-const USAGE: &str = "usage: fury-loadtest [--url ORIGIN] [--origin ORIGIN] [--riders N] [--rooms N] \
-[--duration S] [--ramp S] [--frames auto|on|off] [--clustered F] [--ping-ms MS] [--seed N] [--out FILE]
+const USAGE: &str =
+    "usage: fury-loadtest [--url ORIGIN] [--origin ORIGIN] [--riders N] [--rooms N] \
+[--duration S] [--ramp S] [--frames auto|on|off] [--clustered F] [--group N] [--cadence test|game] \
+[--slots N] [--ping-ms MS] [--seed N] [--out FILE]
 
   --url        server origin (default http://127.0.0.1:8789)
   --origin     page Origin header presented (default: the --url origin)
@@ -24,6 +26,13 @@ const USAGE: &str = "usage: fury-loadtest [--url ORIGIN] [--origin ORIGIN] [--ri
   --ramp       seconds over which riders arrive (default 5)
   --frames     say signal::FRAMES: auto = when the room claim says frames (default)
   --clustered  fraction of riders riding near each other (default 0.5)
+  --group      clustered riders ride in groups of this many (default 6)
+  --cadence    pose intervals: test = 50 ms near others, 100 ms apart, 1 s at rest
+               (default, heavier than the game); game = the game's Free Ride
+               intervals (100-150 ms near, 350 ms apart, 2 s at rest)
+  --slots      slots a Free Ride claim says the build takes (default 64, this
+               build's atv_net::MAX_PLAYERS; 20 claims as builds before rooms
+               grew past 20 riders, so each room stays at 20)
   --ping-ms    ping interval per rider (default 5000)
   --seed       path randomness (default 1)
   --out        write the JSON report here instead of stdout";
@@ -39,9 +48,22 @@ pub struct Args {
     pub ramp: f64,
     pub frames: Frames,
     pub clustered: f64,
+    pub group: usize,
+    pub cadence: Cadence,
+    pub slots: usize,
     pub ping_ms: u64,
     pub seed: u64,
     pub out: Option<String>,
+}
+
+/// How often a simulated rider sends its pose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cadence {
+    /// 20 Hz near others, 10 Hz apart, 1 Hz at rest: a heavier load than
+    /// the game's.
+    Test,
+    /// The game's Free Ride intervals (`links::freeride_interval`).
+    Game,
 }
 
 /// When riders say [`atv_net::signal::FRAMES`] in their hello.
@@ -69,6 +91,9 @@ fn parse(mut args: impl Iterator<Item = String>) -> Args {
         ramp: 5.,
         frames: Frames::Auto,
         clustered: 0.5,
+        group: 6,
+        cadence: Cadence::Test,
+        slots: atv_net::MAX_PLAYERS,
         ping_ms: 5000,
         seed: 1,
         out: None,
@@ -89,6 +114,15 @@ fn parse(mut args: impl Iterator<Item = String>) -> Args {
             "--duration" => parsed.duration = number(&flag, args.next()),
             "--ramp" => parsed.ramp = number(&flag, args.next()),
             "--clustered" => parsed.clustered = number(&flag, args.next()),
+            "--group" => parsed.group = number(&flag, args.next()),
+            "--slots" => parsed.slots = number(&flag, args.next()),
+            "--cadence" => {
+                parsed.cadence = match args.next().as_deref() {
+                    Some("test") => Cadence::Test,
+                    Some("game") => Cadence::Game,
+                    _ => fail("--cadence is test or game"),
+                }
+            }
             "--ping-ms" => parsed.ping_ms = number(&flag, args.next()),
             "--seed" => parsed.seed = number(&flag, args.next()),
             "--out" => parsed.out = args.next(),
@@ -114,8 +148,13 @@ fn parse(mut args: impl Iterator<Item = String>) -> Args {
     if parsed.origin.is_empty() {
         parsed.origin = origin(&parsed.url);
     }
-    if parsed.riders == 0 || parsed.duration <= 0. || parsed.ramp < 0. || parsed.ping_ms == 0 {
-        fail("--riders, --duration and --ping-ms must be positive");
+    if parsed.riders == 0
+        || parsed.duration <= 0.
+        || parsed.ramp < 0.
+        || parsed.ping_ms == 0
+        || parsed.group == 0
+    {
+        fail("--riders, --duration, --group and --ping-ms must be positive");
     }
     if parsed.rooms > 0 && parsed.riders > parsed.rooms * atv_net::PRIVATE_CAPACITY {
         fail("a private room holds 4 riders: raise --rooms");

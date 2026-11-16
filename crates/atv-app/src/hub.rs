@@ -110,8 +110,8 @@ pub struct Outcome {
 pub struct Hub {
     /// This rider's slot (from [`Hub::update`]).
     me: Option<u8>,
-    /// Riders whose builds take hub packets.
-    riders: u32,
+    /// Riders whose builds take hub packets (a slot mask).
+    riders: u64,
     duel: Option<Duel>,
     /// The latest event packet and when it came (local ms).
     event: Option<(HubPacket, f64)>,
@@ -125,7 +125,7 @@ pub struct Hub {
     toast: Option<(Toast, f64)>,
     /// Riders this player muted or blocked: their challenges are declined
     /// at once (research/QUICK_CHAT.md owns the list).
-    pub blocked: u32,
+    pub blocked: u64,
     outbox: Vec<HubMessage>,
     /// The nearest hub rider in Challenge range.
     nearby: Option<u8>,
@@ -155,7 +155,7 @@ impl Hub {
 
     /// Riders whose builds take hub packets (0 before the server names
     /// any, or without a hub).
-    pub fn riders(&self) -> u32 {
+    pub fn riders(&self) -> u64 {
         self.riders
     }
 
@@ -619,6 +619,7 @@ impl Hub {
     pub fn markers(&self) -> Vec<Peer> {
         let tag = |name: &str, p: [f32; 3]| Peer {
             slot: MARKER_SLOT,
+            paint: 0,
             name: name.into(),
             // screen_marker lifts tags 7 ft.
             position: p,

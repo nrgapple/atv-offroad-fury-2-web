@@ -513,7 +513,7 @@ impl crate::App {
         scene.pose_ride(&ready.gpu, &m.player);
         scene.pose_race_cpus(&ready.gpu, &m.cpus, ready.camera.eye());
         if !m.peers.is_empty() {
-            scene.pose_peers(&ready.gpu, &m.peers);
+            scene.pose_peers(&ready.gpu, &m.peers, &[]);
         }
         scene.pose_ghost(&ready.gpu, riding.ghost_slot, m.ghost.as_ref());
         if let Some(command) = command {

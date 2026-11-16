@@ -22,15 +22,22 @@ pub mod spawn;
 use crate::Result;
 use crate::ride::Ride;
 pub use atv_net::{
-    CPU_PEER, CpuMotion, CpuRider, GameClaim, GameMarks, GameState, MAX_GAME_POINTS, MAX_MARKS,
-    NO_PEER, RACE_CPUS, RACE_DNF, RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, claim_kind,
-    game_kind, game_phase, race_phase,
+    CPU_PEER, CpuMotion, CpuRider, GameClaim, GameMarks, GameState, LEGACY_PLAYERS,
+    MAX_GAME_POINTS, MAX_MARKS, MAX_PLAYERS, NO_PEER, PUBLIC_CAPACITY, Participant, RACE_CPUS,
+    RACE_DNF, RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, claim_kind, game_kind, game_phase,
+    is_motorcycle, race_phase,
 };
-use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose};
+use atv_net::{Lobby, Packet, PoseBuffer, SampledPose};
 use std::collections::BTreeMap;
 
 /// The wire protocol version (atv-net), shared with the JavaScript game.
 pub const PROTOCOL: u8 = atv_net::VERSION;
+
+/// Riders farther than this (ft) from the player's own ride are not tested
+/// for contact ([`Session::contact_bodies`]): a quad is about 6 ft long and
+/// riders close at most a few feet in a 60 Hz step; the margin also covers
+/// the newest pose leading the sampled one.
+pub const CONTACT_REACH_FT: f32 = 60.;
 
 /// The reserved Arlington Free Ride rooms `FREERD01`-`FREERD25`.
 pub fn is_shared_room(code: &str) -> bool {
@@ -251,7 +258,7 @@ pub struct Session {
     /// Direct links to the other riders on this course.
     links: links::Links,
     /// Riders (bits) who got this rider's last pose through the relay.
-    relayed: u32,
+    relayed: u64,
     /// A rider newly depends on the relay: its next pose goes at once.
     relay_due: bool,
     /// The room's courier (research/MULTIPLAYER.md "Courier"), when one
@@ -1344,16 +1351,26 @@ impl Session {
     }
 
     /// Other riders' current (unbuffered) bodies for contacts, unless ghosted
-    /// (atv-web `collide`).
-    pub fn contact_bodies(&self, now_ms: u64, cars: Cars) -> Vec<PeerBody> {
+    /// (atv-web `collide`). With `near`, riders whose newest pose is over
+    /// [`CONTACT_REACH_FT`] from it (horizontally, off the train) are left
+    /// out before sampling: they cannot touch within a step, and a room of
+    /// 64 samples every buffer up to four times a frame.
+    pub fn contact_bodies(&self, now_ms: u64, cars: Cars, near: Option<[f32; 3]>) -> Vec<PeerBody> {
         let Some(own) = self.peer else {
             return Vec::new();
         };
         if now_ms < self.ghost_until {
             return Vec::new();
         }
+        let far = |buffer: &PoseBuffer| {
+            near.zip(buffer.latest()).is_some_and(|(o, (s, _))| {
+                let (dx, dz) = (s.atv.position[0] - o[0], s.atv.position[2] - o[2]);
+                s.platform.is_none() && dx * dx + dz * dz > CONTACT_REACH_FT * CONTACT_REACH_FT
+            })
+        };
         self.buffers
             .iter()
+            .filter(|(_, buffer)| !far(buffer))
             .filter_map(|(&peer, buffer)| {
                 let mut pose = buffer.sample_current(now_ms).filter(|p| !p.stale)?;
                 rebase(&mut pose.snapshot, cars);

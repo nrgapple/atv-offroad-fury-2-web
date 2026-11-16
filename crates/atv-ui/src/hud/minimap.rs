@@ -329,8 +329,10 @@ pub struct Minimap {
     pub build_ms: f64,
     pub updates: u64,
     /// Other riders (slot, world position), sampled with the instrument.
-    pub peers: Vec<(u8, [f32; 3])>,
-    peers_shown: Vec<(u8, [f32; 3])>,
+    /// Other riders: slot, ATV paint ([`super::peers::rider_color`]) and
+    /// position.
+    pub peers: Vec<(u8, u8, [f32; 3])>,
+    peers_shown: Vec<(u8, u8, [f32; 3])>,
 }
 
 impl Minimap {
@@ -505,9 +507,10 @@ impl Minimap {
         }
         // Other riders: slot-coloured dots with an ink ring, clamped to 40%
         // of the map (minimap.js `mapPeerMarker`).
-        for (slot, position) in &self.peers_shown {
+        for &(slot, paint, position) in &self.peers_shown {
+            let fill = super::peers::rider_color(slot, paint);
             let (dx, dy, _) = super::peers::map_marker(
-                *position,
+                position,
                 pose.origin,
                 heading_up.then_some(pose.heading),
                 range,
@@ -516,9 +519,9 @@ impl Minimap {
             list.push(Item::Box(crate::paint::BoxPaint {
                 rect: Rect::new(cx + dx - 4.25, cy + dy - 4.25, 8.5, 8.5),
                 radii: [4.25; 4],
-                fill: Some(super::peers::color(*slot).into()),
+                fill: Some(fill.into()),
                 border: [1.5; 4],
-                border_color: tokens::INK,
+                border_color: super::peers::outline(fill, tokens::INK),
                 ..Default::default()
             }));
         }
