@@ -205,7 +205,10 @@ fn post(url: &str, origin: &str, body: &str) -> Result<(u16, String), String> {
 /// it (guest), as the game does.
 async fn claim(plan: &Plan, args: &Args, rooms: &Rooms) -> Result<Claim, String> {
     let (url, body) = match plan.room {
-        None => (format!("{}/multiplayer/freeride", args.url), String::new()),
+        None => (
+            format!("{}/multiplayer/freeride", args.url),
+            serde_json::json!({ "riders": args.slots }).to_string(),
+        ),
         Some(_) if plan.host => (format!("{}/multiplayer/rooms", args.url), "{}".into()),
         Some(room) => {
             let code = rooms.code(room).await.ok_or("host could not create room")?;
@@ -571,6 +574,7 @@ mod tests {
             clustered,
             group: 6,
             cadence: Cadence::Test,
+            slots: atv_net::MAX_PLAYERS,
             ping_ms: 5000,
             seed: 7,
             out: None,
@@ -620,5 +624,31 @@ mod tests {
             .filter(|t| poser.due(&plan, 3, (rest * 1000.) as u64 + t).is_some())
             .count();
         assert_eq!(at_rest, 2);
+        // The game's Free Ride cadence: 100 or 150 ms near others, 2 s at
+        // rest.
+        let mut game = args(2, 0, 1.);
+        game.cadence = Cadence::Game;
+        let plan = Plan::all(&game).remove(0);
+        let mut poser = Poser::new();
+        let moving = (0..3000)
+            .step_by(50)
+            .filter(|&t| poser.due(&plan, 3, t).is_some())
+            .count();
+        assert_eq!(moving, if plan.speed > 35. { 30 } else { 20 });
+    }
+
+    #[test]
+    fn groups_hold_the_clustered_riders_together() {
+        let mut all = args(40, 0, 1.);
+        all.group = 40;
+        let plans = Plan::all(&all);
+        assert!(plans.iter().all(|p| p.clustered));
+        for a in &plans {
+            for b in &plans {
+                let (pa, pb) = (a.at(3.).0, b.at(3.).0);
+                let d = ((pa[0] - pb[0]).powi(2) + (pa[2] - pb[2]).powi(2)).sqrt();
+                assert!(d < 90., "{d}");
+            }
+        }
     }
 }

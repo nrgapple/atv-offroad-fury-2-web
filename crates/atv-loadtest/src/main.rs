@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 const USAGE: &str =
     "usage: fury-loadtest [--url ORIGIN] [--origin ORIGIN] [--riders N] [--rooms N] \
 [--duration S] [--ramp S] [--frames auto|on|off] [--clustered F] [--group N] [--cadence test|game] \
-[--ping-ms MS] [--seed N] [--out FILE]
+[--slots N] [--ping-ms MS] [--seed N] [--out FILE]
 
   --url        server origin (default http://127.0.0.1:8789)
   --origin     page Origin header presented (default: the --url origin)
@@ -30,6 +30,9 @@ const USAGE: &str =
   --cadence    pose intervals: test = 50 ms near others, 100 ms apart, 1 s at rest
                (default, heavier than the game); game = the game's Free Ride
                intervals (100-150 ms near, 350 ms apart, 2 s at rest)
+  --slots      slots a Free Ride claim says the build takes (default 64, this
+               build's atv_net::MAX_PLAYERS; 20 claims as builds before rooms
+               grew past 20 riders, so each room stays at 20)
   --ping-ms    ping interval per rider (default 5000)
   --seed       path randomness (default 1)
   --out        write the JSON report here instead of stdout";
@@ -47,6 +50,7 @@ pub struct Args {
     pub clustered: f64,
     pub group: usize,
     pub cadence: Cadence,
+    pub slots: usize,
     pub ping_ms: u64,
     pub seed: u64,
     pub out: Option<String>,
@@ -89,6 +93,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Args {
         clustered: 0.5,
         group: 6,
         cadence: Cadence::Test,
+        slots: atv_net::MAX_PLAYERS,
         ping_ms: 5000,
         seed: 1,
         out: None,
@@ -110,6 +115,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Args {
             "--ramp" => parsed.ramp = number(&flag, args.next()),
             "--clustered" => parsed.clustered = number(&flag, args.next()),
             "--group" => parsed.group = number(&flag, args.next()),
+            "--slots" => parsed.slots = number(&flag, args.next()),
             "--cadence" => {
                 parsed.cadence = match args.next().as_deref() {
                     Some("test") => Cadence::Test,

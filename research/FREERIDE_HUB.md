@@ -103,7 +103,7 @@ Evidence (facts):
 
 Judgment: Nationals and Supercross are closed race tracks and stadiums,
 the stunt venues are arenas (research/FREESTYLE_MAPS.md "Family"), and
-Training and Coonce Arena are special; none suits 20 riders roaming, so
+Training and Coonce Arena are special; none suits a room of riders roaming, so
 they are left out. Arlington's train runs only on Arlington.
 
 Rotation ships **on** (the requested default). Risk assessment: older
@@ -144,8 +144,12 @@ Allocated in research/MULTIPLAYER_EXPERIENCE.md "Shared contracts".
   ignored.
 - Kind 26 `Hub` (`atv_net::hub::Hub`): `op`, `serial`, `kind`, `phase`,
   `timer_ms`, `point`, `target`, `radius`, `mask`, `value`, `choice`,
-  `maps` + `votes` (at most 3), `rows` (at most 20: slot, value, points,
-  finished).
+  `maps` + `votes` (at most 3), `rows` (at most 64: slot, value, points,
+  finished). `mask` is 64 bits since rooms grew past 20 riders (#710):
+  bits 0-31 stay in their old place and bits 32-63 follow the rows only
+  when one is set, so builds that take 20 slots (never seated beside a
+  slot from 20 up, research/GAME_SERVER.md "Shared room capacity") read
+  every hub packet they are sent.
   - Server ops: `RIDERS` (mask of hub riders, on every change, and to each
     newcomer with the event or vote in progress), `EVENT` (phases JOIN,
     RUN, RESULTS, CANCELLED; `choice` bit 1 solo), `VOTE` (options, counts
@@ -157,9 +161,10 @@ Allocated in research/MULTIPLAYER_EXPERIENCE.md "Shared contracts".
   the winner or 255 a draw), `CLOSED` (`detail`: declined, expired, busy,
   cooldown, left, unavailable).
 - Validation on both sides: known ops, kinds and phases, finite
-  coordinates within 1,000,000 ft, radius 0-1000, masks within 20 slots,
-  values 0-1e8, at most 3 vote options with matching counts (at most 20
-  votes), unique row slots, timers up to 30 min, exact lengths.
+  coordinates within 1,000,000 ft, radius 0-1000, masks within 64 slots,
+  values 0-1e8, at most 3 vote options with matching counts (at most 64
+  votes), unique row slots, timers up to 30 min, exact lengths (a zero
+  high mask half is refused, so every packet has one encoding).
   `crates/atv-net/tests/hub.rs` round-trips both kinds at their limits and
   checks forged and truncated bytes.
 

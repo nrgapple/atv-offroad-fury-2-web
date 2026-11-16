@@ -250,7 +250,7 @@ fn challenges_round_trip_and_refuse_forged_values() {
         },
         Challenge {
             op: challenge_op::RESULT,
-            detail: 30,
+            detail: MAX_PLAYERS as u8,
             ..Default::default()
         },
         Challenge {

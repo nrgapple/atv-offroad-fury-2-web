@@ -66,6 +66,7 @@ only under `deploy/digitalocean/`.
 | `FURY_STATE_DIR` | rooms saved at shutdown and restored at start; daily usage | `./state` |
 | `FURY_COMMIT` | build commit shown by `/healthz`, `/multiplayer/version` and `--version`; set at build time it is compiled in, set at run time it overrides | `host-only` |
 | `FURY_UNCOUNTED_IPS` | comma-separated client addresses or CIDR blocks (IPv4 or IPv6, e.g. an IPv6 `/64`; matched against the peer, or the `X-Forwarded-For` a loopback proxy sends, as admission does) left out of the public counts: the owner's test machines. Their riders play normally but do not count toward `/healthz` riders, rooms and connections, `/multiplayer/freeride/riders` or the daily `busiest` riders, and a room counts only while it has a counted rider (a room without one adds nothing to the daily usage). `/metrics` keeps the totals (`fury_riders_all`, `fury_rooms_open`, `fury_uncounted_connections`). An invalid entry stops the server at start; settings never log the addresses | — |
+| `FURY_FREERIDE_CAPACITY` | riders in a shared Free Ride room, 2-64 ("Load testing" below); lower it to shed load without a client release | `64` (`atv_net::PUBLIC_CAPACITY`) |
 | `RUST_LOG` | log filter (JSON logs to stdout) | `info` |
 
 Routes: every relay route under `/multiplayer/` (create/open a private room,
@@ -219,8 +220,10 @@ Let's Encrypt in the server, so WebTransport can share the certificate later).
 ## Later
 
 WebTransport datagrams with WebSocket kept for networks that block UDP; per
-recipient delta compression in frames; larger lobbies (the protocol caps a
-room at 20 riders today); a second region; server-checked race results.
+recipient delta compression in frames (each framed pose is a whole compact
+snapshot, about 138 bytes; it is the n² part of a room's egress); rooms
+above 64 riders (`u64` peer masks); a second region; server-checked race
+results.
 
 ## Load testing
 
@@ -240,7 +243,13 @@ cargo run --release -p atv-loadtest -- --url http://127.0.0.1:8789 \
 
 `--rooms N` puts the riders in N private rooms (four at most each; the first N
 riders host) instead of Free Ride; `--frames auto|on|off` (default `auto`),
-`--ping-ms`, `--seed`. `--origin` presents a page origin the server allows
+`--group N` (clustered riders ride in groups of N, default 6; `--clustered 1
+--group <riders>` puts everyone within about 60 ft), `--cadence test|game`
+(`test`, the default: 20 Hz near others, 10 Hz apart, 1 Hz at rest, heavier
+than the game; `game`: the game's Free Ride intervals, 100-150 ms near, 350 ms
+apart, 2 s at rest), `--slots N` (what the Free Ride claim says the build
+takes: 64 by default, 20 claims as an older build, which keeps each room at
+20), `--ping-ms`, `--seed`. `--origin` presents a page origin the server allows
 (or point `--url` at `tools/serve_multiplayer.mjs` on 4187). The
 JSON report has connections ok/failed/live/disconnects, messages and bytes in
 and out per second, poses received per rider per second (single, batched,
@@ -248,3 +257,120 @@ bundled or framed), frames per second, round-trip p50/p95/p99, and close or
 failure reasons. Thousands of riders need a raised open-file limit
 (`ulimit -n`) on the load machine; run it from another host than the server
 for capacity numbers.
+
+### Shared room capacity (2026-11-16, #710)
+
+Owner decision 2026-11-16: shared Free Ride rooms hold as many riders as the
+server supports, decided by load tests. Measured on the owner's Mac (Apple
+M4, 10 cores, 16 GB, shared with another agent's compiles), host only: a
+release `fury-server` on loopback (`FURY_TLS=off`, hub timers off) and
+`fury-loadtest` on the same machine. Each run: 5-10 s ramp, 20 s measured.
+Server CPU is its CPU seconds per wall second over the window (`ps` time),
+in % of one core; RSS is the peak; "down" is what each rider receives;
+round trips are 5 s pings (p95). Production was not load-tested.
+
+One room, everyone within 60 ft (`--clustered 1 --group n`):
+
+| Riders | Cadence | Server CPU | RSS | Down per rider | Poses in per rider | Room egress | RTT p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 20 | game | 3.6% | 12 MB | 15.9 KB/s | 118/s | 0.32 MB/s | 4 ms |
+| 32 | game | 5.7% | 14 MB | 26.1 KB/s | 193/s | 0.83 MB/s | 8 ms |
+| 48 | game | 7.4% | 17 MB | 39.3 KB/s | 292/s | 1.9 MB/s | 10 ms |
+| 64 | game | 10.4% | 20 MB | 53.6 KB/s | 398/s | 3.4 MB/s | 3 ms |
+| 20 | test | 4.7% | 12 MB | 34.7 KB/s | 258/s | 0.69 MB/s | 14 ms |
+| 32 | test | 6.8% | 14 MB | 58.1 KB/s | 433/s | 1.9 MB/s | 24 ms |
+| 48 | test | 10.4% | 18 MB | 87.1 KB/s | 649/s | 4.2 MB/s | 5 ms |
+| 64 | test | 14.9% | 21 MB | 115.7 KB/s | 863/s | 7.4 MB/s | 12 ms |
+
+One room of 64, `game` cadence: spread out (`--clustered 0`) 7.3% CPU,
+22.5 KB/s down per rider (166 poses/s); half in groups of six 8.5%,
+27.8 KB/s. With the experimental build used first (same server path, `test`
+cadence, spread out): 20 riders 3.7% and 8.8 KB/s, 40 riders 6.3% and
+17.6 KB/s, 64 riders 10.0% and 28.5 KB/s.
+
+Many rooms, half the riders in groups of six:
+
+| Riders | Rooms | Cadence | Server CPU | RSS | Down per rider | Total egress | RTT p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 200 | 10 × 20 (`--slots 20`) | game | 22.4% | 37 MB | 8.7 KB/s | 1.7 MB/s | 1 ms |
+| 192 | 3 × 64 | game | 22.7% (20.6% repeat) | 39 MB | 26.4 KB/s | 5.1 MB/s | 5 ms (1 ms) |
+| 200 | 10 × 20 | test | 30.6% | 38 MB | 11.7 KB/s | 2.3 MB/s | 7 ms |
+| 192 | 3 × 64 | test | 31.7% | 39 MB | 31.9 KB/s | 6.1 MB/s | 1 ms |
+
+No connection failed or dropped in any run.
+
+What it shows:
+
+- **CPU follows riders, not room size.** About 0.11-0.16% of an M4 core per
+  rider: each rider costs its incoming poses and one frame per 20 Hz tick
+  whatever the room holds; the per-pair interest checks (n² per tick) are
+  small beside the socket work. 192 riders cost the same in three rooms of
+  64 as 200 in ten rooms of 20.
+- **Bytes follow riders × room size.** Each rider receives the others'
+  poses, so a room's egress grows with n² and each rider's download with n.
+  `interest.rs` thins by distance (300 ms beyond 1,000 ft) and skips
+  unchanged riders at rest, but never drops a rider: everyone in the room
+  reaches everyone. Riders bunched together are the worst case (every pose,
+  every tick).
+- **Memory** is small: about 0.15 MB per rider (20 MB for one full room of
+  64, 39 MB for 192 riders).
+- `test` cadence (the load tester's default) is about twice the game's
+  traffic near others; the `game` rows are the realistic ones.
+
+Scaling to the droplet (s-1vcpu-1gb), assumptions, not measurements:
+
+- One shared DigitalOcean vCPU is taken as 3-4× slower than an M4
+  performance core, plus about 10-20% for in-process TLS (rustls with
+  ring) and a real network stack. Then 192 riders at the game's cadence
+  need about 70-110% of the droplet's core: the whole server tops out
+  around 150-200 riders at once whatever the room size, and room size does
+  not move that ceiling. One room of 64 everyone bunched together is about
+  35-50% of the core.
+- A rough single-core check on the Mac (`TOKIO_WORKER_THREADS=1` under
+  `taskpolicy -c background`, efficiency cores) kept p95 at 1-3 ms in three
+  of four runs at 192-200 riders; one run starved (p95 12 s, 111 of 192
+  riders measured) while another agent's compile loaded the host (load
+  average about 8). That is the expected failure mode of a saturated core,
+  not of room size: an overloaded server is slow for every room.
+- Egress at 64 per room, game cadence: about 26 KB/s per rider in a mixed
+  room, 54 KB/s bunched; 150 riders mixed is about 3.9 MB/s (31 Mbit/s).
+  The droplet's network is not the limit. Its monthly transfer allowance
+  (assumed 1 TB on this plan) would last about three days at a sustained
+  3.9 MB/s; busy hours count against it about three times faster than with
+  rooms of 20.
+
+Decision: **shared rooms hold 64** (`atv_net::PUBLIC_CAPACITY`, the
+protocol bound `MAX_PLAYERS = 64` with `u64` peer masks). Why 64 and not
+more: past 64 every peer mask, the hub's riders mask and `MAX_FRAME`
+change, and a bunched rider's download (54 KB/s, about 0.43 Mbit/s, about
+190 MB an hour at 64) keeps growing linearly, which matters on phones and
+school networks before the server does. Why not fewer: the server's CPU
+does not care, and the owner asked for the most it supports.
+`FURY_FREERIDE_CAPACITY` lowers it on the server without a client release
+(and the claim's `"max"` tells clients).
+
+Older builds: builds before this change refuse any packet naming slot 20 or
+higher (protocol 6 stays; no reload is forced, so desktop and Android
+releases keep working online). A Free Ride claim now says the slots its
+build takes (`"riders": 64`); a claim without it, or a socket without a
+claim, is an older build. A room holding an older build stays at 20 riders
+in slots 0-19, and an older build is seated only in a room whose riders all
+sit below slot 20 (`Room::bound`, `Room::open_slot`); once it leaves, the room
+can grow to 64. Older builds therefore still fill rooms of 20 and send
+newer riders on to the next room.
+
+Client side (code reading; no phone measured): every presented remote rider
+was drawn every frame, with its own GPU buffers, bone uploads (about 4.3 KB
+per rider per frame) and draw calls, and no culling or level of detail. Rooms
+of 64 would have meant drawing 63 riders on phones. The client now uploads,
+poses and draws only the nearest 19 others (`multiplayer::DRAWN_RIDERS`, the
+most a 20-rider room drew, measured on the host at 79 fps:
+research/PERFORMANCE.md "full Free Ride room"); the others keep minimap dots,
+engine sounds (already the nearest six), contacts and name tags (already the
+nearest eight). The pause menu's Players page lists this rider and the same
+nearest 19 in a room above 20 (its layout fits 20). Decoding up to about 400
+poses a second into per-rider buffers is the remaining per-rider client cost;
+it is small beside drawing but was not measured on a phone. Riders past the
+nearest 19 pop in as they come nearer; slots 20-63 reuse the 20 rider colors.
+Unverified: physical phones in a full room of 64, and the droplet itself.
+

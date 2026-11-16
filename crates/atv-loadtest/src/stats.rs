@@ -105,6 +105,7 @@ impl Stats {
             "clustered": args.clustered,
             "group": args.group,
             "cadence": format!("{:?}", args.cadence).to_lowercase(),
+            "slots": args.slots,
             "rampSeconds": args.ramp,
             "measuredSeconds": round(seconds),
             "claim": self.claim.lock().ok().and_then(|c| c.clone()),

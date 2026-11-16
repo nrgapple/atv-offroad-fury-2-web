@@ -363,12 +363,13 @@ mod tests {
         let riders = |n: u64, map: u64| {
             BTreeMap::from([("riders".to_string(), n), ("map".to_string(), map)])
         };
-        usage.report("FREERD01", &Counters::default(), riders(20, 3), day);
+        let full = atv_net::PUBLIC_CAPACITY as u64;
+        usage.report("FREERD01", &Counters::default(), riders(full, 3), day);
         usage.report("FREERD02", &Counters::default(), riders(5, 6), day);
         let json = usage.riders_json(day);
         assert_eq!(
             (json["riders"].as_u64(), json["map"].as_u64()),
-            (Some(25), Some(6))
+            (Some(full + 5), Some(6))
         );
         assert!(
             !json["today"]["now"]

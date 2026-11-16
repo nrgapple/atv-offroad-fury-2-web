@@ -1190,7 +1190,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     let signal = |peer, kind, data: Vec<u8>| Packet::Signal(Signal { peer, kind, data });
     for bad in [
-        signal(20, signal::OFFER, vec![1]),
+        signal(MAX_PLAYERS as u8, signal::OFFER, vec![1]),
         signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
         signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
@@ -1226,9 +1226,10 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         atv_net::LinkReport::from_bytes(&report.to_bytes()),
         Some(report)
     );
+    // With 64 slots every bit of the 32-bit relay-era mask is a slot.
     let mut bytes = encode(&Packet::Links { mask: 1 }).unwrap();
     bytes[11] = 0xff;
-    assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    assert!(decode(&bytes).is_ok());
 }
 #[test]
 fn pose_batches_carry_one_riders_compact_poses_in_order() {
@@ -1329,8 +1330,10 @@ fn server_frames_carry_compact_poses_and_deltas_only() {
         s.animation = Some(Box::default());
         encode(&Packet::Snapshot(Box::new(s))).unwrap()
     };
+    // A full relay-era room fits one frame; servers split larger rooms
+    // over several (atv-server `interest::frames`).
     let frame = Packet::Frame {
-        poses: (0..MAX_PLAYERS as u8)
+        poses: (0..LEGACY_PLAYERS as u8)
             .map(|p| compact(p, p as f32))
             .collect(),
     };
@@ -1388,7 +1391,7 @@ fn quick_chat_carries_preset_ids_only() {
     }
     for bad in [
         Chat {
-            peer: 20,
+            peer: MAX_PLAYERS as u8,
             kind: chat::LINE,
             id: 0,
         },

@@ -455,6 +455,10 @@ original-game online mode.
   arrivals fill the lowest-numbered room with space, so riders gather together.
 - **Room rules.**
   - A shared room holds 20 riders; private rooms keep the original four.
+    Since #710 (2026-11-16) a shared room on the game server holds 64
+    (`FURY_FREERIDE_CAPACITY`), kept at 20 while an older build is in it;
+    clients draw the nearest 19 others (research/GAME_SERVER.md "Shared
+    room capacity").
   - The map is fixed and nobody gets host controls: the relay ignores map
     changes.
   - There is no invite link and no 12-hour age limit.
