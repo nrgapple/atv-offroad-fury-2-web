@@ -9598,8 +9598,8 @@ impl App {
         {
             return false;
         }
-        // Arlington Free Ride as Multiplayer starts it (the rider's ATV,
-        // rider and name).
+        // Free Ride as Multiplayer starts it (the rider's ATV, rider and
+        // name); the shared room picks the venue.
         let Some(event) = front.borrow_mut().choose("freeride") else {
             return false;
         };

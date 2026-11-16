@@ -1,7 +1,8 @@
 // Host-only gate (issue #710, research/FREERIDE_MENU.md): the main menu over the
 // live Free Ride world, on a local game server with content.
-//   1. Past the title the page joins Arlington Free Ride and opens the Main Menu
-//      overlay over the ride (Hop in selected) instead of the static main menu.
+//   1. Past the title the page joins Free Ride (on the venue the shared room is on in
+//      the server's rotation) and opens the Main Menu overlay over the ride (Hop in
+//      selected) instead of the static main menu.
 //   2. Hop in closes it and the rider rides; Pause brings the Main Menu back; a
 //      click on the world beside the panel closes it too.
 //   3. Single Player leaves the world for the frontend's Single Player page;
@@ -46,7 +47,19 @@ async function setup(page, startIn) {
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
 }
-const inRoom = page => wait(page, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
+// In a shared Free Ride room on whatever venue the rotation has it on.
+const inRoom = async page => {
+  await wait(
+    page,
+    () => {
+      const mp = JSON.parse(window.furyMultiplayer ?? 'null');
+      return Boolean(mp?.environment) && /^FREERD/.test(mp?.code ?? '');
+    },
+    null,
+    180000
+  );
+  return (await page.evaluate(() => JSON.parse(window.furyMultiplayer))).environment;
+};
 
 const browser = await launch();
 const errors = [];
@@ -54,7 +67,7 @@ try {
   // 1. Press Start: the world loads and the Main Menu opens over it.
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await setup(page, 'freeride');
-  await inRoom(page);
+  report.venue = await inRoom(page);
   await onMenu(page, 'home', 120000);
   let ui = await read(page);
   report.home = { choices: ui.toolbar.menu.choices, labels: ui.toolbar.menu.labels, home: ui.home };

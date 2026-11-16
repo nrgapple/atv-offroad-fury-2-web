@@ -6,10 +6,11 @@ world.
 
 ## Behavior
 
-- **Boot.** Past the title (Press Start), the page joins Arlington Free Ride
-  exactly as Main Menu → Multiplayer → Arlington Free Ride does (the saved
-  ATV, rider and name; a shared-room claim, then the venue load behind the
-  course loader).
+- **Boot.** Past the title (Press Start), the page joins Free Ride exactly
+  as Main Menu → Multiplayer → Free Ride does (the saved ATV, rider and
+  name; a shared-room claim, then the load of whichever venue the room is
+  on in the server's rotation, research/FREERIDE_HUB.md, behind the course
+  loader). Nothing here assumes Arlington.
 - **The menu over the world.** Once the ride is ready, the Main Menu opens
   over it as the in-game overlay draws every page over a ride
   (`Overlays.pb [Main Menu]`: the near-black rounded panel, the title strip,
