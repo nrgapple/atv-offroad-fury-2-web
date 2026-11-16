@@ -1021,7 +1021,14 @@ fn page_title(page: &str) -> &'static str {
 }
 
 fn heading(m: &Metrics, s: &Screen) -> El {
-    let dark = m.portrait && s.page != "loading";
+    // Over the live world (portrait) the light lettering of the red side
+    // reads where the silver's dark lettering would not.
+    let world = world_page(&s.page)
+        && s.live
+            .as_ref()
+            .and_then(LiveWorld::shown)
+            .is_some_and(|(_, fade)| fade >= 0.5);
+    let dark = m.portrait && s.page != "loading" && !world;
     let size = if m.portrait {
         clamp(24., m.w * 0.07, 32.)
     } else if m.short {

@@ -800,7 +800,7 @@ impl Front {
         let x = (left + right) / 2. / w;
         // An upright phone's tall view puts the rider further below its
         // centre: the centre goes higher there.
-        let at = if h > w { 0.36 } else { 0.5 };
+        let at = if h > w { 0.3 } else { 0.5 };
         let y = (top + at * (bottom - top)) / h;
         Some([2. * x - 1., 1. - 2. * y])
     }
