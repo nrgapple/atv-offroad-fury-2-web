@@ -2968,6 +2968,8 @@ mod pill_tests {
             mapping_width: 0,
             mapping_height: 0,
             detail: image,
+            detail_per_cell: [0.5; 2],
+            color: [127., 127., 127., 64.],
         };
         assert!(super::terrain_blocks(
             &terrain,

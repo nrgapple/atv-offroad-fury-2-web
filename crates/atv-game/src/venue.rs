@@ -37,6 +37,11 @@ pub struct Terrain {
     pub mapping_width: u32,
     pub mapping_height: u32,
     pub detail: Image,
+    /// Detail texture repeats per terrain cell (U, V).
+    pub detail_per_cell: [f32; 2],
+    /// Constant terrain vertex RGBA in GS units: RGB modulates the base
+    /// layer, alpha scales the detail blend.
+    pub color: [f32; 4],
 }
 
 impl Terrain {
@@ -630,6 +635,47 @@ async fn load_selected(
         &format!("{source_stem}_d.pst"),
         "ground detail texture",
     )?)?;
+    let (detail_per_cell, color) = if mx.is_some() {
+        // MX terrain VU (Vu1TerrainRenderer) steps detail U/V by
+        // DetailMapTilingMultiplier / 64 per cell (ShaderParameter8, 00481610;
+        // SCN default 8, 0031e0c0) and draws both passes with the derived
+        // TerrainPlain.psm TerrainColor.
+        let tiling = authored_value(
+            &String::from_utf8_lossy(&scene_text),
+            "DetailMapTilingMultiplier",
+        )
+        .and_then(|v| v.parse::<f32>().ok())
+        .filter(|v| v.is_finite() && *v > 0. && *v <= 64.)
+        .unwrap_or(8.);
+        let color = member_named(&archive, "TerrainPlain.psm")
+            .map(|i| archive.extract(i))
+            .transpose()?
+            .and_then(|psm| {
+                let text = String::from_utf8_lossy(&psm).into_owned();
+                let parts: Vec<f32> = authored_value(&text, "TerrainColor")?
+                    .split(',')
+                    .map(|v| {
+                        v.trim()
+                            .parse::<f32>()
+                            .ok()
+                            .filter(|v| (0.0..=255.).contains(v))
+                    })
+                    .collect::<Option<_>>()?;
+                <[f32; 4]>::try_from(parts).ok()
+            })
+            .unwrap_or([128.; 4]);
+        ([tiling / 64.; 2], color)
+    } else {
+        // 00168490 computes (8*256/textureWidth)/64 per terrain cell; the
+        // single-player near terrain VU packet is RGB 127, A 64.
+        (
+            [
+                32. / detail.info.width as f32,
+                32. / detail.info.height as f32,
+            ],
+            [127., 127., 127., 64.],
+        )
+    };
     let mx_cube = mx.and_then(|_| {
         last_component(&scene.cube_file)
             .to_ascii_lowercase()
@@ -882,12 +928,24 @@ async fn load_selected(
             mapping,
             mapping_width,
             mapping_height,
+            detail_per_cell,
+            color,
             detail: Image {
                 width: detail.info.width,
                 height: detail.info.height,
                 rgba: detail.rgba,
             },
         },
+    })
+}
+
+/// The first `key = value` of an original text resource (key ASCII
+/// case-insensitive, `;` comments ignored), trimmed.
+fn authored_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let line = line.split(';').next()?;
+        let (name, value) = line.split_once('=')?;
+        name.trim().eq_ignore_ascii_case(key).then(|| value.trim())
     })
 }
 

@@ -37,8 +37,9 @@ pub struct Vegetation {
     /// Shared with the renderer, which selects every frame.
     pub selection: Rc<RefCell<Selection>>,
     pub lighting: ecosystem::Lighting,
-    /// MX v2 foliage needs a one-byte alpha-test margin at full coverage.
-    pub mx_alpha_margin: bool,
+    /// MX ecosystem profile: GS vertex alpha reaches 128 rather than 64 and
+    /// its fade phase runs to 128 (004702a0, 004730a0, 00474350).
+    pub mx: bool,
 }
 
 pub fn load(
@@ -138,7 +139,7 @@ pub fn load(
     };
     let selection = Selection::new(data, ground, &config)?;
     Ok(Some(Vegetation {
-        mx_alpha_margin: archive
+        mx: archive
             .members
             .iter()
             .any(|m| m.name.to_ascii_lowercase().ends_with(".ps2.trn")),
