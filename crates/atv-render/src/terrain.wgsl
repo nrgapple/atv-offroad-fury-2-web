@@ -5,6 +5,7 @@ struct Globals {
   fog_color: vec4<f32>,
   // encoded bias, distance coefficient, enabled, terrain spacing
   fog: vec4<f32>,
+  // detail repeats per cell (xy), detail blend scale, base modulation
   detail_scale: vec4<f32>,
   shadow_matrix: mat4x4<f32>,
   // receive, texel size
@@ -67,10 +68,13 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let coord = fract(grid) * 0.9375 + 0.03125;
   // Derivatives precede fract() so 64-cell seams keep their mip level.
   var base = textureSampleGrad(terrain_colors, clamp_sampler, coord, layer, dpdx(grid) * 0.9375, dpdy(grid) * 0.9375).rgb;
-  // 00168490 computes (8*256/textureWidth)/64 per terrain cell.
+  // Detail repeats per cell: ATV2 00168490 (8*256/textureWidth)/64, MX
+  // DetailMapTilingMultiplier/64.
   let detail = textureSample(terrain_detail, repeat_sampler, in.world_xz / spacing * g.detail_scale.xy);
-  // Near terrain VU RGB=127, A=64; GS MODULATE divides by 128.
-  base = mix(base, detail.rgb, detail.a * (255.0 / 256.0)) * (127.0 / 128.0);
+  // Constant terrain vertex RGBA (ATV2 127/64, MX TerrainColor 128/128):
+  // the detail pass blends by texel alpha times vertex alpha, then GS
+  // MODULATE divides the base by 128.
+  base = mix(base, detail.rgb, detail.a * g.detail_scale.z) * g.detail_scale.w;
   if (g.sun.w > 0.0) { base = base * relief(in.normal) * sun_shade(in.normal, world_shadow(in.world, in.normal)); }
   base = base * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);

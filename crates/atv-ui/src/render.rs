@@ -445,6 +445,26 @@ impl Renderer {
         id
     }
 
+    /// Another pass's texture, sampled as it is each frame (premultiplied,
+    /// e.g. the 3D scene behind the frontend's stage, [`Fill::Scene`]).
+    pub fn add_texture(&mut self, device: &wgpu::Device, texture: &wgpu::Texture) -> ImageId {
+        let id = ImageId(self.next_image);
+        self.next_image += 1;
+        let bind = Self::bind(device, &self.layout, &self.sampler, texture);
+        let size = texture.size();
+        self.images.insert(
+            id,
+            Texture {
+                texture: texture.clone(),
+                bind,
+                width: size.width,
+                height: size.height,
+            },
+        );
+        self.live.insert(id);
+        id
+    }
+
     /// The render view of an `add_target` image.
     pub fn target_view(&self, id: ImageId) -> Option<wgpu::TextureView> {
         self.images
@@ -805,7 +825,9 @@ impl Renderer {
                 let instance = &self.instances[i as usize];
                 let image = instance.params[0] > 2.5;
                 let tilted = image && instance.border[3] > 0.5;
-                let live = image && matches!(source, Source::Image(id) if self.live.contains(id));
+                // Live images change every frame, drawn as images or as a
+                // box's scene fill.
+                let live = matches!(source, Source::Image(id) if self.live.contains(id));
                 dynamic[i as usize] = tilted || live;
             }
         }
@@ -1021,7 +1043,12 @@ impl Renderer {
                     instance.color = [alpha; 4];
                 }
             }
-            None => {}
+            Some(Fill::Scene(image)) if self.images.contains_key(image) => {
+                source = Source::Image(*image);
+                instance.params = [0., 0., paint.rotation, 3.];
+                instance.color = [alpha; 4];
+            }
+            Some(Fill::Scene(_)) | None => {}
         }
         if paint.ring {
             instance.params[1] = 1.;

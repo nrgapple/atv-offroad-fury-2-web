@@ -190,11 +190,13 @@ impl TerrainPass {
                 fog.is_some() as u8 as f32,
                 terrain.spacing,
             ],
+            // Repeats per cell, then the GS detail blend (vertex alpha over
+            // 128, texel alpha in 0-128 units) and the base modulation.
             detail_scale: [
-                32. / terrain.detail.width as f32,
-                32. / terrain.detail.height as f32,
-                0.,
-                0.,
+                terrain.detail_per_cell[0],
+                terrain.detail_per_cell[1],
+                terrain.color[3] / 128. * (255. / 128.),
+                terrain.color[0] / 128.,
             ],
             shadow_matrix: [0.; 16],
             shadow: [0.; 4],

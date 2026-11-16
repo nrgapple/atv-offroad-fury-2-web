@@ -179,8 +179,9 @@ try {
     null,
     { timeout: 120000 }
   );
-  // Press Start boots into Free Ride (research/FREERIDE_MENU.md) on
-  // whichever venue the room rides; Hop in (selected first) takes the ride.
+  // Press Start shows the menus while Free Ride loads behind them
+  // (research/FREERIDE_MENU.md) on whichever venue the room rides; Hop in
+  // (beside Back) takes the ride.
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
   await page.waitForFunction(
@@ -190,11 +191,19 @@ try {
     { timeout: 180000 }
   );
   await page.waitForFunction(
-    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.choices?.[0] === 'resume',
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').home?.live === true,
     null,
     { timeout: 120000 }
   );
-  await key(page, 'Enter');
+  const hop = (await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent))).front.hits.find(
+    h => h.id === 2418
+  );
+  await page.mouse.click(hop.x + hop.width / 2, hop.y + hop.height / 2);
+  await page.waitForFunction(
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').home?.live === false,
+    null,
+    { timeout: 30000 }
+  );
   // Let the ride's own start (sound bank decode, map raster) finish first,
   // so the arrival window measures arrivals.
   await sleep(8000);

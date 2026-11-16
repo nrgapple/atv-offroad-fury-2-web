@@ -1,92 +1,107 @@
-# Free Ride as the main menu (port addition)
+# The live Free Ride world behind the menus (port addition)
 
-Issue #710, owner-approved 2026-11-16. Not recovered behavior: the PS2 game
-opens on a static main menu (PAGE01, research/MENU_FLOW.md) and has no shared
-world.
+Issue #710, owner-approved 2026-11-16; reworked the same day after owner
+review of the first version (#712), which laid the in-game pause overlay over
+the ride and booted through the course loader. Not recovered behavior: the
+PS2 game opens on a static main menu (PAGE01, research/MENU_FLOW.md) and has
+no shared world.
 
 ## Behavior
 
-- **Boot.** Past the title (Press Start), the page joins Free Ride exactly
-  as Main Menu → Multiplayer → Free Ride does (the saved ATV, rider and
-  name; a shared-room claim, then the load of whichever venue the room is
-  on in the server's rotation, research/FREERIDE_HUB.md, behind the course
-  loader). Nothing here assumes Arlington.
-- **The menu over the world.** Once the ride is ready, the Main Menu opens
-  over it as the in-game overlay draws every page over a ride
-  (`Overlays.pb [Main Menu]`: the near-black rounded panel, the title strip,
-  plain rows with the olive-gold capsule). Its rows are the frontend main
-  menu's, in its order (Quick Play when offered, Single Player, Multiplayer,
-  Training Course, Profile Editor, Hall of Fame, Options, Dev log on the
-  web). The frontend's silver stage (FURY wordmark, rider and ATV) is not
-  drawn: the live world is the picture. The panel keeps to the left (on a
-  phone held upright, the top) so the world shows beside it.
-- **Hop in** is the one new control: the overlay's navigation pill a size
-  up, at the screen's right (bottom right on a phone held upright, at least
-  56 px tall). It is the first row: selected when the menu opens, so Enter /
-  A rides at once; Up from the first menu row reaches it and Down from the
-  last wraps to it. Back (Escape, B/Y) and Start also ride. A click or tap on
-  the world outside the panel and Hop in rides too.
-- **Autopilot while the menu is open.** The player's own rider does not sit
-  idle: a free ride's roaming CPU (`atv_core::roam_cpu` with the
-  `atv_core::game_cpu` driver, skill and stuck rules, exactly as Game
-  Settings' Free Ride CPU riders roam; research/CPU_MINIGAMES.md "Free
-  roam") rides it from where it is. It is the same ride stepped with the
-  CPU's controls instead of the player's (an online ride keeps stepping
-  under its menus, research/MULTIPLAYER.md), so the room sees it riding
-  normally and the camera keeps following it. Hop in hands that same ride
-  back where it stands, at its speed (no respawn or teleport); the next
-  steps take the player's input. Pause gives it to the autopilot again,
-  over Options too. A stuck autopilot recovers as a roaming CPU does
-  (turned in place, or its Reset after the stall time).
-- **Pause** in this ride opens the same Main Menu (not the Free Ride pause
-  rows; Change ATV and Rider is reached through Single Player → Garage).
-- **Options** opens over the world: the ride's Options pages (Pause →
-  Options, so without the main menu's Jukebox and Credits rows); Back
-  returns to the Main Menu.
-- **Any other row** leaves the room and hands the row to the frontend's own
-  main menu, which runs it as if picked there (Single Player's page, Quick
-  Play, Training Course's ride and so on). Whenever the frontend comes back
-  to the main menu (Back from a page, Quit to Main Menu, a results
-  Continue that unwinds there), the world is joined again.
-- **Fallback.** The static main menu shows, exactly as before and without a
-  notice, when the game server has not answered the Free Ride count
-  (`/multiplayer/freeride/riders`, asked on the title and the main menu every
-  15 s; offline or unreachable), when the claim or the load fails, or when
-  the room closes under the rider (that one keeps the room's reason on the
-  notice line). After a failure the main menu stays static for two minutes
-  before it tries again.
+- **Boot.** Press Start shows the frontend's Main Menu at once, exactly as
+  before: the red scenic side, the Main Menu title band, gold bullets and
+  selection pill, the status chips, the curved silver stage with the FURY
+  REMASTERED wordmark and the vehicle. No course loader and nothing that
+  reads as starting an event.
+- **The world loads behind it.** Once the game server answers the Free Ride
+  count (`/multiplayer/freeride/riders`, asked on the title and the menus),
+  Free Ride joins and loads in the background, exactly as Main Menu →
+  Multiplayer → Free Ride would (the saved ATV, rider and name; a
+  shared-room claim; whichever venue that room is on in the server's
+  rotation, research/FREERIDE_HUB.md). Nothing here assumes Arlington.
+- **Crossfade.** When the world is ready it fades in (0.7 s) where the
+  stage's silver showed, inside the same curved sweep (landscape) or the
+  top stage with its sweeping lower edge (a phone held upright). The
+  wordmark stays on top; the vehicle model and its name fade out. Every
+  page that showed the wordmark-and-vehicle showcase (Main Menu, Quick Play,
+  Single Player, Multiplayer, Split Screen, Championships, Games, the
+  Profile Editor and Profile Store pages and so on) shows the world, so it
+  stays continuous through the menus; pages whose stage holds real content
+  (a course hero, the garage, profile tables, the Daily Event board) keep it
+  over the silver.
+- **Caption.** Where the vehicle's name was: one pill in the status bar's
+  chip style (dark, rounded, gold condensed labels, white numbers with a
+  shadow), `FREE RIDE · <venue> · <N> RIDING`, the venue from the live room
+  and the count from the rider-count route (the room's own count until it
+  answers). Offline there is no world and no caption. The time to the next
+  venue change is not shown.
+- **Autopilot.** A free ride's roaming CPU (`atv_core::roam_cpu` with the
+  `atv_core::game_cpu` driver, skill and stuck rules, as Game Settings' Free
+  Ride CPU riders roam; research/CPU_MINIGAMES.md "Free roam") rides the
+  player's rider while the menus show. It is the player's own ride stepped
+  with the CPU's controls (an online ride keeps stepping under its menus,
+  research/MULTIPLAYER.md), so the room sees it riding normally and the
+  camera follows it.
+- **Hop in.** Bottom right beside Back on every page with Back (not the
+  title, the garage or the split-screen seats), the frontend's gold pill
+  with an arrow, at least 48 px tall. It is also the last keyboard/pad
+  choice after the rows, Start hops in, and a click or tap on the world on
+  the stage hops in. Pressed while the world still loads it waits and reads
+  "Loading…", then rides once ready. Multiplayer → Free Ride while the world
+  is there also hops in. Hop in hands the same ride to the player where it
+  stands (no respawn or teleport); the menus go and the ride's HUD shows.
+- **Pause** in that ride is the ride's own pause menu; its last row reads
+  Quit to Main Menu and brings the menus back over the world, the autopilot
+  riding again. Change ATV and Rider holds the room in the garage as any
+  Free Ride does; from then it is an ordinary Free Ride.
+- **Other modes.** Starting any other ride or room (Single Player modes,
+  Quick Play, Training, Host/Join, Split Screen) leaves the world first, as
+  leaving Free Ride does; back on the menus it loads again behind them.
+- **Fallback.** No world, no caption and no Hop in, so the menus are exactly
+  as before, when the game server has not answered (offline, unreachable),
+  when the claim or the load fails, or after a dropped room (which ends on
+  the main menu with its reason). After a failure the menus wait two
+  minutes before trying again.
 - **Game Settings → Start in: Free Ride / Menu** (key `atv-start-in`,
-  default Free Ride). Menu restores the original static main menu.
+  default Free Ride). Menu never loads the world.
 
 ## Implementation
 
-- `atv_core::ui_menu` page `home` ("Main Menu"): `resume` labelled Hop in,
-  then the host's `home_rows`. Game Settings gains `start-in`.
-- `atv_ui::menu`: `PauseMenu::home(rows)`; its rows other than Hop in,
-  Options and Dev log return `Event::Home(action)`; the layout draws Hop in
-  beside the panel (`SHEET` is the panel's hit id for the outside tap).
-- `atv_app::game_cpu::Pilot`: the roaming CPU's brain on the player's
-  `Riding` (`Riding::pilot`), used by the online paused-step branch while
-  the menu is open; the venue's roam map is read with the ride
-  (`World::pilot`).
-- `atv_app::home`: when the world may open (a fresh server answer, no recent
-  failure), and the hooks in `front_frame` (`home_check`), `Message::Ready`
-  (open the menu, pause the rider), `Message::Failed`, `room_ended` and
-  `home_choice` (leave, then `Front::choose`).
-- Browser tests open on the static menu: `tools/browser/harness.mjs` saves
-  `atv-start-in=menu` in every context unless the test saved a choice.
-  `tools/test_engine_freeride_menu.mjs` (multiplayer group) covers the boot,
-  the autopilot moving the rider under the menu, Hop in handing it over in
-  place (then coasting without input and riding on the player's throttle),
-  Pause returning it to the autopilot, the outside click, Single Player and
-  Back, the phone layout, an aborted game server and Start in: Menu.
+- `atv_render::Gpu::share` gives the background load a surface-less handle
+  on the same device while the frontend keeps presenting. Once ready, the
+  world takes the frontend's surface (`App::ready`), and
+  `Gpu::set_scene_offscreen` keeps its scene in a texture
+  (`Gpu::scene_texture`).
+- `atv_ui`: `Fill::Scene(image)` paints a box with a frame-sized image
+  sampled in screen space (`ui.wgsl`), so the stage's own shapes (the skewed
+  rounded sweep, the portrait ellipse) frame the world; the silver is drawn
+  over it at the crossfade's opacity. `Renderer::add_texture` registers the
+  scene texture as a live image (the layer cache redraws it every frame).
+  `front::LiveWorld` carries the image, fade, readiness and caption;
+  `hints` draws Hop in; `Event::HopIn`.
+- `atv_app`: `home.rs` keeps the states (loading, world, live, waiting, the
+  probe and failures). `home_check` starts the load from the frontend frame;
+  `home_ready` hands over the surface; `step` runs the frontend's input and
+  layout, then the world's ride frame, which draws the frontend where the
+  HUD would; `home_hop_in` runs the usual ride start (`ride_started`);
+  `home_menu` and `home_leave` return or end it. `game_cpu::Pilot` is the
+  autopilot on `Riding::pilot`.
+- Browser tests open with Start in: Menu (`tools/browser/harness.mjs` saves
+  `atv-start-in=menu` in every context unless the test saved a choice).
+  `tools/test_engine_freeride_menu.mjs` (multiplayer group) covers the boot
+  without the loader, the crossfade under the frontend layout, the
+  autopilot, Single Player keeping the world, Hop in and the handover, Pause
+  → Quit to Main Menu, a click on the world, the phone layout, an aborted
+  game server and Start in: Menu.
 
 ## Not done / unverified
 
-- Against the production game server (venue rotation, a full room): only a
-  local fury-server was used.
-- The autopilot avoids no room riders (it roams as a lone CPU does) and its
-  route quality is the roaming CPU's; checked on one venue on a local server.
-- Free Ride's own pause rows (Players, Change ATV and Rider, Jukebox, Copy
-  invite link) are not on this menu, nor are the main menu Options' Jukebox
-  and Credits.
+- Not run against the production game server or a full room; a local
+  fury-server only.
+- The autopilot steers around no room riders (it roams as a lone CPU does).
+- The world renders every frame behind the menus, also on pages whose stage
+  covers it; phone battery and frame time behind the menus are unmeasured.
+- A lost WebGL context while the menus show over the world is untested (a
+  world that finished loading on the lost device is dropped and loads
+  again).
+- The time until the next venue change is not shown.

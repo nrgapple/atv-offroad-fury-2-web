@@ -31,11 +31,6 @@ pub const PANEL: u32 = 900;
 pub const CONTENT: u32 = 901;
 /// The Jukebox spectrum's area (the host paints the bars each frame).
 pub const BARS: u32 = 902;
-/// The live Free Ride main menu's panel: a tap outside it (and off Hop in)
-/// rides.
-pub const SHEET: u32 = 903;
-/// The live Free Ride main menu's Hop in, drawn beside the panel.
-const HOP_IN: &str = "resume";
 /// The ui_menu frame parts the panel uses.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Rows {
@@ -93,7 +88,6 @@ impl Rows {
 pub fn title(page: &str) -> &'static str {
     match page {
         "settings" => "Options",
-        "home" => "Main Menu",
         "extras" => "Extras",
         "game-settings" => "Game Settings",
         "ecosystem-warning" => "Warning",
@@ -296,11 +290,8 @@ impl<'a> Look<'a> {
         let short = !narrow && h <= 500.;
         // Pause's few rows are the main menu's; a settings page holds more
         // rows, each with its value, a size down.
-        let home = state.page == "home";
-        let pause = state.page == "pause" || home;
+        let pause = state.page == "pause";
         let (row, font) = match (narrow, short, pause) {
-            // The main menu's eight rows leave the world in view.
-            (true, _, true) if home => (48., 18.),
             (true, _, true) => (if h <= 640. { 46. } else { 50. }, 19.),
             (true, _, false) => (48., 17.),
             (_, true, true) => (44., 18.),
@@ -315,18 +306,13 @@ impl<'a> Look<'a> {
             // The source panel is 522 wide on 448 lines: about 4:3.
             let panel = if narrow {
                 room - 20.
-            } else if home {
-                // Beside the world it opens over, which Hop in rides into.
-                (300. * s).clamp(300., 460.).min(room * 0.5)
             } else {
                 (522. * (h / 448.).clamp(0.8, 1.6)).min(room - 2. * gutter)
             };
             Classic {
                 s,
                 panel,
-                // The narrower main menu keeps the lettering's share of
-                // the panel.
-                text: if home && !narrow { 52. * s } else { 75. * s },
+                text: 75. * s,
                 nav: (32. * s).max(44.),
             }
         });
@@ -1048,9 +1034,6 @@ fn body(look: &Look) -> (El, Option<El>) {
     };
     for (i, action) in rows.choices.iter().enumerate() {
         let (id, action) = (ROW + i as u32, action.as_str());
-        if page == "home" && action == HOP_IN {
-            continue;
-        }
         let label = rows.label(action).unwrap_or(action);
         let entry = || match rows.slider(action) {
             Some(s) => slider(look, id, s, selected(i), hovered(i)),
@@ -1291,15 +1274,6 @@ fn overlay(look: &Look, c: Classic) -> El {
     .children(status)
     .child(scroller(state, content))
     .children(footer);
-    let home = state
-        .rows
-        .choices
-        .iter()
-        .position(|a| a == HOP_IN)
-        .filter(|_| state.page == "home");
-    if home.is_some() {
-        panel = panel.id(SHEET);
-    }
     if !items.is_empty() {
         // Source 276..610 on a panel ending at 581: the pill runs past the
         // panel's right edge where the screen has room.
@@ -1315,7 +1289,7 @@ fn overlay(look: &Look, c: Classic) -> El {
         };
         panel = panel.child(nav);
     }
-    let mut stage = El::new(Style {
+    let stage = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
             left: LengthPercentageAuto::length(0.),
@@ -1328,24 +1302,8 @@ fn overlay(look: &Look, c: Classic) -> El {
         align_items: AlignItems::CENTER,
         padding: sides(top, look.safe[1], bottom, look.safe[3]),
         ..Default::default()
-    });
-    if let Some(index) = home {
-        // The main menu keeps to the left (the top on a phone held upright)
-        // and Hop in to the right: the live world between them is the
-        // picture.
-        let hop = hop_in(look, c, index);
-        if look.narrow {
-            stage.style.align_items = AlignItems::START;
-            stage.style.padding.bottom = px(bottom + hop.1 + 16.);
-            panel.style.max_size.height = length(look.h - top - bottom - hop.1 - 16.);
-        } else {
-            stage.style.justify_content = JustifyContent::START;
-            stage.style.padding.left = px(look.left());
-        }
-        stage = stage.child(panel).child(hop.0);
-    } else {
-        stage = stage.child(panel);
-    }
+    })
+    .child(panel);
     // The source dims nothing; a light veil keeps the panel's lettering
     // clear over bright snow.
     El::new(Style {
@@ -1357,82 +1315,6 @@ fn overlay(look: &Look, c: Classic) -> El {
     })
     .paint(Paint::fill(Color::hex("#00000033")))
     .child(slide(stage, state))
-}
-
-/// The live Free Ride main menu's Hop in: the overlay's navigation pill
-/// (black, a grey outline, round ends) a size up, on the capsule while
-/// selected, at the screen's right (bottom right on a phone held upright).
-/// Returns it placed, and its height.
-fn hop_in(look: &Look, c: Classic, index: usize) -> (El, f32) {
-    let state = look.state;
-    let selected = state.selection == index;
-    let hovered = state.hovered == Some(index) && !selected;
-    let size = (26. * c.s).clamp(22., 36.);
-    let height = (38. * c.s).max(56.);
-    let color = if selected {
-        Color::BLACK
-    } else if hovered {
-        Color::WHITE
-    } else {
-        CLASSIC_TEXT
-    };
-    let mut style = TextStyle::new(display(size, 800, true), color).spacing(size * 0.02);
-    if !selected {
-        style = style.shadow(2., 2., 0., Color::hex("#000d"));
-    }
-    let label = state.rows.label(HOP_IN).unwrap_or("Hop in");
-    let mut button = line(10. * c.s);
-    button.style.flex_shrink = 0.;
-    button.style.justify_content = JustifyContent::CENTER;
-    button.style.min_size = Size {
-        width: length(height * 2.6),
-        height: length(height),
-    };
-    button.style.padding = sides(0., 22. * c.s, 0., 28. * c.s);
-    button.style.border = sides(2., 2., 2., 2.);
-    let button = button
-        .paint(Paint {
-            radii: [height / 2. + 2.; 4],
-            fill: Some(if selected {
-                capsule()
-            } else {
-                Color::hex("#000000f2").into()
-            }),
-            border: [2.; 4],
-            border_color: Color::hex("#a6a6a6"),
-            ..Default::default()
-        })
-        .id(ROW + index as u32)
-        .child(text(label, style, size * 1.05, false))
-        .child(crate::front::arrow(false, size * 0.75, color, !selected));
-    let right = LengthPercentageAuto::length(look.gutter + look.safe[1]);
-    let place = if look.narrow {
-        El::new(Style {
-            position: Position::Absolute,
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::auto(),
-                top: LengthPercentageAuto::auto(),
-                right,
-                bottom: LengthPercentageAuto::length(look.safe[2] + 14.),
-            },
-            ..Default::default()
-        })
-    } else {
-        El::new(Style {
-            position: Position::Absolute,
-            inset: taffy::Rect {
-                left: LengthPercentageAuto::auto(),
-                top: LengthPercentageAuto::length(look.safe[0]),
-                right,
-                bottom: LengthPercentageAuto::length(look.safe[2]),
-            },
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            justify_content: JustifyContent::CENTER,
-            ..Default::default()
-        })
-    };
-    (place.child(button), height)
 }
 
 /// The navigation pill (`overlay_navbar`): black, a grey outline, round ends.

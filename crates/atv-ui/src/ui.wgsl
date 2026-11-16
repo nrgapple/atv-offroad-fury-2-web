@@ -224,7 +224,10 @@ fn fs(v: Varyings) -> @location(0) vec4<f32> {
         let d = rounded(p, v.shape, v.radii, v.radii_y);
         let outer = coverage(d);
         var fill = v.color;
-        if (v.params.w > .5) { fill = gradient(p, v) * v.color.a; }
+        if (v.params.w > 2.5) {
+            // A frame-sized image seen through the box (Fill::Scene).
+            fill = textureSampleLevel(image, image_sampler, v.screen / globals.viewport.xy, 0.) * v.color.a;
+        } else if (v.params.w > .5) { fill = gradient(p, v) * v.color.a; }
         let w = v.border;
         let inner_box = vec4(v.shape.x + w.w, v.shape.y + w.x, v.shape.z - w.y - w.w, v.shape.w - w.x - w.z);
         let inner_radii = max(v.radii - vec4(max(w.x, w.w), max(w.x, w.y), max(w.z, w.y), max(w.z, w.w)), vec4(0.));

@@ -457,6 +457,55 @@ fn chip(m: &Metrics, id: u32, hovered: bool, highlight: bool, body: Vec<El>) -> 
     .child(pill)
 }
 
+/// The live Free Ride world's caption on the stage (research/
+/// FREERIDE_MENU.md): FREE RIDE, the venue and its riders on the bar's
+/// chip, readable over any part of the world.
+pub(super) fn live_caption(m: &Metrics, venue: Option<&str>, riders: Option<u32>) -> El {
+    let h = pill_height(m);
+    let dot = || {
+        El::new(Style {
+            size: Size {
+                width: length(5.),
+                height: length(5.),
+            },
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(Paint::fill(Color::hex("#f1d84e")).radius(2.5))
+    };
+    let mut pill = El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: px(8.),
+            height: px(0.),
+        },
+        min_size: Size {
+            width: length(44.),
+            height: length(h),
+        },
+        padding: sides(0., 13., 0., 13.),
+        flex_shrink: 1.,
+        ..Default::default()
+    })
+    .paint(
+        Paint::fill(Color::hex("#0000009c"))
+            .radius(h / 2.)
+            .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#ffffff1f"))),
+    )
+    .child(label("Free Ride"));
+    if let Some(venue) = venue {
+        pill = pill.child(dot()).child(value(m, venue.to_string()));
+    }
+    if let Some(riders) = riders {
+        pill = pill
+            .child(dot())
+            .child(value(m, grouped(i64::from(riders))))
+            .child(label("riding"));
+    }
+    pill
+}
+
 fn value(m: &Metrics, text_: String) -> El {
     let size = if m.short { 15. } else { 17. };
     text(
