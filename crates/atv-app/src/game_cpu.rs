@@ -284,6 +284,98 @@ pub async fn roam_map(
     map
 }
 
+/// The live Free Ride main menu's autopilot (research/FREERIDE_MENU.md):
+/// a free ride's roaming CPU (`atv_core::roam_cpu`, the same brain, driver,
+/// skill and stuck rules as [`Cpu`]) riding the player's own ride while the
+/// menu is open over it ([`Riding::pilot`]).
+pub struct Pilot {
+    map: std::rc::Rc<roam::Map>,
+    driver: Driver,
+    roam: Roam,
+    rng: Rng,
+    seed: u32,
+    skill: Skill,
+    /// Seconds sitting still, and the last step's recovery and goal.
+    still: f32,
+    recover: Recover,
+    target: Option<[f32; 2]>,
+}
+
+impl Pilot {
+    pub fn new(map: std::rc::Rc<roam::Map>) -> Self {
+        let seed = 0x5eed_0001;
+        Self {
+            map,
+            driver: Driver::default(),
+            roam: Roam::default(),
+            rng: Rng::new(seed),
+            seed,
+            skill: Skill::for_difficulty(1),
+            still: 0.,
+            recover: Recover::None,
+            target: None,
+        }
+    }
+
+    /// One fixed step's controls for `ride`.
+    pub fn step(&mut self, ride: &Ride) -> Controls {
+        let sense = sense(ride);
+        let goal = self.roam.step(
+            &sense,
+            &self.map,
+            &|p| hazard(ride, p),
+            &[],
+            self.seed,
+            &self.skill,
+            &mut self.rng,
+            atv_game::ride::STEP,
+        );
+        self.target = goal.map(|g| g.target).or(self.target);
+        let drive = self
+            .driver
+            .step(&sense, goal.as_ref(), atv_game::ride::STEP);
+        if drive.recover != Recover::None {
+            self.recover = drive.recover;
+        }
+        controls(&drive)
+    }
+
+    /// After a frame's steps: a roamer's stuck rules, as [`Cpu::frame`]
+    /// applies them.
+    pub fn mend(&mut self, riding: &mut Riding, dt: f32) -> Result<(), String> {
+        let f = riding.ride.frame();
+        let wrecked = f.wreck.phase != atv_core::wreck::Phase::Riding;
+        if !wrecked && f.speed_magnitude < brain::STUCK_SPEED {
+            self.still += dt;
+        } else {
+            self.still = 0.;
+        }
+        let recover = std::mem::take(&mut self.recover);
+        if self.still > roam::STALL_SECONDS {
+            self.still = 0.;
+            self.roam.plan = roam::Plan::None;
+            return riding.reset();
+        }
+        match recover {
+            Recover::None => Ok(()),
+            Recover::Reset => {
+                self.roam.plan = roam::Plan::None;
+                riding.reset()
+            }
+            Recover::Turn => {
+                let mut origin = f.origin;
+                let yaw = self
+                    .target
+                    .map_or(0., |t| (t[0] - origin[0]).atan2_d(t[1] - origin[2]));
+                if let Some(ground) = riding.ride.ground(origin[0], origin[2]) {
+                    origin[1] = origin[1].max(ground + 2.5);
+                }
+                riding.place_beside(origin, yaw, [0.; 3])
+            }
+        }
+    }
+}
+
 /// The player controls for one step's drive (reverse: the Reverse button
 /// with the throttle, as a player backs up).
 pub fn controls(drive: &brain::Drive) -> Controls {

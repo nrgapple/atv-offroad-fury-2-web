@@ -33,6 +33,9 @@ pub struct Riding {
     /// The Training Course holds the ATV while a line plays (+0x94c): the
     /// player's drive input is replaced by a full brake.
     pub locked: bool,
+    /// The live Free Ride main menu's autopilot (research/FREERIDE_MENU.md):
+    /// a roaming CPU rides this ride while its menu is open.
+    pub pilot: Option<crate::game_cpu::Pilot>,
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     /// Split screen: players 2-4's origins this frame, each of which gets
@@ -217,6 +220,7 @@ impl Riding {
             parked: false,
             held: false,
             locked: false,
+            pilot: None,
             center: cells(venue, origin),
             split_origin: Vec::new(),
             split_center: Vec::new(),
@@ -392,6 +396,31 @@ impl Riding {
         {
             self.accumulator = (self.accumulator + dt).min(0.1);
             let count = ((self.accumulator * 60.).floor() as u32).min(4);
+            // Under the live Free Ride main menu the autopilot rides on, from
+            // wherever the player left it; Hop in hands the same ride back.
+            if self.paused
+                && self.menu_open
+                && let Some(mut pilot) = self.pilot.take()
+            {
+                let mut result = Ok(());
+                for _ in 0..count {
+                    self.accumulator -= 1. / 60.;
+                    let controls = pilot.step(&self.ride);
+                    result = self.run_with(&controls, 1, peers);
+                    if result.is_err() {
+                        break;
+                    }
+                }
+                if result.is_ok() {
+                    result = pilot.mend(self, dt);
+                }
+                self.pilot = Some(pilot);
+                result?;
+                if count > 0 {
+                    self.accept_batch(count, true)?;
+                }
+                return Ok(());
+            }
             if count > 0 {
                 self.accumulator -= count as f32 / 60.;
                 self.run_with(&Controls::default(), count, peers)?;

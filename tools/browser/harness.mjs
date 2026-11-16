@@ -72,7 +72,21 @@ export async function launch({ engine = 'chromium', args = [], ...options } = {}
   const chosen = args.some(arg => arg.startsWith('--use-angle') || arg.includes('swiftshader'));
   if (engine === 'chromium' && process.env.ATV_LINKS === '1') args = [...args, ...LINK_ARGS];
   const flags = engine === 'chromium' && !chosen ? [...gpuArgs(), ...args] : args;
-  return type.launch({ headless: true, ...options, args: flags });
+  const browser = await type.launch({ headless: true, ...options, args: flags });
+  // Tests open on the static main menu (Game Settings → Start in: Menu) unless
+  // they choose the live Free Ride main menu (research/FREERIDE_MENU.md) by
+  // saving 'freeride' themselves. browser.newPage goes through newContext.
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (...rest) => {
+    const context = await newContext(...rest);
+    await context.addInitScript(() => {
+      try {
+        if (!localStorage.getItem('atv-start-in')) localStorage.setItem('atv-start-in', 'menu');
+      } catch {}
+    });
+    return context;
+  };
+  return browser;
 }
 
 /**
