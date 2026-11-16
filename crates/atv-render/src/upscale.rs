@@ -13,6 +13,7 @@ pub(crate) struct Upscale {
 pub(crate) struct SceneColor {
     pub size: (u32, u32),
     pub view: wgpu::TextureView,
+    pub texture: wgpu::Texture,
     group: wgpu::BindGroup,
 }
 
@@ -93,23 +94,21 @@ impl Upscale {
         format: wgpu::TextureFormat,
         size: (u32, u32),
     ) -> SceneColor {
-        let view = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("scaled scene"),
-                size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scaled scene"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("upscale"),
             layout: &self.layout,
@@ -124,7 +123,12 @@ impl Upscale {
                 },
             ],
         });
-        SceneColor { size, view, group }
+        SceneColor {
+            size,
+            view,
+            texture,
+            group,
+        }
     }
 
     /// `scene` stretched over the whole of `target`.

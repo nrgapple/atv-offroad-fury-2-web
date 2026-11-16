@@ -137,6 +137,9 @@ pub struct Front {
     garage_since: f64,
     /// Settings opened from the main menu.
     pub menu: Option<PauseMenu>,
+    /// The live Free Ride world's frame as a stage image, and the scene
+    /// texture generation it was registered for (research/FREERIDE_MENU.md).
+    world: Option<(atv_ui::ImageId, u64)>,
     menu_hits: Vec<(Rect, u32)>,
     menu_scroll_max: f32,
     menu_reveal: bool,
@@ -279,6 +282,7 @@ impl Front {
             unbuilt: [None, None],
             garage_since: 0.,
             menu: None,
+            world: None,
             menu_hits: Vec::new(),
             menu_scroll_max: 0.,
             menu_reveal: false,
@@ -350,6 +354,7 @@ impl Front {
         self.stash.clear();
         self.jukebox_art = None;
         self.renderer = None;
+        self.world = None;
         self.images.clear();
         self.recent.clear();
         self.uploaded = DisplayList::default();
@@ -776,19 +781,48 @@ impl Front {
         self.front_event(event)
     }
 
-    /// The main menu's rows for the main menu over the live Free Ride
-    /// world (research/FREERIDE_MENU.md).
-    pub fn main_rows(&mut self) -> Vec<(String, String)> {
-        let view = self.view;
-        self.state.main_rows(&view)
+    /// Where the live Free Ride world shows on the stage, as NDC (x right,
+    /// y up): the view's centre at the stage's middle, so the rider (below a
+    /// chase camera's centre) shows between the wordmark and the caption. None
+    /// without the world's area.
+    pub fn world_centre(&self) -> Option<[f32; 2]> {
+        let r = self
+            .hits
+            .iter()
+            .find(|(_, id)| *id == atv_ui::front::WORLD)
+            .map(|(r, _)| *r)?;
+        let (w, h) = (self.view.width.max(1.), self.view.height.max(1.));
+        let (left, right) = (r.x.max(0.), (r.x + r.w).min(w));
+        let (top, bottom) = (r.y.max(0.), (r.y + r.h).min(h));
+        if right <= left || bottom <= top {
+            return None;
+        }
+        let x = (left + right) / 2. / w;
+        // An upright phone's tall view puts the rider further below its
+        // centre: the centre goes higher there.
+        let at = if h > w { 0.3 } else { 0.5 };
+        let y = (top + at * (bottom - top)) / h;
+        Some([2. * x - 1., 1. - 2. * y])
     }
 
-    /// A row picked on the live Free Ride main menu, run on the frontend's
-    /// own main menu once the ride has handed the GPU back.
-    pub fn choose(&mut self, action: &str) -> Option<Event> {
-        let view = self.view;
-        let event = self.state.choose(action, &view, &mut self.settings);
-        self.front_event(event)
+    /// The live Free Ride world's frame (the scene texture) as the stage's
+    /// image; registered again when the texture is replaced. None until the
+    /// renderer exists.
+    pub fn world_image(
+        &mut self,
+        device: &wgpu::Device,
+        texture: &wgpu::Texture,
+        generation: u64,
+    ) -> Option<atv_ui::ImageId> {
+        let renderer = self.renderer.as_mut()?;
+        match self.world {
+            Some((id, at)) if at == generation => return Some(id),
+            Some((id, _)) => renderer.remove_image(id),
+            None => {}
+        }
+        let id = renderer.add_texture(device, texture);
+        self.world = Some((id, generation));
+        Some(id)
     }
 
     pub fn key_up(&mut self, code: &str) -> Option<Event> {
@@ -1377,6 +1411,7 @@ impl Front {
         let started = web_time::Instant::now();
         if self.renderer.is_none() {
             self.renderer = Some(Renderer::new(device, self.format));
+            self.world = None;
             self.images.clear();
             self.glyphs.clear();
             self.recent.clear();

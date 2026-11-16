@@ -169,6 +169,19 @@ impl App {
                 }
                 Some(Message::Ready(ready))
             }
+            // The live Free Ride world loaded on the lost device: it loads
+            // again behind the menus later (home.rs).
+            Message::HomeReady(attempt, result)
+                if result
+                    .as_ref()
+                    .as_ref()
+                    .is_ok_and(|ready| stale(&ready.gpu)) =>
+            {
+                Some(Message::HomeReady(
+                    attempt,
+                    Box::new(Err("the graphics context was lost".into())),
+                ))
+            }
             Message::FrontReady(mut booted) => {
                 if stale(&booted.gpu)
                     && let Some(gpu) = self.gpu.take()

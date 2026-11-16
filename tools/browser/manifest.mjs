@@ -121,7 +121,7 @@ export const TESTS = {
   'test_engine_freeride_menu.mjs': {
     group: 'multiplayer',
     timeout: 900,
-    reason: 'needs a local game server at the same origin (the main menu over the live Free Ride world, issue #710; an aborted server for the static fallback); run with --url'
+    reason: 'needs a local game server at the same origin (the live Free Ride world behind the frontend menus, issue #710; an aborted server for the fallback); run with --url'
   },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
