@@ -50,7 +50,7 @@ async function open(query) {
       page.sent.push([Date.now(), typeof frame.payload === 'string' ? -1 : frame.payload[5]]),
     );
   });
-  await page.goto(`${base}/play.html?${query}&venue=env08&p2p=0&weather=off`);
+  await page.goto(`${base}/play.html?${query}&venue=env08&p2p=0&weather=off&freerideSpawn=meet`);
   return page;
 }
 const riding = (page, drawn = 0) =>

@@ -111,6 +111,117 @@ builds follow the lobby's map exactly as in private rooms, so nobody is
 left on the old venue; the cost is a reload every 2 hours. Turn it off
 with `FURY_HUB_ROTATION_SECS=off` if that proves disruptive.
 
+## Spawn spots
+
+Issue #710 (owner request 2026-11-16). Port addition, not recovered
+behavior: the original's Freeride starts at the scene's one start point.
+In a shared Free Ride room riders now start all over the venue
+(`atv_game::multiplayer::spots`).
+
+### Candidates (evidence and choice)
+
+- **Source: the long Enduro racing line** `<venue>endle.tdf` in
+  `E0n_ENDL.RES` (fact: every Environment venue ships one; the AI path of a
+  course laid across the whole map, research/RACING.md "Enduro"). It is
+  authored ground riders ride, it carries a direction to face, and a Free
+  Ride load already reads `E0n_ENDL.RES` for the venue's terrain materials
+  (`launch.rs` `placements`), so the spots cost no extra download.
+- Not chosen: Treasure Hunt items and King of the Hill hills live in other
+  archives (an extra download) and Arlington has neither (research/GAMES.md);
+  hilltops and treasures are often crests or tucked against props. The
+  National line (`E0n_NAT.RES`) would be a second download.
+- The line is sampled every 80 ft (the first half a spacing in, off the
+  start grid); a candidate that fails is tried 9 ft to each side. Kept
+  spots lie at least 60 ft apart. Nothing is committed: the list is derived
+  from the content at load time and kept for the session (one venue; a
+  rotation reads the new venue's).
+
+### Validation (`spots::check`)
+
+Every rule must pass; the reason of the first failure is counted.
+
+| Rule | Test |
+| --- | --- |
+| In bounds | inside the rideable area: the boundary launch margin (`0020aec0`, `tag::boundary_margin`) less 60 ft, with the whole 20 ft cliff ring inside too |
+| On the ground | contact terrain under the spot; no prop surface (deck, roof) between the ground and eye height |
+| Dry | no still water over the ground at the spot or 8 ft round it |
+| Slope | the 6 ft footprint ring within 0.3 rise over run (about 17°) |
+| No cliff | the 20 ft ring within 0.6 (about 31°) of the spot's height |
+| Clearance | no compact prop (bounds under 25 ft) or tree within 7 ft between 0.75 and 7 ft up; 16 rays at 1.5 and 4 ft out to 7 ft hit no prop mesh |
+| Sky | a vertical ray from 1.5 to 60 ft hits nothing (not under a bridge, roof or canopy) |
+| View | of 8 rays at 4 ft out to 50 ft, at least 5 hit no prop or tree and no ground rising faster than 0.5 |
+| Facing | the course direction when its view is open, else the reverse, else the nearest open one |
+
+Props are the scene's collision meshes (static, plus the train cars where
+they stand at load) and registered vegetation proxies, the same scene the
+quad or motorcycle collides with.
+
+### Use
+
+- **Arrival.** A shared-room arrival takes a random spot clear of every
+  known rider by 40 ft (else the one farthest from them), placed before its
+  first pose. Once the others' poses arrive (the meet step's wait), it moves
+  once more only if a rider stands within 40 ft of the spot it has not left.
+  Arrivals no longer meet a rider in shared rooms; Players → Spawn beside a
+  rider still does.
+- **Rotation.** When the whole room moves together each slot takes its own
+  spot (the list's start from a seed of the room code and venue, plus the
+  slot times n/20), so 20 riders reloading at once never share one.
+- **Reset ATV** (the player's, and the main-menu autopilot's stall reset):
+  the nearest spot at least 15 ft away and clear of the riders presented by
+  40 ft. Judgment: the original's Freeride Reset returns to the one start,
+  which in a room spread over the map would pile every reset there and throw
+  a rider far from where it rode; its race Reset returns to the last
+  on-track point. The nearest valid spot is the closest equivalent of the
+  latter. Online rooms have no other CPU riders.
+- Unchanged: private rooms, races, room games, single player and local
+  split screen; Change ATV and Rider still reloads in place.
+- `?freerideSpawn=meet` (tests needing riders together: the hub's challenge
+  range, the relay's contact tiers) keeps the meet.
+
+### Verification
+
+- Unit tests (`cargo test -p atv-game --lib spots`): each rule on a
+  synthetic world (edge, lake and shore, ramp, ledge, post, long wall,
+  roof, deck, walls on three sides, a bank turning the rider round), line
+  sampling, side offsets and spacing, arrival choice, rotation slots, the
+  Reset choice and the coverage metric.
+- Content test (`FURY_CONTENT=private/reports/hosted-content cargo test -p
+  atv-game --test freeride_spots -- --ignored --nocapture`): every venue
+  yields at least 20 spots covering at least 6 cells of a 4 × 4 grid over
+  its rideable area (the spread metric), and an ATV dropped on every spot
+  settles riding, dry, on four wheels within 10 ft in 1.5 s.
+
+| Venue | Spots / candidates | Cells of 16 | Main rejections |
+| --- | --- | --- | --- |
+| env01 | 110 / 152 | 7 | steep 23, cliff 7, boxed in 6 |
+| env02 | 150 / 173 | 10 | steep 19, on a prop 3 |
+| env03 | 63 / 87 | 8 | steep 22 |
+| env04 | 144 / 182 | 9 | steep 22, on a prop 4, water 2 |
+| env05 | 107 / 118 | 6 | steep 11 |
+| env06 | 102 / 124 | 9 | steep 13, boxed in 7 |
+| env07 | 85 / 150 | 9 | steep 26, blocked 18, boxed in 8, water 5 |
+| env08 | 101 / 115 | 7 | steep 7, water 4 |
+
+- Browser: `tools/test_engine_freeride_spawns.mjs` (multiplayer group):
+  two arrivals at different spots at least 40 ft apart, each seen by the
+  other there; with `ATV_SPAWN_ROTATIONS=n` and a short
+  `FURY_HUB_ROTATION_SECS`, the same after each room move. Host run
+  (2026-11-16, PR build of 5edc4b30, local fury-server with
+  `FURY_HUB_ROTATION_SECS=90`, `ATV_SPAWN_ROTATIONS=2`): env06 random spots
+  1,875 ft apart, then the room moved to env05 (slot spots 389 ft apart)
+  and env02 (440 ft); each rider saw the other at its spot. Screenshots in
+  ignored `private/reports/devlog-images/freeride-spawns-710/`.
+
+### Limits
+
+- The cells a venue covers are those its long Enduro crosses (6-10 of 16);
+  corners of the map that course never visits get no spots.
+- The train's cars are tested where they stand at load: a spot can lie on
+  Arlington's track the train later crosses.
+- A rider's own Reset can land within 40 ft of a rider whose pose is stale
+  or not yet presented.
+
 ## Waypoints without terrain
 
 The server has no game content. Waypoints, circles and hills are **spots

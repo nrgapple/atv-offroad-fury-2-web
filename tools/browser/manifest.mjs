@@ -132,6 +132,11 @@ export const TESTS = {
     timeout: 900,
     reason: 'needs a local game server at the same origin started with short hub timers (FURY_HUB_EVENT_SECS=75 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=300); challenge, a pop-up event, then a map rotation with an older build; run with --url'
   },
+  'test_engine_freeride_spawns.mjs': {
+    group: 'multiplayer',
+    timeout: 900,
+    reason: 'needs a local game server at the same origin (two Free Ride arrivals at different validated spawn spots, issue #710; ATV_SPAWN_ROTATIONS=n with a short FURY_HUB_ROTATION_SECS follows room moves); run with --url'
+  },
   'test_engine_freeride_relay.mjs': {
     group: 'multiplayer',
     timeout: 900,

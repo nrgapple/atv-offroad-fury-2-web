@@ -127,6 +127,12 @@ pub struct Net {
     saved_key: String,
     /// The latest arrival beside another rider (tests): slot and distance.
     pub met: Option<(u8, f32)>,
+    /// Shared Free Ride's spawn spots on this venue (issue #710): arrivals
+    /// start at one clear of the other riders instead of meeting one.
+    spots: Option<Rc<atv_game::multiplayer::spots::Spots>>,
+    /// The latest Free Ride spot (tests): the spot, its index and how it was
+    /// chosen ("random", "slot" for a room that moved, "recheck").
+    pub spawned: Option<(atv_game::multiplayer::spots::Spot, usize, &'static str)>,
     /// The room was listed as a public (Free Ride) room before its state
     /// was dropped by a closed socket.
     public: bool,
@@ -568,6 +574,8 @@ impl Net {
             train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
             met: None,
+            spots: None,
+            spawned: None,
             public: false,
             held_accumulator: 0.,
             hub: Default::default(),
@@ -810,9 +818,38 @@ impl Net {
                 };
                 let cars = |car| ride.train_car(car);
                 let others = self.session.positions(now, &cars);
+                // Free Ride spots: with the others' poses in, move only when
+                // one stands near the spot this rider has not left yet.
+                if let Some(spots) = &self.spots {
+                    let crowded = others
+                        .iter()
+                        .any(|p| distance(*p, origin) < atv_game::multiplayer::spots::RIDER_CLEAR);
+                    // Horizontal: the ATV settles below the spawn height and
+                    // an idle one rolls a few feet on a gentle slope.
+                    let staying = self.spawned.is_some_and(|(spot, _, _)| {
+                        atv_core::math::Det::hypot_d(
+                            spot.origin[0] - origin[0],
+                            spot.origin[2] - origin[2],
+                        ) < 12.
+                    });
+                    if !waiting {
+                        if crowded
+                            && staying
+                            && let Some((spot, index)) =
+                                spots.pick(crate::random::below(spots.spots.len()), &others)
+                        {
+                            self.spawned = Some((spot, index, "recheck"));
+                            tick.place = Some((spot.origin, spot.yaw, [0.; 3]));
+                            self.session.ghost(now);
+                        }
+                        self.meet = None;
+                    }
+                }
                 for target in self
                     .session
                     .meet_candidates(now, crate::random::bits(), &cars)
+                    .into_iter()
+                    .filter(|_| self.spots.is_none())
                 {
                     if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
                         let d = spot
@@ -1308,6 +1345,8 @@ impl Net {
         self.met = None;
         self.meet = None;
         self.meet_wait = None;
+        self.spots = None;
+        self.spawned = None;
     }
 
     /// Simulates a dropped connection (tests: `?dropSocket` / reconnect gate).
@@ -1626,6 +1665,62 @@ impl Net {
         })
     }
 
+    /// Shared Free Ride: keeps the venue's spawn spots and returns where
+    /// this rider starts (a random spot clear of the riders known so far;
+    /// after a map rotation, `moved` gives each slot its own spot so the
+    /// whole room does not land together). Once the others' poses arrive,
+    /// the meet step moves it once more if one stands too close. Without
+    /// `place` (a reload in place) it only keeps the spots.
+    pub fn scatter(
+        &mut self,
+        spots: Rc<atv_game::multiplayer::spots::Spots>,
+        ride: &Ride,
+        moved: bool,
+        place: bool,
+    ) -> Option<atv_game::multiplayer::spots::Spot> {
+        if !place {
+            self.spots = Some(spots);
+            return None;
+        }
+        let now = now_ms(self.clock);
+        let cars = |car| ride.train_car(car);
+        let others = self.session.positions(now, &cars);
+        let (start, how) = match (moved, self.session.peer) {
+            (true, Some(slot)) => {
+                let seed = self
+                    .session
+                    .code
+                    .bytes()
+                    .chain(self.environment.bytes())
+                    .fold(0x811c_9dc5u32, |h, b| {
+                        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+                    });
+                (spots.slot_start(slot, seed), "slot")
+            }
+            _ => (crate::random::below(spots.spots.len().max(1)), "random"),
+        };
+        let picked = spots.pick(start, &others);
+        if let Some((spot, index)) = picked {
+            self.spawned = Some((spot, index, how));
+            self.meet = Some((0., 12));
+            self.meet_wait = None;
+            self.session.ghost(now);
+        }
+        self.spots = Some(spots);
+        picked.map(|(spot, _)| spot)
+    }
+
+    /// Other riders' presented positions (Free Ride Reset ATV keeps clear).
+    pub fn rider_positions(&self, into: &mut Vec<[f32; 3]>) {
+        into.clear();
+        into.extend(
+            self.presented
+                .iter()
+                .filter(|(_, _, stale, _)| !stale)
+                .map(|(_, p, _, _)| *p),
+        );
+    }
+
     /// Players → Spawn beside a rider (atv-web `spawn`): a clear spot next
     /// to that rider while it rides on the ground.
     pub fn spawn_beside(
@@ -1853,6 +1948,10 @@ impl Net {
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),
             "met": self.met.map(|(peer, d)| serde_json::json!({"peer": peer, "distanceFt": d})),
+            "spawn": self.spawned.map(|(spot, index, how)| serde_json::json!({
+                "origin": spot.origin, "yaw": spot.yaw, "index": index, "how": how,
+                "spots": self.spots.as_ref().map(|s| s.spots.len()),
+            })),
             "remote": self.presented.iter().map(|(peer, position, stale, platform)| {
                 serde_json::json!({
                     "peer": peer, "position": position, "stale": stale, "platform": platform,

@@ -704,6 +704,20 @@ impl Ride {
         }
     }
 
+    /// The mount's partitioned scene, the motorcycle's own included (Free
+    /// Ride spawn checks, `multiplayer::spots`).
+    pub fn collision_scene(&self) -> Option<&atv_core::scene_collision::SceneCollision> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.scene_collision(),
+            Mount::Bike(bike) => bike.scene_collision(),
+        }
+    }
+
+    /// The venue's static collision props, whatever the mount.
+    pub fn static_obstacles(&self) -> &[StaticObstacle] {
+        &self.sim.obstacles
+    }
+
     /// Places the player at `origin` facing `yaw` (a multiplayer arrival
     /// beside another rider; ops 23/47 as Reset does).
     /// An arrival placed beside another rider, moving with `velocity` (the
