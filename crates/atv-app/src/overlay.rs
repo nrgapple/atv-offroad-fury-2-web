@@ -237,6 +237,9 @@ pub struct Overlay {
     pub backdrop: Option<[u8; 3]>,
     /// The engine's frontend can take the player back (Quit to Main Menu).
     pub frontend: bool,
+    /// The ride is the live Free Ride main menu (research/FREERIDE_MENU.md):
+    /// Pause opens the main menu with these rows (action, label).
+    pub home: Option<Vec<(String, String)>>,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
     /// The race is Single Race's Kid difficulty (research/KID_MODE.md):
@@ -379,6 +382,7 @@ impl Overlay {
             backdrop: None,
             fps_clear: (0., None),
             frontend: false,
+            home: None,
             race: false,
             kid: false,
             user_course: false,
@@ -562,7 +566,10 @@ impl Overlay {
     pub fn sync_menu(&mut self, paused: bool) {
         match (paused, self.menu.is_some()) {
             (true, false) => {
-                let mut menu = PauseMenu::new();
+                let mut menu = match &self.home {
+                    Some(rows) => PauseMenu::home(rows.clone()),
+                    None => PauseMenu::new(),
+                };
                 menu.frontend = self.frontend;
                 menu.race_active = self.race;
                 menu.training_active = self.training;

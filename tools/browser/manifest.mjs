@@ -118,6 +118,11 @@ export const TESTS = {
     timeout: 600,
     reason: 'needs a local game server at the same origin (rider registration, friends, presence and Join into a Free Ride room); run with --url'
   },
+  'test_engine_freeride_menu.mjs': {
+    group: 'multiplayer',
+    timeout: 900,
+    reason: 'needs a local game server at the same origin (the main menu over the live Free Ride world, issue #710; an aborted server for the static fallback); run with --url'
+  },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'

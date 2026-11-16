@@ -776,6 +776,21 @@ impl Front {
         self.front_event(event)
     }
 
+    /// The main menu's rows for the main menu over the live Free Ride
+    /// world (research/FREERIDE_MENU.md).
+    pub fn main_rows(&mut self) -> Vec<(String, String)> {
+        let view = self.view;
+        self.state.main_rows(&view)
+    }
+
+    /// A row picked on the live Free Ride main menu, run on the frontend's
+    /// own main menu once the ride has handed the GPU back.
+    pub fn choose(&mut self, action: &str) -> Option<Event> {
+        let view = self.view;
+        let event = self.state.choose(action, &view, &mut self.settings);
+        self.front_event(event)
+    }
+
     pub fn key_up(&mut self, code: &str) -> Option<Event> {
         self.state.key_up(code);
         let event = self.with_menu(|m, ctx, _, _| m.key_up(code, ctx)).flatten();

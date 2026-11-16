@@ -23,6 +23,15 @@ pub fn free_ride_cpus(settings: &Settings) -> u8 {
         .map_or(0, |n| n.min(atv_core::game_cpu::MAX_CPUS))
 }
 
+/// Game Settings → Start in: "menu" opens the static main menu; anything
+/// else (the default) the live Free Ride world (research/FREERIDE_MENU.md).
+pub const START_IN_KEY: &str = "atv-start-in";
+
+/// Game Settings → Start in is Menu.
+pub fn start_menu(settings: &Settings) -> bool {
+    settings.get(START_IN_KEY).as_deref() == Some("menu")
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
     pub graphics: String,
@@ -38,6 +47,8 @@ pub struct Preferences {
     /// Game Settings → Free Ride CPU riders (authored; 0 is off, the original):
     /// CPU riders added to a single-player or split-screen free ride.
     pub free_ride_cpus: u8,
+    /// Game Settings → Start in: Menu rather than Free Ride ([`start_menu`]).
+    pub start_menu: bool,
     pub diagnostics: String,
     pub sound_mode: String,
     pub sfx_volume: f32,
@@ -119,6 +130,7 @@ impl Preferences {
             flips: get("atv-flips").as_deref() == Some("unleashed"),
             realistic_train: get("atv-train-riding").as_deref() == Some("realistic"),
             free_ride_cpus: free_ride_cpus(settings),
+            start_menu: start_menu(settings),
             diagnostics: one_of(get("atv.diagnostics.v1"), &DIAGNOSTICS, "off"),
             sound_mode: match audio["mode"].as_str() {
                 Some("original") => "original".into(),
@@ -309,6 +321,11 @@ impl Preferences {
                 self.free_ride_cpus =
                     (i32::from(self.free_ride_cpus) + direction.signum()).rem_euclid(n) as u8;
                 settings.set(FREE_RIDE_CPUS_KEY, &self.free_ride_cpus.to_string());
+            }
+            "start-in" => {
+                self.start_menu = !self.start_menu;
+                let v = if self.start_menu { "menu" } else { "freeride" };
+                settings.set(START_IN_KEY, v);
             }
             "measurement" => {
                 self.metric = !self.metric;

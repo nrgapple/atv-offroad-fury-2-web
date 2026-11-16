@@ -16,6 +16,7 @@ mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
+mod home;
 mod hub;
 mod instant_replay;
 mod multiplayer;
@@ -1002,6 +1003,8 @@ struct App {
     requested: HashSet<String>,
     /// When the Free Ride rider count was last requested.
     riders_polled: Option<Instant>,
+    /// The main menu over the live Free Ride world (home.rs).
+    home: home::Home,
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
@@ -3623,6 +3626,8 @@ impl App {
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
             state["active"] = active.into();
+            // The live Free Ride main menu (home.rs).
+            state["home"] = self.home.report();
             state["shadows"] = serde_json::json!({
                 "contact": self.meter.shadows.0,
                 "map": self.meter.shadows.1,
@@ -4550,6 +4555,7 @@ impl App {
             Event::Fullscreen => {
                 self.toggle_fullscreen();
             }
+            Event::Home(action) => self.home_choice(&action),
             Event::CopyRide => self.copy_ride_link(),
             Event::SaveCourse => self.save_editor_course(),
             Event::Photo => self.open_photo(),
@@ -6539,6 +6545,16 @@ impl ApplicationHandler<Message> for App {
                             Some((course, r.ride.selection().quad, full))
                         });
                         self.graphics_pref = Some(overlay.prefs.graphics.clone());
+                        // The live Free Ride main menu opens over the world
+                        // at once; the rider waits under it (home.rs).
+                        if self.home.riding
+                            && let Some(front) = &self.front
+                            && let Some(riding) = &mut ready.riding
+                        {
+                            overlay.home = Some(front.borrow_mut().main_rows());
+                            riding.paused = true;
+                            riding.clear_input();
+                        }
                         self.overlay = Some(overlay);
                     }
                     window.request_redraw();
@@ -6560,7 +6576,14 @@ impl ApplicationHandler<Message> for App {
                     // `fail`), on a new surface (the failed load held the
                     // old one).
                     if self.load_failure.is_none() {
-                        self.load_failure = Some((self.ride_origin, error));
+                        // The live Free Ride main menu falls back to the
+                        // static one without a notice (home.rs).
+                        self.load_failure = Some(if self.home.riding {
+                            self.home.failed();
+                            ("main", String::new())
+                        } else {
+                            (self.ride_origin, error)
+                        });
                     }
                     if let Some(window) = self.window.clone() {
                         let display = self.display.clone();
@@ -6578,6 +6601,7 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             Message::FreeRideRiders(riders) => {
+                self.home.probed(riders.is_some());
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
                     f.state.freeride_riders = riders.map(|r| r.0);
@@ -6748,7 +6772,9 @@ impl ApplicationHandler<Message> for App {
                 let (page, notice) = self
                     .load_failure
                     .take()
-                    .map_or(("tracks", None), |(page, error)| (page, Some(error)));
+                    .map_or(("tracks", None), |(page, error)| {
+                        (page, Some(error).filter(|e| !e.is_empty()))
+                    });
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
                     // A single-player ride returns to the page that started
@@ -9393,7 +9419,9 @@ impl App {
             return;
         };
         let page = front.borrow().state.page.clone();
-        if self.ready.is_some() || !matches!(page.as_str(), "multiplayer" | "main") {
+        // The title asks too: whether Press Start opens the live Free Ride
+        // main menu (home.rs).
+        if self.ready.is_some() || !matches!(page.as_str(), "multiplayer" | "main" | "title") {
             return;
         }
         if self
@@ -9522,6 +9550,71 @@ impl App {
         self.quit_to(Some("main"))
     }
 
+    /// The live Free Ride main menu's row: leave the world, then run the row
+    /// on the frontend's main menu, which stays static meanwhile (home.rs).
+    fn home_choice(&mut self, action: &str) {
+        if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+            net.leave();
+        }
+        self.home.hold = true;
+        if !self.quit_to(Some("main")) {
+            return;
+        }
+        let event = self
+            .front
+            .as_ref()
+            .and_then(|f| f.borrow_mut().choose(action));
+        if let Some(event) = event {
+            self.front_event(event);
+        }
+    }
+
+    /// The main menu opens over the live Free Ride world once the game
+    /// server has answered (home.rs); returns true when that ride starts.
+    fn home_check(&mut self) -> bool {
+        let Some(front) = self.front.clone() else {
+            return false;
+        };
+        let (page, menu) = {
+            let f = front.borrow();
+            (f.state.page.clone(), f.menu.is_some())
+        };
+        if page != "main" {
+            self.home.hold = false;
+            return false;
+        }
+        let start_menu = atv_ui::menu::prefs::start_menu(&front.borrow().settings);
+        if menu
+            || start_menu
+            || self.home.hold
+            || self.home.riding
+            || !self.home.available()
+            || self.ready.is_some()
+            || self.gpu.is_none()
+            || self.joining.is_some()
+            || self.joined.is_some()
+            || self.pending_room.is_some()
+            || self.held_room.is_some()
+        {
+            return false;
+        }
+        // Arlington Free Ride as Multiplayer starts it (the rider's ATV,
+        // rider and name).
+        let Some(event) = front.borrow_mut().choose("freeride") else {
+            return false;
+        };
+        self.home.riding = true;
+        self.front_event(event);
+        // A load that fails returns to the (static) main menu.
+        self.ride_origin = "main";
+        if self.ready.is_none() && self.gpu.is_some() {
+            // Nothing started (no defaults yet): try again later.
+            self.home.riding = false;
+            return false;
+        }
+        true
+    }
+
     /// The room closed for good (multiplayer.js onLeave, game.js): the ride
     /// ends on the main menu (Free Ride) or the Multiplayer page with the
     /// reason on the notice line. Without the engine's frontend the ride
@@ -9529,6 +9622,14 @@ impl App {
     /// rows go.
     fn room_ended(&mut self, page: &'static str, reason: String) {
         status(&format!("Multiplayer ended: {reason}"));
+        // The live Free Ride main menu's world closed: the static main menu
+        // for a while (home.rs).
+        let page = if self.home.riding {
+            self.home.failed();
+            "main"
+        } else {
+            page
+        };
         if self.quit_to(Some(page)) {
             if let Some(front) = &self.front {
                 front.borrow_mut().state.notice = Some(reason);
@@ -9601,6 +9702,7 @@ impl App {
             return false;
         };
         let Ready { gpu, .. } = ready;
+        self.home.riding = false;
         self.usage.ended();
         self.overlay = None;
         self.gpu = Some(gpu);
@@ -9681,6 +9783,8 @@ impl App {
                     "front": f.diagnostics(),
                     // The menu preload's cache work (tests read it before Start).
                     "decodedCache": decoded_cache_state(),
+                    // The live Free Ride main menu (home.rs).
+                    "home": self.home.report(),
                     // Frontend frames drawn and the page's focus (tests: idle
                     // menus draw nothing; Host/Join inputs keep the focus).
                     "frontFrames": self.front_frames,
@@ -9708,8 +9812,12 @@ impl App {
             );
         }
         let wants = f.wants();
-        let page = f.state.page.clone();
         drop(f);
+        // Past the title: the main menu over the live Free Ride world.
+        if self.home_check() {
+            return;
+        }
+        let page = front.borrow().state.page.clone();
         self.follow_menu_course(&front);
         self.sync_shell(Some(&page));
         self.sync_menu_music();
@@ -11188,6 +11296,7 @@ pub fn run(options: Options) {
         defaults: None,
         requested: HashSet::new(),
         riders_polled: None,
+        home: home::Home::default(),
         held_room: None,
         preload: atv_game::preload::Preloader::new(
             url_flag("preload=0"),
