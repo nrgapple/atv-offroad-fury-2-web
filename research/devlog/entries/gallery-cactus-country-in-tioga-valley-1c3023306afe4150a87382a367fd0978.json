@@ -1,0 +1,14 @@
+{
+  "id": "gallery-cactus-country-in-tioga-valley-1c3023306afe4150a87382a367fd0978",
+  "timestamp": "2026-11-16T20:39:04.495417+00:00",
+  "recorded_at": "2026-11-16T20:39:32.322049+00:00",
+  "kind": "verification",
+  "title": "Gallery: cactus country in Tioga Valley",
+  "summary": "Threading saguaros on Tioga Valley with the GPS minimap showing 30 mph.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-cactus-country-in-tioga-valley-1c3023306afe4150a87382a367fd0978.png",
+  "caption": "Tioga Valley saguaros in Freestyle"
+}

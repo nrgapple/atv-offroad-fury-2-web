@@ -1,0 +1,14 @@
+{
+  "id": "gallery-a-supercross-pack-under-the-moon-4b249b052d414c7aacbf02a75249b7ed",
+  "timestamp": "2026-11-16T20:38:58.792643+00:00",
+  "recorded_at": "2026-11-16T20:39:32.008654+00:00",
+  "kind": "verification",
+  "title": "Gallery: a Supercross pack under the moon",
+  "summary": "Five quads fighting for the first turn in a Supercross stadium race with four CPU riders, at 52 mph on lap one.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-a-supercross-pack-under-the-moon-4b249b052d414c7aacbf02a75249b7ed.png",
+  "caption": "Supercross race start: four CPU riders and the player in second at 52 mph"
+}

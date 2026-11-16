@@ -1,0 +1,14 @@
+{
+  "id": "gallery-the-title-screen-5f1eacf0693f42d99c4cacf19f5e6bbb",
+  "timestamp": "2026-11-16T20:38:55.534068+00:00",
+  "recorded_at": "2026-11-16T20:39:31.846557+00:00",
+  "kind": "verification",
+  "title": "Gallery: the title screen",
+  "summary": "The Fury Remastered wordmark from the live title screen, cropped as the README banner.",
+  "details": [
+    "Captured 2026-11-16 from the public site (furyremastered.com, deployed commit 1065e77d) in headless Chromium on the host Mac (Apple M4, ANGLE Metal) with the Remastered graphics preset, then scaled for the README."
+  ],
+  "limitation": "Host browser capture of the public build, not a physical-phone or console photograph.",
+  "image": "/devlog-images/gallery-the-title-screen-5f1eacf0693f42d99c4cacf19f5e6bbb.png",
+  "caption": "Fury Remastered title wordmark"
+}
