@@ -63,9 +63,12 @@ async function arrival(ann, bo, environment, how) {
   const apart = flat(a.spawn.origin, b.spawn.origin);
   assert.ok(apart >= 40, `spots ${apart.toFixed(1)} ft apart`);
   assert.notEqual(a.spawn.index, b.spawn.index);
-  // Each sees the other where it started (it has not moved: no input).
+  // Ann sees Bo where Bo started (no input; an idle ATV rolls a little on
+  // the gentle slopes allowed), not by Ann.
   const boSeen = a.remote.find(r => r.peer === b.peer && !r.stale);
-  assert.ok(boSeen && flat(boSeen.position, b.spawn.origin) < 12, `Bo seen at ${boSeen?.position}`);
+  const fromSpawn = boSeen && flat(boSeen.position, b.spawn.origin);
+  assert.ok(fromSpawn < 25, `Bo seen ${fromSpawn?.toFixed(1)} ft from its spot`);
+  assert.ok(flat(boSeen.position, a.spawn.origin) >= 30, 'Bo is not beside Ann');
   const entry = { environment, apartFt: Math.round(apart), ann: a.spawn, bo: b.spawn };
   report.arrivals.push(entry);
   if (shots) {

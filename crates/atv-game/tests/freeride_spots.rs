@@ -8,6 +8,7 @@
 //!   FURY_CONTENT=private/reports/hosted-content cargo test -p atv-game \
 //!     --test freeride_spots -- --ignored --nocapture
 use atv_content::{Content, Store};
+use atv_core::math::Det;
 use atv_core::wreck::Phase;
 use atv_game::multiplayer::spots::{self, Spots};
 use atv_game::ride::Controls;
@@ -71,7 +72,7 @@ fn every_environment_venue_has_spread_valid_spots() {
                     ride.step(&idle, 0.).unwrap();
                 }
                 let f = ride.frame();
-                let moved = (f.origin[0] - spot.origin[0]).hypot(f.origin[2] - spot.origin[2]);
+                let moved = (f.origin[0] - spot.origin[0]).hypot_d(f.origin[2] - spot.origin[2]);
                 let drop = spot.origin[1] - f.origin[1];
                 let wet = ride
                     .water_depth(f.origin[0], f.origin[2])

@@ -748,9 +748,14 @@ impl Net {
                     let crowded = others
                         .iter()
                         .any(|p| distance(*p, origin) < atv_game::multiplayer::spots::RIDER_CLEAR);
-                    let staying = self
-                        .spawned
-                        .is_some_and(|(spot, _, _)| distance(spot.origin, origin) < 3.);
+                    // Horizontal: the ATV settles below the spawn height and
+                    // an idle one rolls a few feet on a gentle slope.
+                    let staying = self.spawned.is_some_and(|(spot, _, _)| {
+                        atv_core::math::Det::hypot_d(
+                            spot.origin[0] - origin[0],
+                            spot.origin[2] - origin[2],
+                        ) < 12.
+                    });
                     if !waiting {
                         if crowded
                             && staying

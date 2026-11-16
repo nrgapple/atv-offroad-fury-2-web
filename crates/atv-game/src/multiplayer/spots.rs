@@ -125,7 +125,7 @@ fn directions(first: [f32; 2]) -> [[f32; 2]; 8] {
 /// order), each with the line's direction there.
 pub fn line_candidates(line: &[[f32; 3]], spacing: f32) -> Vec<Candidate> {
     let mut out = Vec::new();
-    if !(spacing > 0.) {
+    if spacing.is_nan() || spacing <= 0. {
         return out;
     }
     // The first candidate sits half a spacing in, off the start grid.
@@ -134,7 +134,7 @@ pub fn line_candidates(line: &[[f32; 3]], spacing: f32) -> Vec<Candidate> {
     for pair in line.windows(2) {
         let (a, b) = ([pair[0][0], pair[0][2]], [pair[1][0], pair[1][2]]);
         let length = flat(a, b);
-        if !(length > 1e-3) {
+        if length.is_nan() || length <= 1e-3 {
             continue;
         }
         let heading = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
@@ -153,7 +153,7 @@ pub fn line_candidates(line: &[[f32; 3]], spacing: f32) -> Vec<Candidate> {
 
 /// Whether `p` lies inside the rideable area.
 fn inside(area: ([f32; 2], [f32; 2]), p: [f32; 2]) -> bool {
-    p[0] >= area.0[0] && p[0] <= area.1[0] && p[1] >= area.0[1] && p[1] <= area.1[1]
+    (area.0[0]..=area.1[0]).contains(&p[0]) && (area.0[1]..=area.1[1]).contains(&p[1])
 }
 
 /// Validates one spot at `at` facing along `heading` (or against it, or
@@ -456,7 +456,7 @@ fn segment_meets(bounds: &Bounds, a: [f32; 3], b: [f32; 3], pad: f32) -> bool {
         );
         let d = b[i] - a[i];
         if d.abs() < 1e-6 {
-            if a[i] < lo || a[i] > hi {
+            if !(lo..=hi).contains(&a[i]) {
                 return false;
             }
             continue;
@@ -595,6 +595,7 @@ mod tests {
 
     /// A 2000 ft square of flat ground at height 10 with a hill, a lake, a
     /// wall, a roof, a post and a cliff where the tests put them.
+    #[derive(Default)]
     struct Test {
         lake: Option<([f32; 2], f32)>,
         /// A ramp rising `rise` per foot east of x = 500.
@@ -605,18 +606,6 @@ mod tests {
         boxes: Vec<Bounds>,
         /// Compact props tested by their bounds.
         posts: Vec<Bounds>,
-    }
-
-    impl Default for Test {
-        fn default() -> Self {
-            Self {
-                lake: None,
-                rise: 0.,
-                step: 0.,
-                boxes: vec![],
-                posts: vec![],
-            }
-        }
     }
 
     impl World for Test {
