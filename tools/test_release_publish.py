@@ -61,6 +61,39 @@ class PublicationTests(unittest.TestCase):
             uploader.upload(root / 'release', commit, release_scoped=True)
         return objects
 
+    def test_gallery_publishes_every_listed_screenshot_and_drops_missing_ones(self):
+        png = b'\x89PNG\r\n\x1a\nfixture'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directory = root / 'private/reports/devlog-images'
+            directory.mkdir(parents=True)
+            for name in ('one', 'two', 'three'):
+                (directory / f'{name}.png').write_bytes(png)
+            log = {'entries': [
+                {'id': 'single', 'image': '/devlog-images/one.png', 'caption': 'One'},
+                {'id': 'many', 'images': ['/devlog-images/one.png', {'path': '/devlog-images/two.png', 'caption': 'Two'},
+                                          {'path': '/devlog-images/gone.png', 'caption': 'Lost'}]},
+                {'id': 'lost', 'image': '/devlog-images/gone.png', 'caption': 'Lost',
+                 'images': ['/devlog-images/three.png']},
+            ]}
+            with patch.object(uploader, 'ROOT', root), patch('sys.stdout', io.StringIO()) as output:
+                uploads = uploader.gallery_screenshots(log)
+            self.assertEqual([key for key, _ in uploads],
+                             ['devlog-images/one.png', 'devlog-images/two.png', 'devlog-images/three.png'])
+            self.assertIn('gone.png', output.getvalue())
+            self.assertEqual(log['entries'][0]['image'], '/devlog-images/one.png')
+            self.assertEqual(log['entries'][1]['images'],
+                             ['/devlog-images/one.png', {'path': '/devlog-images/two.png', 'caption': 'Two'}])
+            self.assertNotIn('image', log['entries'][2])
+            self.assertNotIn('caption', log['entries'][2])
+            self.assertEqual(log['entries'][2]['images'], ['/devlog-images/three.png'])
+            for bad in ('/devlog-images/nested/one.png', '/elsewhere/one.png'):
+                with patch.object(uploader, 'ROOT', root), self.assertRaisesRegex(ValueError, 'unapproved'):
+                    uploader.gallery_screenshots({'entries': [{'id': 'bad', 'images': [bad]}]})
+            (directory / 'bad.png').write_bytes(b'not a png')
+            with patch.object(uploader, 'ROOT', root), self.assertRaisesRegex(ValueError, 'invalid screenshot'):
+                uploader.gallery_screenshots({'entries': [{'id': 'bad', 'image': '/devlog-images/bad.png'}]})
+
     def test_content_first_requires_an_additive_manifest(self):
         live = json.dumps({'files': [{'path': '/A.RES'}, {'path': '/MX/BIKE125.RES'}]}).encode()
         uploader.require_additive(json.dumps({'files': [{'path': '/A.RES'}, {'path': '/MX/BIKE125.RES'},

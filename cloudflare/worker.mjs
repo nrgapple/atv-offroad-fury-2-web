@@ -61,11 +61,17 @@ async function gallery(request, env) {
     for (const entry of log.entries) {
       const local = approved.get(entry.id);
       if (!local) continue;
-      const { image, caption, ...authored } = local;
-      if (canonical(authored) === canonical(entry) && IMAGE.test(image)) {
+      const { image, caption, images, ...authored } = local;
+      if (canonical(authored) !== canonical(entry)) continue;
+      if (IMAGE.test(image)) {
         entry.image = image;
         if (caption) entry.caption = caption;
       }
+      const shots = (Array.isArray(images) ? images : [])
+        .map(item => typeof item === 'string' ? { path: item } : item)
+        .filter(item => IMAGE.test(item?.path))
+        .map(item => typeof item.caption === 'string' ? { path: item.path, caption: item.caption } : { path: item.path });
+      if (shots.length) entry.images = shots;
     }
   }
   return new Response(request.method === 'HEAD' ? null : JSON.stringify(log), {

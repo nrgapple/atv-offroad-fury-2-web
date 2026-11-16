@@ -85,6 +85,20 @@ test('gallery overlays only screenshots whose authored checkpoint matches CI', a
   assert.equal(await (await worker.fetch(request('/devlog.json', { method: 'HEAD' }), env)).text(), '');
 });
 
+test('gallery overlays approved multi-screenshot lists and drops unapproved items', async () => {
+  const log = { entries: [{ id: 'many', title: 'Many' }, { id: 'changed', title: 'New' }] };
+  const overlay = { entries: [
+    { id: 'many', title: 'Many', images: ['/devlog-images/one.png', { path: '/devlog-images/two.png', caption: 'Two' },
+      { path: '/devlog-images/nested/three.png' }, { path: '/elsewhere.png' }, null] },
+    { id: 'changed', title: 'Old', images: ['/devlog-images/old.png'] },
+  ] };
+  const env = { ASSETS: { fetch: async () => Response.json(log) }, CONTENT: { get: async () => object(JSON.stringify(overlay)) } };
+  const result = await (await worker.fetch(request('/devlog.json'), env)).json();
+  assert.deepEqual(result.entries[0].images, [{ path: '/devlog-images/one.png' }, { path: '/devlog-images/two.png', caption: 'Two' }]);
+  assert.equal(result.entries[0].image, undefined);
+  assert.equal(result.entries[1].images, undefined);
+});
+
 test('root serves the explicit landing asset while preserving request method', async () => {
   let fetched;
   const env = { ASSETS: { fetch: async request => { fetched = request; return new Response(null); } } };

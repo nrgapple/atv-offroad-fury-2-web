@@ -6,7 +6,7 @@ printing or copying credentials. Uploaded object keys are explicitly allowlisted
 """
 from concurrent.futures import ThreadPoolExecutor
 import argparse
-from devlog import read_devlog
+from devlog import SCREENSHOT, read_devlog, screenshot_path, screenshots
 import hashlib
 import json
 from pathlib import Path
@@ -143,6 +143,42 @@ def require_deployed_release(commit):
         raise ValueError('release is no longer deployed; the current release owner must publish its package')
 
 
+def gallery_screenshots(log):
+    """Validated uploads for every screenshot the log names (`image` and each
+    `images` item). A screenshot missing from this host (an entry recorded
+    elsewhere) is left out with a warning and its reference dropped from the
+    gallery, so one lost file neither blocks publication nor shows broken."""
+    directory = ROOT / 'private/reports/devlog-images'
+    uploads, published = [], set()
+    for entry in log['entries']:
+        present = set()
+        for image in screenshots(entry):
+            if not isinstance(image, str) or not SCREENSHOT.fullmatch(image):
+                raise ValueError('unapproved image reference')
+            path = directory / Path(image).name
+            if path.is_symlink():
+                raise ValueError('symlinked screenshot')
+            if not path.is_file():
+                print(f"Skipping screenshot missing on this host: {image} ({entry['id']})", flush=True)
+                continue
+            present.add(image)
+            if image in published:
+                continue
+            data = path.read_bytes()
+            if data[:8] != b'\x89PNG\r\n\x1a\n':
+                raise ValueError('invalid screenshot')
+            uploads.append((image.lstrip('/'), data))
+            published.add(image)
+        if entry.get('image') and entry['image'] not in present:
+            entry.pop('image')
+            entry.pop('caption', None)
+        if 'images' in entry:
+            entry['images'] = [item for item in entry['images'] if screenshot_path(item) in present]
+            if not entry['images']:
+                del entry['images']
+    return uploads
+
+
 def _upload(release, commit, force=False, content=None, release_scoped=False):
     content = (content or ROOT / 'private/reports/hosted-content').resolve()
     if not content.is_relative_to((ROOT / 'private').resolve()):
@@ -161,21 +197,7 @@ def _upload(release, commit, force=False, content=None, release_scoped=False):
     if not icon_directory.is_relative_to((ROOT / 'private').resolve()):
         raise ValueError('app icons must remain in private storage')
     uploads.extend(validated_icons(icon_records, icon_directory))
-    seen = set()
-    for entry in log['entries']:
-        image = entry.get('image')
-        if not image or image in seen:
-            continue
-        if not re.fullmatch(r'/devlog-images/[a-z0-9-]+\.png', image):
-            raise ValueError('unapproved image reference')
-        path = ROOT / 'private/reports/devlog-images' / Path(image).name
-        if path.is_symlink():
-            raise ValueError('symlinked screenshot')
-        data = path.read_bytes()
-        if data[:8] != b'\x89PNG\r\n\x1a\n':
-            raise ValueError('invalid screenshot')
-        uploads.append((image.lstrip('/'), data))
-        seen.add(image)
+    uploads.extend(gallery_screenshots(log))
     token = wrangler_token()
     destination = receipt_path()
     known = known_objects(force)
