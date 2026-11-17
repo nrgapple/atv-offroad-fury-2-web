@@ -200,6 +200,18 @@ impl App {
 
     /// An Online page's request.
     pub(crate) fn online_command(&mut self, command: OnlineCommand) {
+        // A new name alone is not a use of something online: an
+        // unregistered rider sends it when registering.
+        if let OnlineCommand::Name(name) = &command {
+            if self.online.token.is_some() {
+                self.online_send(
+                    Purpose::Settings,
+                    "/multiplayer/players/settings",
+                    json!({"name": name}),
+                );
+            }
+            return;
+        }
         self.online_wanted();
         if self.online.token.is_none() {
             // The registration's answer refreshes the open page.
@@ -229,6 +241,7 @@ impl App {
                 self.online_send(Purpose::NewCode, "/multiplayer/players/code", json!({}))
             }
             OnlineCommand::Copy(code) => self.copy_text(code, "Code copied ✓"),
+            OnlineCommand::Name(_) => {}
         }
     }
 

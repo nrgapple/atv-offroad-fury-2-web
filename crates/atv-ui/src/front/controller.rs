@@ -855,6 +855,7 @@ impl Frontend {
             self.choices = vec![
                 ("qp-race".into(), "Race".into()),
                 ("qp-stunts".into(), "Stunts".into()),
+                self.rider_name_row(),
                 ("back".into(), "Back".into()),
             ];
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -1075,6 +1076,10 @@ impl Frontend {
             for (i, (action, label)) in rows.into_iter().enumerate() {
                 self.choices.insert(at + i, (action.into(), label.into()));
             }
+        }
+        // Multiplayer: the name other riders see, last (a port addition).
+        if page == "multiplayer" {
+            self.choices.push(self.rider_name_row());
         }
         // Split Screen → Freestyle Objectives: offline multiplayer keeps
         // Freestyle's Objectives event type (only online play drops it,
@@ -1955,6 +1960,7 @@ impl Frontend {
                 value: self.profile_ui.name.clone(),
                 max_length: atv_core::profile::NAME_MAX,
             }],
+            online_page::RIDER_NAME => vec![name],
             "create-lobby" => vec![
                 name,
                 Field {
@@ -2344,6 +2350,7 @@ impl Frontend {
         self.go_back(view);
         match from.as_str() {
             "tracks" => self.hosting = false,
+            online_page::RIDER_NAME => self.cancel_rider_name(),
             "profile-confirm" => self.profile_ui.confirm = None,
             "passkey-confirm" => self.passkey.pending = None,
             _ => {}
@@ -2570,6 +2577,19 @@ impl Frontend {
                 );
                 self.set_field("player-name", &name);
                 self.refresh(view);
+            }
+            "ridernamesave" => {
+                if !valid_name(&self.player_name) {
+                    self.notice = Some("Type a name, or roll the dice.".into());
+                    self.refresh(view);
+                    return None;
+                }
+                self.player_name = self.player_name.trim().to_string();
+                self.online_ui.name_before = None;
+                self.save(settings);
+                let name = self.player_name.clone();
+                self.back(view);
+                return Some(Event::Online(online_page::OnlineCommand::Name(name)));
             }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
@@ -5430,6 +5450,66 @@ mod tests {
         assert!(name.len() >= 6 && name.len() <= 16, "{name}");
         assert!(name.ends_with(|c: char| c.is_ascii_digit()), "{name}");
         assert_eq!(front.fields()[0].value, name);
+    }
+
+    #[test]
+    fn rider_name_opens_from_the_menus_and_the_profile_chip() {
+        use super::super::status_bar::{POPOVER_ALT, PROFILE};
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        settings.set(SELECTION_KEY, r#"{"playerName":"Ann"}"#);
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let saved = |settings: &Settings| -> Value {
+            serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap()
+        };
+        let row = |front: &Frontend| {
+            front
+                .choices()
+                .iter()
+                .find(|(a, _)| a == online_page::RIDER_NAME)
+                .map(|(_, l)| l.clone())
+        };
+        front.show("multiplayer", &view);
+        assert_eq!(row(&front).as_deref(), Some("Rider Name: Ann"));
+        front.show("quickplay", &view);
+        assert_eq!(row(&front).as_deref(), Some("Rider Name: Ann"));
+        front.show("multiplayer", &view);
+        front.run(online_page::RIDER_NAME, &view, &mut settings);
+        assert_eq!(front.page, online_page::RIDER_NAME);
+        assert_eq!(front.fields()[0].action, "player-name");
+        // Back without Save Name keeps the old name.
+        front.set_field("player-name", "Bea");
+        front.run("back", &view, &mut settings);
+        assert_eq!(
+            (front.page.as_str(), front.player_name.as_str()),
+            ("multiplayer", "Ann")
+        );
+        // A blank name is refused and the page stays.
+        front.run(online_page::RIDER_NAME, &view, &mut settings);
+        front.set_field("player-name", "  ");
+        assert_eq!(front.run("ridernamesave", &view, &mut settings), None);
+        assert_eq!(front.page, online_page::RIDER_NAME);
+        assert!(front.notice.is_some());
+        // Save Name stores the name, tells the host and goes back.
+        front.set_field("player-name", " Bea ");
+        assert_eq!(
+            front.run("ridernamesave", &view, &mut settings),
+            Some(Event::Online(OnlineCommand::Name("Bea".into())))
+        );
+        assert_eq!(front.page, "multiplayer");
+        assert_eq!(saved(&settings)["playerName"], "Bea");
+        assert_eq!(row(&front).as_deref(), Some("Rider Name: Bea"));
+        // The profile chip's popover shows the name and opens the page.
+        front.show("main", &view);
+        assert!(front.status_click(PROFILE, None, &view));
+        let pop = front.status_bar().unwrap().open.unwrap();
+        assert!(pop.lines.contains(&("Rider name".into(), "Bea".into())));
+        assert_eq!(pop.alt.as_deref(), Some("Change Rider Name"));
+        assert!(front.status_click(POPOVER_ALT, None, &view));
+        assert_eq!(front.page, online_page::RIDER_NAME);
+        assert!(!front.status_open());
+        front.run("back", &view, &mut settings);
+        assert_eq!(front.page, "main");
     }
 
     #[test]

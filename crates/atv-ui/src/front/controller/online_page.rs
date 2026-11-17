@@ -1,19 +1,25 @@
 //! Online identity pages (port addition; research/ONLINE_IDENTITY.md): the
 //! Online card (friend code, level, weekly league, stats), Friends with
 //! presence and Join, a rider's actions, Add Code, Recent riders and the
-//! weekly board. Numbers and icons, few words. The host talks to the game
-//! server ([`OnlineCommand`]) and fills [`OnlineView`].
+//! weekly board, and Rider Name (the name other riders see, reached from
+//! Multiplayer, Quick Play, Online and the profile chip). Numbers and icons,
+//! few words. The host talks to the game server ([`OnlineCommand`]) and
+//! fills [`OnlineView`].
 use super::{Event, Frontend, Viewport};
 use serde::Deserialize;
 
-pub const PAGES: [&str; 6] = [
+pub const PAGES: [&str; 7] = [
     "online",
     "friends",
     "friend",
     "friend-add",
     "friend-recent",
     "league",
+    RIDER_NAME,
 ];
+
+/// The rider name entry: one field with the name dice, then Save Name.
+pub const RIDER_NAME: &str = "rider-name";
 
 /// The rider lists, which scroll with the original Lobby's gold rail
 /// ([`crate::scroll::Scroller::paint_rail`]).
@@ -156,6 +162,9 @@ pub enum OnlineCommand {
     /// rider) for a rider reference.
     Act(&'static str, String),
     Hidden(bool),
+    /// The rider name changed: the shown name follows (only once the rider
+    /// has used something online; registering sends it otherwise).
+    Name(String),
     NewCode,
     /// Copy the friend code.
     Copy(String),
@@ -181,6 +190,8 @@ pub struct OnlineUi {
     pub letter: usize,
     /// The open rider page's reference and list.
     pub rider: Option<(String, From)>,
+    /// The name before Rider Name opened: Back without Save restores it.
+    pub name_before: Option<String>,
 }
 
 /// A rider who is not online (a friend row's value and the offline line).
@@ -306,6 +317,7 @@ impl Frontend {
                 ]
             }
             "online" => vec![row("onlineretry", "Retry")],
+            RIDER_NAME => vec![row("ridernamesave", "Save Name")],
             "friends" if ready => {
                 let mut rows = vec![row("friend-add", "Add Code")];
                 if let Some(lists) = lists {
@@ -388,6 +400,9 @@ impl Frontend {
             }),
             _ => Vec::new(),
         };
+        if self.page == "online" {
+            rows.push(self.rider_name_row());
+        }
         rows.push(row("back", "Back"));
         rows
     }
@@ -402,6 +417,7 @@ impl Frontend {
             "friend-add" => "Add Friend".into(),
             "friend-recent" => "Recent Riders".into(),
             "league" => "Weekly League".into(),
+            RIDER_NAME => "Rider Name".into(),
             _ => return None,
         })
     }
@@ -409,12 +425,19 @@ impl Frontend {
     pub(super) fn online_status(&self) -> Option<String> {
         match self.page.as_str() {
             "friend-add" => Some("8 letters and numbers".into()),
+            RIDER_NAME => {
+                Some("Shown to other riders in online rooms, Quick Play and Friends".into())
+            }
             _ => None,
         }
     }
 
     pub(super) fn online_details(&self) -> Vec<(String, String)> {
         let line = |l: &str, v: String| (l.to_string(), v);
+        // The name works offline too: no server needed.
+        if self.page == RIDER_NAME {
+            return vec![line("Name", self.room_name())];
+        }
         match self.online.reach {
             Reach::Loading if self.online.me.is_none() => {
                 return vec![line("Loading…", String::new())];
@@ -554,6 +577,7 @@ impl Frontend {
                 _ => "friends",
             },
             "friend-add" | "friend-recent" => "friends",
+            RIDER_NAME => "multiplayer",
             _ => return None,
         })
     }
@@ -570,6 +594,28 @@ impl Frontend {
         self.notice = None;
     }
 
+    /// A "Rider Name: <name>" row opening the name entry.
+    pub(super) fn rider_name_row(&self) -> (String, String) {
+        (
+            RIDER_NAME.into(),
+            format!("Rider Name: {}", self.room_name()),
+        )
+    }
+
+    /// Opens Rider Name; Back without Save keeps the old name.
+    pub fn open_rider_name(&mut self, view: &Viewport) {
+        self.online_ui.name_before = Some(self.player_name.clone());
+        self.notice = None;
+        self.show(RIDER_NAME, view);
+    }
+
+    /// Back from Rider Name without saving: the old name again.
+    pub(super) fn cancel_rider_name(&mut self) {
+        if let Some(name) = self.online_ui.name_before.take() {
+            self.player_name = name;
+        }
+    }
+
     /// Opens the Online card (Profile Editor → Online).
     pub fn open_online(&mut self, view: &Viewport) -> Option<Event> {
         self.show("online", view);
@@ -584,6 +630,10 @@ impl Frontend {
         };
         let event = match action {
             "online" | "onlineretry" => return Some(self.open_online(view)),
+            RIDER_NAME => {
+                self.open_rider_name(view);
+                None
+            }
             "friends" => {
                 self.online_ui.rider = None;
                 self.show("friends", view);

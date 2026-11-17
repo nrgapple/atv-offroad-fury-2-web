@@ -32,6 +32,8 @@ pub const POPOVER_CLOSE: u32 = 2465;
 pub const POPOVER_PANEL: u32 = 2466;
 /// The gear: Options from any menu page.
 pub const OPTIONS: u32 = 2467;
+/// The popover's second link (the profile chip's Change Rider Name).
+pub const POPOVER_ALT: u32 = 2468;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chip {
@@ -113,7 +115,7 @@ pub struct StatusBar {
     pub minimal: bool,
     /// Profile Store pages: the coin chip stands out.
     pub store: bool,
-    /// The open popover: its chip, title, (label, value) lines and link,
+    /// The open popover: its chip, title, (label, value) lines and links,
     /// and the x its chip is centred on.
     pub open: Option<Popover>,
     pub anchor: f32,
@@ -127,6 +129,8 @@ pub struct Popover {
     pub title: String,
     pub lines: Vec<(String, String)>,
     pub link: Option<String>,
+    /// A second, quieter link above the gold one.
+    pub alt: Option<String>,
 }
 
 /// The bar's height below the safe area (CSS px): compact on short
@@ -411,12 +415,20 @@ fn avatar(size: f32, name: Option<&str>) -> El {
 }
 
 /// One chip: a dark pill around an icon, a number and an optional label,
-/// inside a hit area at least 44px wide and as tall as the bar.
-fn chip(m: &Metrics, id: u32, hovered: bool, highlight: bool, body: Vec<El>) -> El {
+/// inside a hit area at least 44px wide and as tall as the bar. `lead` is
+/// the leading icon's size: it sits as far from the pill's left edge as from
+/// its top, and an icon alone is centred. Only the profile chip gives way
+/// on a full row (its name ends in "…"); the numbers keep their room.
+fn chip(m: &Metrics, id: u32, hovered: bool, highlight: bool, lead: f32, body: Vec<El>) -> El {
     let h = pill_height(m);
+    let shrink = if id == PROFILE { 1. } else { 0. };
+    let inset = ((h - lead) / 2.).max(3.);
+    // The italic numbers lean past their advance: room for the overhang.
+    let right = if body.len() > 1 { inset + 7. } else { inset };
     let mut pill = El::new(Style {
         display: Display::Flex,
         align_items: AlignItems::CENTER,
+        justify_content: JustifyContent::CENTER,
         gap: Size {
             width: px(7.),
             height: px(0.),
@@ -425,8 +437,8 @@ fn chip(m: &Metrics, id: u32, hovered: bool, highlight: bool, body: Vec<El>) -> 
             width: length(44.),
             height: length(h),
         },
-        padding: sides(0., 11., 0., if m.short { 5. } else { 6. }),
-        flex_shrink: 1.,
+        padding: sides(0., right, 0., inset),
+        flex_shrink: shrink,
         ..Default::default()
     })
     .paint({
@@ -450,7 +462,7 @@ fn chip(m: &Metrics, id: u32, hovered: bool, highlight: bool, body: Vec<El>) -> 
             width: length(44.),
             height: length(height(m)),
         },
-        flex_shrink: 1.,
+        flex_shrink: shrink,
         ..Default::default()
     })
     .id(id)
@@ -517,6 +529,26 @@ fn value(m: &Metrics, text_: String) -> El {
     )
 }
 
+/// [`value`] that narrows with its chip, ending in "…".
+fn fitted_value(m: &Metrics, text_: String) -> El {
+    let size = if m.short { 15. } else { 17. };
+    El::new(Style {
+        min_size: Size {
+            width: length(0.),
+            height: auto(),
+        },
+        flex_shrink: 1.,
+        ..Default::default()
+    })
+    .content(Content::Ellipsis {
+        text: text_,
+        style: TextStyle::new(display(size, 800, true), Color::hex("#f6f6f6"))
+            .spacing(0.4)
+            .shadow(0., 1., 2., Color::BLACK),
+        line_height: size * 1.1,
+    })
+}
+
 fn label(text_: &str) -> El {
     text(
         text_.to_uppercase(),
@@ -533,6 +565,7 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
     let labels = labelled(m);
     let open = bar.open.as_ref().and_then(|p| p.chip);
     let hot = |id: u32| hovered == Some(id) || open.map(Chip::id) == Some(id);
+    let gap = if m.w < 380. { 4. } else { 8. };
     let mut row = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
@@ -548,7 +581,7 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
         display: Display::Flex,
         align_items: AlignItems::CENTER,
         gap: Size {
-            width: px(if m.w < 380. { 4. } else { 8. }),
+            width: px(gap),
             height: px(0.),
         },
         padding: sides(m.safe[0], m.sides().1 - 4., 0., m.sides().0 - 4.),
@@ -565,19 +598,23 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
     if !bar.minimal {
         let name = bar.profile.as_deref();
         let shown = match name {
-            Some(n) if m.w < 380. && n.chars().count() > 8 => {
-                format!("{}…", n.chars().take(7).collect::<String>())
-            }
             Some(n) => n.to_string(),
             None => if m.w < 380. { "Guest" } else { "No profile" }.to_string(),
         };
-        let mut profile = vec![avatar(pill_height(m) - 8., name)];
-        profile.push(value(m, shown));
-        row = row.child(chip(m, PROFILE, hot(PROFILE), false, profile));
+        let size = pill_height(m) - 8.;
+        let profile = vec![avatar(size, name), fitted_value(m, shown)];
+        row = row.child(chip(m, PROFILE, hot(PROFILE), false, size, profile));
     }
-    // Push the rest to the right.
+    // Push the rest to the right; when the row is full the chips keep one
+    // gap between them, not the spacer's two.
     row = row.child(El::new(Style {
         flex_grow: 1.,
+        margin: taffy::Rect {
+            left: LengthPercentageAuto::length(-gap),
+            right: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            bottom: LengthPercentageAuto::length(0.),
+        },
         ..Default::default()
     }));
     if !bar.minimal {
@@ -585,7 +622,14 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
         if labels {
             coins.push(label("Points"));
         }
-        row = row.child(chip(m, COINS, hot(COINS), bar.store || bar.counting, coins));
+        row = row.child(chip(
+            m,
+            COINS,
+            hot(COINS),
+            bar.store || bar.counting,
+            icon_size,
+            coins,
+        ));
         let cup = match bar.trophy_art {
             Some(art) => original_trophy(icon_size, art),
             None => trophy(icon_size),
@@ -597,19 +641,19 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
         if labels {
             cups.push(label("Trophies"));
         }
-        row = row.child(chip(m, TROPHIES, hot(TROPHIES), false, cups));
+        row = row.child(chip(m, TROPHIES, hot(TROPHIES), false, icon_size, cups));
     }
     let mut save = vec![cloud(icon_size + 2., bar.sync)];
     if labels || bar.minimal {
         save.push(label(bar.sync.word()));
     }
-    row = row.child(chip(m, SAVE, hot(SAVE), false, save));
+    row = row.child(chip(m, SAVE, hot(SAVE), false, icon_size + 2., save));
     if !bar.minimal {
         let mut options = vec![gear(icon_size)];
         if labels {
             options.push(label("Options"));
         }
-        row = row.child(chip(m, OPTIONS, hot(OPTIONS), false, options));
+        row = row.child(chip(m, OPTIONS, hot(OPTIONS), false, icon_size, options));
     }
     row
 }
@@ -694,33 +738,45 @@ pub(super) fn popover(m: &Metrics, pop: &Popover, anchor: f32) -> El {
             ));
         panel = panel.child(line);
     }
+    let button = |top: f32| Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        justify_content: JustifyContent::CENTER,
+        min_size: Size {
+            width: auto(),
+            height: length(44.),
+        },
+        margin: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(top),
+            bottom: LengthPercentageAuto::length(0.),
+        },
+        ..Default::default()
+    };
+    if let Some(alt) = &pop.alt {
+        // The gold link's outline on the dark panel.
+        let mut paint = Paint::fill(Color::hex("#ffffff14")).radius(5.);
+        paint.border = [1.5; 4];
+        paint.border_color = Color::hex("#f1d84ecc");
+        panel = panel.child(El::new(button(6.)).paint(paint).id(POPOVER_ALT).child(text(
+            alt.clone(),
+            TextStyle::new(display(16., 800, true), Color::hex("#f1d84e")),
+            18.,
+        )));
+    }
     if let Some(link) = &pop.link {
         panel = panel.child(
-            El::new(Style {
-                display: Display::Flex,
-                align_items: AlignItems::CENTER,
-                justify_content: JustifyContent::CENTER,
-                min_size: Size {
-                    width: auto(),
-                    height: length(44.),
-                },
-                margin: taffy::Rect {
-                    left: LengthPercentageAuto::length(0.),
-                    right: LengthPercentageAuto::length(0.),
-                    top: LengthPercentageAuto::length(6.),
-                    bottom: LengthPercentageAuto::length(0.),
-                },
-                ..Default::default()
-            })
-            .paint(super::pill_shadows(
-                Paint::fill(crate::menu::gold_pill()).radius(5.),
-            ))
-            .id(POPOVER_LINK)
-            .child(text(
-                link.clone(),
-                TextStyle::new(display(16., 800, true), Color::hex("#0d0b00")),
-                18.,
-            )),
+            El::new(button(if pop.alt.is_some() { 8. } else { 6. }))
+                .paint(super::pill_shadows(
+                    Paint::fill(crate::menu::gold_pill()).radius(5.),
+                ))
+                .id(POPOVER_LINK)
+                .child(text(
+                    link.clone(),
+                    TextStyle::new(display(16., 800, true), Color::hex("#0d0b00")),
+                    18.,
+                )),
         );
     }
     El::new(Style {
@@ -825,6 +881,93 @@ mod tests {
             }
         }
         ink
+    }
+
+    /// Each chip's leading icon sits as far from the pill's left edge as
+    /// from its top, an icon alone is centred, and a full row keeps one gap
+    /// between the profile chip and the rest (the uneven 6/11 px padding
+    /// left the cloud and gear off-centre).
+    #[test]
+    fn chip_icons_sit_evenly_in_their_pills() {
+        for name in ["PLAYER1", "A much longer rider name"] {
+            chips_sit_evenly(name);
+        }
+    }
+
+    fn chips_sit_evenly(name: &str) {
+        use crate::paint::{DisplayList, Item};
+        let mut fonts = crate::text::Fonts::new();
+        for (w, h, safe) in [(390., 844., [47., 0., 34., 0.]), (1280., 800., [0.; 4])] {
+            let view = crate::hud::Viewport {
+                width: w,
+                height: h,
+                scale: 3.,
+                safe,
+                ..Default::default()
+            };
+            let m = Metrics::new(&view);
+            let status = StatusBar {
+                profile: Some(name.into()),
+                points: 12_345,
+                shown_points: 12_345,
+                trophies: (0, 14),
+                sync: Sync::Synced,
+                ..Default::default()
+            };
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            crate::layout::render(
+                &bar(&m, &status, None),
+                &mut fonts,
+                w,
+                h,
+                &mut list,
+                &mut hits,
+            );
+            let pills: Vec<_> = list
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    // The pills (the avatar disc is smaller).
+                    Item::Box(b) if b.rect.h >= 30. && (b.radii[0] - b.rect.h / 2.).abs() < 0.1 => {
+                        Some(b.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(pills.len(), 5, "{w}");
+            let shapes: Vec<_> = list
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Shape { shape, x, y, .. } => Some((*x, *y, shape.unit * 20.)),
+                    _ => None,
+                })
+                .collect();
+            for (i, pill) in pills.iter().enumerate().skip(1) {
+                let icon = shapes
+                    .iter()
+                    .find(|(x, ..)| *x >= pill.x && *x < pill.right())
+                    .unwrap_or_else(|| panic!("{w}: no icon in pill {i}"));
+                let (left, top) = (icon.0 - pill.x, icon.1 - pill.y);
+                let right = pill.right() - icon.0 - icon.2;
+                if i >= 3 && w < 900. {
+                    // The cloud and gear alone (phones): centred.
+                    assert!((left - right).abs() < 0.5, "{w} pill {i}: {left} | {right}");
+                } else {
+                    assert!((left - top).abs() < 1.01, "{w} pill {i}: {left} vs {top}");
+                }
+            }
+            let gaps: Vec<f32> = pills.windows(2).map(|p| p[1].x - p[0].right()).collect();
+            let gap = if w < 380. { 4. } else { 8. };
+            assert!(
+                gaps[1..].iter().all(|g| (g - gap).abs() < 0.5),
+                "{w}: {gaps:?}"
+            );
+            assert!(gaps[0] >= gap - 0.5, "{w}: {gaps:?}");
+            // Nothing runs past the row's right padding.
+            let end = w - safe[1] - m.sides().1 + 4.;
+            assert!(pills[4].right() <= end + 0.5, "{w}: {pills:?}");
+        }
     }
 
     /// The whole cloud rasterises in every sync state (#580: the native

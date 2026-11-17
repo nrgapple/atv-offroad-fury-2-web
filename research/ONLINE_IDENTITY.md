@@ -43,7 +43,11 @@ and the `rider` field of `atv_core::cloud_save::Save`.
   replaces it: the old code stops working at once and friends stay friends.
 - **Name.** The multiplayer name, through the shared-room filter
   (`atv_net::offensive_name`), at most 16 characters; a blank or refused name
-  shows as "Rider". It is updated at every registration.
+  shows as "Rider". It is updated at every registration, and Save Name on
+  the Rider Name page (a "Rider Name: <name>" row on Multiplayer, Quick Play
+  and Online, and Change Rider Name in the profile chip's popover) sends it
+  through `/multiplayer/players/settings` at once for a registered rider. An
+  unregistered rider sends nothing until registering, which carries it.
 
 ### Following the Pass Key
 
