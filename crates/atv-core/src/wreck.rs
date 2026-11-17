@@ -387,10 +387,37 @@ impl Config {
         angle.or(impact)
     }
 }
+/// The race settings' track kind (settings +4), which `002f65e0` derives
+/// from the event type and race creation `001f9690` switches on: 0 short
+/// Enduro, 1 long Enduro (also the Waypoint Editor and User Created
+/// Enduro), 2 Freestyle, 3 Nationals, 4 Short Track, 5 Supercross, 6
+/// Training, 7-10 the four mini-games (collapsed into [`TrackKind::Game`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TrackKind {
+    ShortEnduro,
+    LongEnduro,
+    Freestyle,
+    #[default]
+    National,
+    ShortTrack,
+    Supercross,
+    Training,
+    Game,
+}
+impl TrackKind {
+    /// `001e8690` multiplies the vertical impact limit (vehicle +0x104) by
+    /// 1.25 for track kinds 0-2 (Enduro and Freestyle) and by 1.0 otherwise.
+    pub fn vertical_limit_scale(self) -> f32 {
+        match self {
+            TrackKind::ShortEnduro | TrackKind::LongEnduro | TrackKind::Freestyle => 1.25,
+            _ => 1.0,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy)]
 pub struct Input {
     pub local_impact: [f32; 3],
-    /// 1.25 for original modes0/1/2; 1.0 otherwise. Caller owns game-mode mapping.
+    /// [`TrackKind::vertical_limit_scale`] of the ride's track kind.
     pub vertical_limit_scale: f32,
     pub pitch: f32,
     pub roll: f32,
@@ -653,6 +680,25 @@ pub(crate) mod tests {
             forward_speed: 0.,
             stunt_landing_safe: true,
         }
+    }
+    #[test]
+    fn enduro_and_freestyle_scale_the_vertical_limit() {
+        use TrackKind::*;
+        for kind in [ShortEnduro, LongEnduro, Freestyle] {
+            assert_eq!(kind.vertical_limit_scale(), 1.25, "{kind:?}");
+        }
+        for kind in [National, ShortTrack, Supercross, Training, Game] {
+            assert_eq!(kind.vertical_limit_scale(), 1.0, "{kind:?}");
+        }
+        // 84 ft/s wrecks a National landing at 90 but not an Enduro one
+        // (84 x 1.25 = 105).
+        let mut i = input();
+        i.local_impact = [0., 90., 0.];
+        assert_eq!(config().evaluate(i), Some(Kind::Vertical));
+        i.vertical_limit_scale = Freestyle.vertical_limit_scale();
+        assert_eq!(config().evaluate(i), None);
+        i.local_impact = [0., 105.01, 0.];
+        assert_eq!(config().evaluate(i), Some(Kind::Vertical));
     }
     #[test]
     fn normal_landing_is_safe_and_held_trick_is_not() {

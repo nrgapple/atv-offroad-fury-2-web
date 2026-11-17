@@ -2463,6 +2463,9 @@ impl App {
             if let Some(session) = &mut self.room_freestyle {
                 session.course = course_label(&self.course_names, &net.environment);
             }
+            riding
+                .ride
+                .set_freestyle_session(self.room_freestyle.is_some());
             if let Some(session) = &mut self.room_freestyle
                 && !freestyle_reload
                 && let Some(summary) = session.frame(&mut riding.ride, net)
@@ -4148,6 +4151,10 @@ impl App {
             game["speedUnits"] = riding.ride.hud().units.into();
             game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
             game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
+            // The wreck classifiers' track kind (#660).
+            let kind = riding.ride.track_kind();
+            state["ride"]["trackKind"] = format!("{kind:?}").into();
+            state["ride"]["verticalLimitScale"] = kind.vertical_limit_scale().into();
             state["fps"] = self.fps.state();
             publish_ui_state(&state.to_string());
         }

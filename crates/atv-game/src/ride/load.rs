@@ -558,6 +558,8 @@ pub async fn load_with(
             scene.boundary_launch
         },
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
+        track_kind: venue.track_kind,
+        venue_track_kind: venue.track_kind,
         water,
         camera: follow,
         camera_presets,
