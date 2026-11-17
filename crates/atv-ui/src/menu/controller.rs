@@ -1920,6 +1920,8 @@ mod parity_tests {
             (1280., 720., [0.; 4]),
             (844., 390., [0., 47., 21., 47.]),
             (390., 844., [47., 0., 34., 0.]),
+            // A side status bar in portrait (the iPhone Duo).
+            (430., 932., [20., 62., 34., 0.]),
         ] {
             fx.view = Viewport {
                 width,

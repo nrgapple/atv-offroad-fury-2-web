@@ -2995,7 +2995,7 @@ impl Frontend {
 
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<u32> {
         let pane = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
-        let (list, rows, tabs) = (pane(LIST), pane(ROWS), pane(super::TABS));
+        let (list, rows, tabs) = (pane(LIST), pane(ROWS), pane(crate::front::TABS));
         hits.iter()
             .rev()
             // Items scrolled outside their pane are clipped.
@@ -3009,7 +3009,7 @@ impl Frontend {
             .find(|id| {
                 !matches!(
                     *id,
-                    LIST | ROWS | super::TABS | super::STAGE | super::DETAILS
+                    LIST | ROWS | crate::front::TABS | super::STAGE | super::DETAILS
                 )
             })
     }
@@ -3041,7 +3041,7 @@ impl Frontend {
             .any(|p| p.pointer != pointer && p.scroll.is_some() && (p.moved || p.caught));
         let scroll = if self.status_open() || other {
             None
-        } else if inside(super::TABS) && self.tab_strip.max() > 0. {
+        } else if inside(crate::front::TABS) && self.tab_strip.max() > 0. {
             Some(Pane::Tabs)
         } else if inside(LIST) {
             Some(Pane::List)
@@ -3399,7 +3399,7 @@ impl Frontend {
         }
         // The event tabs' strip: its sideways range, and the selected tab
         // brought into view when the filter changed (or the page opened).
-        if let Some(strip) = rect(super::TABS) {
+        if let Some(strip) = rect(crate::front::TABS) {
             let before = self.tab_strip.offset();
             let tabs: Vec<Rect> = hits
                 .iter()
@@ -5584,6 +5584,136 @@ pub fn profile_line(profile: &atv_core::profile::Profile) -> String {
         plural(profile.races, "race", "races"),
         plural(profile.wins, "win", "wins")
     )
+}
+
+#[cfg(test)]
+/// A side status bar (the iPhone Duo keeps its time, battery and signal in
+/// a column at the right edge in portrait): every page keeps its text and
+/// targets out of that inset, and out of a mirrored left one.
+mod side_status_bar {
+    use super::tests::{tracks, view};
+    use super::*;
+
+    #[test]
+    fn pages_keep_text_and_targets_clear_of_side_insets() {
+        use crate::paint::{DisplayList, Item};
+        let mut fonts = crate::text::Fonts::new();
+        let settings = Settings::memory();
+        let mut pages: Vec<&str> = vec![
+            "title",
+            "main",
+            "single",
+            "multiplayer",
+            "quickplay",
+            "split",
+            "splitseats",
+            "create-lobby",
+            "join-lobby",
+            "garage",
+            "gear",
+            "tracks",
+            "race",
+            "championship",
+            "objectives",
+            "objective-courses",
+            "classic-courses",
+            "games",
+            "store",
+            "store-atv",
+            "store-gear",
+            "store-games",
+            "store-tracks",
+            "store-cheats",
+            "profile",
+            "hall-of-fame",
+            "daily",
+            "weekly",
+            "profile-name",
+            "profile-view",
+            "profile-overview",
+            "profile-trophies",
+            "profile-records",
+            "profile-slots",
+            "profile-unlock",
+        ];
+        pages.extend(online_page::PAGES);
+        pages.extend(passkey_page::PAGES);
+        pages.extend(waypoint_page::PAGES);
+        let mut bad = Vec::new();
+        for (w, h, safe) in [
+            (430., 932., [20., 62., 34., 0.]),
+            (390., 844., [20., 0., 34., 62.]),
+            (932., 430., [0., 62., 21., 0.]),
+        ] {
+            let mut v = view(w, h);
+            v.safe = safe;
+            v.scale = 3.;
+            let mut front = Frontend::new(tracks(), &settings, true);
+            front.set_race_courses(vec!["nat01".into()], &v);
+            for page in &pages {
+                front.show(page, &v);
+                front.refresh(&v);
+                let mut s = front.screen(None, false, None, &|_| None, None, (None, None), 0.);
+                s.status = front.status_bar();
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                crate::layout::render(
+                    &super::super::element(&v, &s),
+                    &mut fonts,
+                    w,
+                    h,
+                    &mut list,
+                    &mut hits,
+                );
+                let (start, edge) = (safe[3] - 0.5, w - safe[1] + 0.5);
+                let pane = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
+                for (r, id) in &hits {
+                    let clip = if Frontend::listed(*id) {
+                        pane(LIST)
+                    } else if Frontend::in_rows(*id) {
+                        pane(ROWS)
+                    } else if (TAB..TAB + 100).contains(id) {
+                        pane(crate::front::TABS)
+                    } else {
+                        None
+                    };
+                    let right = clip.map_or(r.right(), |c| r.right().min(c.right()));
+                    let skip = [
+                        LIST,
+                        ROWS,
+                        crate::front::TABS,
+                        crate::front::STAGE,
+                        crate::front::DETAILS,
+                    ]
+                    .contains(id);
+                    if right > edge && !skip && clip.is_none_or(|c| r.x < c.right()) {
+                        eprintln!("{w} {page}: hit {id} {r:?} clip {clip:?}");
+                    }
+                }
+                let mut clips: Vec<crate::paint::Rect> = Vec::new();
+                for item in &list.items {
+                    match item {
+                        Item::PushClip { rect, .. } => clips.push(*rect),
+                        Item::PopClip => {
+                            clips.pop();
+                        }
+                        Item::Text { text, style, x, .. } => {
+                            let tw = fonts.measure(text, &style.font, style.letter_spacing).width;
+                            let right = clips.iter().fold(x + tw, |r, c| r.min(c.right()));
+                            let left = clips.iter().fold(*x, |l, c| l.max(c.x));
+                            if (right > edge || left < start)
+                                && left < right
+                                && !text.trim().is_empty()
+                            {
+                                bad.push(format!("{w} {page}: text {text:?} {left}..{right}"));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{bad:#?}");
+    }
 }
 
 #[cfg(test)]

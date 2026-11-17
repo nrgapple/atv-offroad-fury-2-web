@@ -35,6 +35,19 @@ pub struct Viewport {
     pub touch_first: bool,
 }
 
+impl Viewport {
+    /// A panel at most `width` wide, `margin` clear of each side and of the
+    /// side safe-area insets (a landscape notch, or a side status bar in
+    /// portrait such as the iPhone Duo's), centred between them:
+    /// (left, width).
+    pub fn centred(&self, width: f32, margin: f32) -> (f32, f32) {
+        let [left, right] = [self.safe[3], self.safe[1]];
+        let room = self.width - left - right;
+        let width = width.min((room - 2. * margin).max(0.));
+        (left + (room - width) / 2., width)
+    }
+}
+
 /// web/design-system.css and hud.css tokens.
 pub mod tokens {
     use crate::{color::Color, text::Shadow};
@@ -60,4 +73,27 @@ pub mod tokens {
             color: Color::hex("#0007"),
         },
     ];
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Viewport;
+
+    /// Panels centre between the side insets and keep their margin there.
+    #[test]
+    fn panels_centre_between_the_side_insets() {
+        let view = |safe| Viewport {
+            width: 430.,
+            height: 932.,
+            safe,
+            ..Default::default()
+        };
+        assert_eq!(view([0.; 4]).centred(340., 12.), (45., 340.));
+        // The iPhone Duo's status column on the right in portrait.
+        assert_eq!(view([20., 62., 34., 0.]).centred(560., 12.), (12., 344.));
+        assert_eq!(view([20., 62., 34., 0.]).centred(300., 12.), (34., 300.));
+        // Mirrored, and no room at all.
+        assert_eq!(view([0., 0., 0., 62.]).centred(560., 12.), (74., 344.));
+        assert_eq!(view([0., 300., 0., 200.]).centred(560., 12.).1, 0.);
+    }
 }

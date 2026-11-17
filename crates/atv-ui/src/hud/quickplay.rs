@@ -389,9 +389,9 @@ fn confetti(viewport: &Viewport, t: f32) -> El {
     }))
 }
 
-/// The panel's width in a view.
-pub fn panel_width(viewport: &Viewport) -> f32 {
-    (viewport.width - 24.).clamp(0., 560.)
+/// The panel's left edge and width in a view.
+pub fn panel_span(viewport: &Viewport) -> (f32, f32) {
+    viewport.centred(560., 12.)
 }
 
 /// The panel, or None when nothing shows (a round in play). Built from the
@@ -410,7 +410,7 @@ pub fn element(
     let focused = |id: u32| view.focus_visible && buttons(view).get(view.focus) == Some(&id);
     let button =
         |id: u32, label: &str, primary: bool| classic::button(id, label, primary, focused(id));
-    let width = panel_width(viewport);
+    let (left, width) = panel_span(viewport);
     // Under the toolbar, and below a top minimap the panel would cover.
     let top = 56f32.max(viewport.safe[0] + 52.).max(below);
     let sheet =
@@ -523,7 +523,7 @@ pub fn element(
     let mut placed = content;
     placed.style.position = Position::Absolute;
     placed.style.inset = taffy::Rect {
-        left: LengthPercentageAuto::length((viewport.width - width) / 2.),
+        left: LengthPercentageAuto::length(left),
         top: LengthPercentageAuto::length(top),
         right: LengthPercentageAuto::auto(),
         bottom: LengthPercentageAuto::auto(),
