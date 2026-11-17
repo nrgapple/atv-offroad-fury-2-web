@@ -2,7 +2,9 @@
 //! 00216650) and each flare material's occlusion settings. ATV2 reads its
 //! PSM `[Prologue]` (001b8150); MX reads the TOY when
 //! `useToyFlareSettings` is set, else the PSM `OcclusionFlare` stream
-//! (001dbcb0). Rendering is in atv-render's flare pass (research/SUN_FLARES.md).
+//! (001dbcb0). Both copy the flare art into a render target, write the
+//! occlusion share into its alpha and draw it as a screen sprite; the
+//! rendering is in atv-render's flare pass (research/SUN_FLARES.md).
 use crate::materials::member_named;
 use crate::venue::Image;
 use atv_core::Result;
@@ -16,12 +18,15 @@ pub struct SunFlare {
     /// Unit vector from the camera toward the sun: Position - TargetPosition
     /// (or the negated LightDirection).
     pub toward_sun: [f32; 3],
+    /// The flare art at the render target's resolution; only its RGB is
+    /// drawn (the target's alpha holds the occlusion share).
     pub image: Image,
     /// Sprite width and height in 640x448 PS2 screen pixels.
     pub size: f32,
     /// Occlusion sample square in PS2 screen pixels.
     pub sample_size: f32,
-    /// GS vertex RGB (128 = 1) and alpha (128 = 1) of the sprite.
+    /// GS vertex RGB (128 = 1) and alpha (128 = 1) of the sprite. The
+    /// texel alpha it modulates is the visible share times 255.
     pub color: [f32; 3],
     pub alpha: f32,
 }
@@ -76,7 +81,8 @@ pub struct Authored {
     pub texture: String,
     pub toward_sun: [f32; 3],
     /// MX TOY settings, used when `useToyFlareSettings` is set:
-    /// sample size, FlareRGBA, FlareAlpha, FlareScreenSize.
+    /// sample size, FlareRGBA, FlareAlpha and the sprite size (twice
+    /// FlareScreenSize, as for the material stream).
     pub toy_settings: Option<(f32, [f32; 3], f32, f32)>,
 }
 
@@ -109,7 +115,7 @@ pub fn authored(toy: &str) -> Vec<Authored> {
                     number(value(&entries, &section, "OcclusionSampleSize")).unwrap_or(16.),
                     vector::<3>(value(&entries, &section, "FlareRGBA")).unwrap_or([128.; 3]),
                     number(value(&entries, &section, "FlareAlpha")).unwrap_or(40.),
-                    number(value(&entries, &section, "FlareScreenSize")).unwrap_or(350.),
+                    number(value(&entries, &section, "FlareScreenSize")).unwrap_or(350.) * 2.,
                 )
             });
             Some(Authored {
@@ -128,6 +134,8 @@ pub struct MaterialSettings {
     pub color: [f32; 3],
     pub alpha: f32,
     pub size: f32,
+    /// Render target width the art is copied into (renderTargetWidth).
+    pub target: f32,
     pub texture: Option<String>,
 }
 
@@ -135,10 +143,9 @@ pub struct MaterialSettings {
 /// 128-pixel render target). 002cf8c0 draws renderTargetWidth x
 /// flareMaxScale pixels at vertex alpha max(flareMaxAlpha, 80) >> 2.
 /// MX `OcclusionFlare` stream (001dbcb0 defaults: sample 16, alpha 80,
-/// screen size 400) draws flareScreenSize pixels at the authored flareAlpha
-/// as GS vertex alpha (an adaptation: MX's render-target sprite filter path
-/// is not recovered; its flare art is opaque, so the vertex alpha alone
-/// sets the glow).
+/// screen size 400): 001dc0c0 draws the target from the sun minus to plus
+/// flareScreenSize, so twice that wide, at vertex alpha flareAlpha (times
+/// the frustum test, 004f3a70).
 pub fn material_settings(psm: &str) -> MaterialSettings {
     let entries = entries(psm);
     let texture = value(&entries, "ShaderPass_1", "TextureMap_1").map(|t| {
@@ -157,7 +164,8 @@ pub fn material_settings(psm: &str) -> MaterialSettings {
             sample_size: get("OcclusionSampleSize").unwrap_or(16.),
             color: vector::<3>(value(&entries, &stream, "FlareRGBA")).unwrap_or([128.; 3]),
             alpha: get("FlareAlpha").unwrap_or(80.),
-            size: get("FlareScreenSize").unwrap_or(400.),
+            size: get("FlareScreenSize").unwrap_or(400.) * 2.,
+            target: get("renderTargetWidth").unwrap_or(128.),
             texture,
         }
     } else {
@@ -168,6 +176,7 @@ pub fn material_settings(psm: &str) -> MaterialSettings {
             color: vector::<3>(value(&entries, "Prologue", "flareColor")).unwrap_or([128.; 3]),
             alpha: (get("FlareMaxAlpha").unwrap_or(128.).clamp(80., 255.) as u32 >> 2) as f32,
             size: width * get("FlareMaxScale").unwrap_or(3.25),
+            target: width,
             texture,
         }
     }
@@ -191,7 +200,7 @@ pub fn load(archive: &Resource, toy: &[u8]) -> Result<Vec<SunFlare>> {
                 color,
                 alpha,
                 size,
-                texture: settings.texture,
+                ..settings
             };
         }
         let stem = settings.texture.as_deref().unwrap_or(&flare.texture);
@@ -200,13 +209,14 @@ pub fn load(archive: &Resource, toy: &[u8]) -> Result<Vec<SunFlare>> {
             continue;
         };
         let texture = atv_core::texture::decode_pst(&archive.extract(pst)?)?;
+        let image = Image {
+            width: texture.info.width,
+            height: texture.info.height,
+            rgba: texture.rgba,
+        };
         flares.push(SunFlare {
             toward_sun: flare.toward_sun,
-            image: Image {
-                width: texture.info.width,
-                height: texture.info.height,
-                rgba: texture.rgba,
-            },
+            image: shrink(image, settings.target.clamp(1., 1024.) as u32),
             size: settings.size,
             sample_size: settings.sample_size.clamp(1., 64.),
             color: settings.color,
@@ -214,6 +224,36 @@ pub fn load(archive: &Resource, toy: &[u8]) -> Result<Vec<SunFlare>> {
         });
     }
     Ok(flares)
+}
+
+/// The art as the copy into the render target leaves it (MX FilterSprite
+/// stream 1; ATV2 setOcclusionAlpha targets): halved with a 2x2 box until
+/// no wider than `target`.
+fn shrink(mut image: Image, target: u32) -> Image {
+    while image.width > target && image.width.is_multiple_of(2) && image.height.is_multiple_of(2) {
+        let (width, height) = (image.width / 2, image.height / 2);
+        let source = |x: u32, y: u32, c: usize| {
+            u32::from(image.rgba[((y * image.width + x) * 4) as usize + c])
+        };
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                for c in 0..4 {
+                    let sum = source(2 * x, 2 * y, c)
+                        + source(2 * x + 1, 2 * y, c)
+                        + source(2 * x, 2 * y + 1, c)
+                        + source(2 * x + 1, 2 * y + 1, c);
+                    rgba.push(((sum + 2) / 4) as u8);
+                }
+            }
+        }
+        image = Image {
+            width,
+            height,
+            rgba,
+        };
+    }
+    image
 }
 
 #[cfg(test)]
@@ -237,6 +277,7 @@ mod tests {
         assert_eq!(settings.sample_size, 32.);
         // 002cf8c0: max(40, 80) >> 2.
         assert_eq!(settings.alpha, 20.);
+        assert_eq!(settings.target, 128.);
         assert_eq!(settings.texture.as_deref(), Some("env02sun"));
     }
 
@@ -247,16 +288,28 @@ mod tests {
             useToyFlareSettings \t= 1\nOcclusionSampleSize = 26\nFlareRGBA = 128.0, 128.0, 128.0, 0\n\
             FlareAlpha = 40\nFlareScreenSize=250\n";
         let flares = authored(toy);
-        assert_eq!(flares[0].toy_settings, Some((26., [128.; 3], 40., 250.)));
+        assert_eq!(flares[0].toy_settings, Some((26., [128.; 3], 40., 500.)));
         let psm = "[FilterStream_3]\nfilterAlgorithm = OcclusionFlare\nOcclusionSampleSize = 26\n\
             FlareRGBA = 128.0, 128.0, 128.0, 0\nFlareAlpha = 60\nFlareScreenSize = 200\n\
             [ShaderPass_1]  ;---\nTextureMap_1 = sunflare33.pst\n";
         let settings = material_settings(psm);
         assert_eq!(
             (settings.size, settings.alpha, settings.sample_size),
-            (200., 60., 26.)
+            (400., 60., 26.)
         );
         assert_eq!(settings.texture.as_deref(), Some("sunflare33"));
+    }
+
+    #[test]
+    fn art_is_halved_to_the_render_target() {
+        let image = Image {
+            width: 4,
+            height: 4,
+            rgba: (0..64).map(|i| if i % 8 < 4 { 200 } else { 0 }).collect(),
+        };
+        let small = shrink(image, 2);
+        assert_eq!((small.width, small.height), (2, 2));
+        assert_eq!(&small.rgba[..4], &[100; 4]);
     }
 
     #[test]

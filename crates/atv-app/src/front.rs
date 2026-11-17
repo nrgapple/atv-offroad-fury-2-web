@@ -2338,6 +2338,7 @@ impl Front {
                 .collect::<Vec<_>>()
         );
         out["quickplay"] = self.state.quickplay.into();
+        out["worldStage"] = self.state.world_stage.into();
         out["kinetic"] = kinetic;
         out["online"] = online;
         // Turntable rates and preview images' pixel sizes (they follow the

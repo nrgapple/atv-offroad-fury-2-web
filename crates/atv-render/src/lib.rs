@@ -2533,6 +2533,7 @@ impl SceneRenderer {
             {
                 flares.prepare(
                     gpu,
+                    &mut encoder,
                     &view_projection,
                     size,
                     turned,
@@ -2572,6 +2573,11 @@ impl SceneRenderer {
                         },
                     }),
                 }),
+                occlusion_query_set: self
+                    .sun_flares
+                    .as_ref()
+                    .filter(|_| region.is_none())
+                    .map(flare::FlarePass::query_set),
                 ..Default::default()
             });
             if let Some(Region {
@@ -2686,10 +2692,12 @@ impl SceneRenderer {
             if let Some(rain) = &self.rain {
                 rain.draw(&mut pass, &self.world);
             }
-            // The sun flare is a screen object over everything.
+            // The sun flare is a screen object over everything; its depth
+            // probes follow every depth-writing draw.
             if region.is_none()
                 && let Some(flares) = &self.sun_flares
             {
+                flares.probe(&mut pass, &self.world);
                 flares.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.effects");
