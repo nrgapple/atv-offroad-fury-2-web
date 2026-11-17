@@ -143,9 +143,11 @@ const sampleCamera = (page, ms) =>
             const yaw = b?.yaw;
             const at = JSON.parse(window.furyMultiplayer ?? 'null')?.origin;
             if (b && yaw !== undefined) {
-              // A reset (the autopilot's stuck rules) moves the rider, and the
-              // camera with it, as in any ride: not a camera snap.
-              const reset = last?.at && at && Math.hypot(at[0] - last.at[0], at[2] - last.at[2]) > 20;
+              // A reset (a wreck's recovery or the autopilot's stuck rules)
+              // cuts the ride's own camera, as in any ride: not a backdrop snap.
+              const reset =
+                (last && ui.reset_count !== last.resetCount) ||
+                (last?.at && at && Math.hypot(at[0] - last.at[0], at[2] - last.at[2]) > 20);
               if (reset) out.resets++;
               // Only while the backdrop has a share (the chase is the original's).
               if (last && !reset && now > last.now && (b.blend > 0 || last.blend > 0)) {
@@ -162,7 +164,7 @@ const sampleCamera = (page, ms) =>
               out.clearance = Math.min(out.clearance, b.clearance);
               out.blend.push(b.blend);
               out.pitch.push(b.pitch);
-              last = { now, yaw, y: b.eye[1], blend: b.blend, at };
+              last = { now, yaw, y: b.eye[1], blend: b.blend, at, resetCount: ui.reset_count };
             }
           } catch {}
           if (now < end) requestAnimationFrame(step);

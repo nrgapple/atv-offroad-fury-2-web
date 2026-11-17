@@ -125,8 +125,9 @@ no shared world.
   clearance, yaw under 3.5 rad/s and height under 45 ft/s each frame) at
   1280×720 and 844×390, the blend back at Hop in, Single Player keeping the
   world, Hop in and the handover, Pause → Quit to Main Menu, a click on the
-  world, the upright phone layout (frames where the rider itself jumps, a
-  reset, are not counted as camera snaps), an aborted game server and Start in:
+  world, the upright phone layout (a reset, by a wreck's recovery or the
+  autopilot's stuck rules, cuts the ride's own camera and is not counted
+  as a backdrop snap), an aborted game server and Start in:
   Menu.
 
 ## Not done / unverified
@@ -143,5 +144,9 @@ no shared world.
 - The backdrop's sightline check samples the ground at seven points: a
   narrow spike between samples (a tree, a rock) can still hide the rider
   for a moment. Scenery is not tested against the eye.
+- A phone held upright frames the same backdrop in its short top stage:
+  there the near dunes fill it, the horizon sits above the stage, and the
+  rider's helmet can reach the wordmark's lower edge. Not tuned (#728
+  covered 1280×720 and a phone held sideways).
 - The backdrop framing was tuned on host screenshots of the venues the
   local server's rotation picked, not on every venue or a physical phone.
