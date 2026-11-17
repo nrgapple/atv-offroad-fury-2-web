@@ -133,7 +133,7 @@ const sampleCamera = (page, ms) =>
   page.evaluate(
     ms =>
       new Promise(done => {
-        const out = { yawRate: 0, rise: 0, clearance: Infinity, blend: [], pitch: [] };
+        const out = { yawRate: 0, rise: 0, clearance: Infinity, blend: [], pitch: [], resets: 0 };
         let last = null;
         const end = performance.now() + ms;
         const step = now => {
@@ -141,19 +141,28 @@ const sampleCamera = (page, ms) =>
             const ui = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
             const b = ui.home?.backdrop;
             const yaw = b?.yaw;
+            const at = JSON.parse(window.furyMultiplayer ?? 'null')?.origin;
             if (b && yaw !== undefined) {
+              // A reset (the autopilot's stuck rules) moves the rider, and the
+              // camera with it, as in any ride: not a camera snap.
+              const reset = last?.at && at && Math.hypot(at[0] - last.at[0], at[2] - last.at[2]) > 20;
+              if (reset) out.resets++;
               // Only while the backdrop has a share (the chase is the original's).
-              if (last && now > last.now && (b.blend > 0 || last.blend > 0)) {
+              if (last && !reset && now > last.now && (b.blend > 0 || last.blend > 0)) {
                 const dt = (now - last.now) / 1000;
                 let turn = yaw - last.yaw;
                 turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-                out.yawRate = Math.max(out.yawRate, Math.abs(turn) / Math.max(dt, 1 / 60));
-                out.rise = Math.max(out.rise, Math.abs(b.eye[1] - last.y) / Math.max(dt, 1 / 60));
+                const yawRate = Math.abs(turn) / Math.max(dt, 1 / 60);
+                const rise = Math.abs(b.eye[1] - last.y) / Math.max(dt, 1 / 60);
+                if (yawRate > out.yawRate || rise > out.rise)
+                  out.worst = { yawRate, rise, dt, blend: [last.blend, b.blend], y: [last.y, b.eye[1]], yaw: [last.yaw, yaw] };
+                out.yawRate = Math.max(out.yawRate, yawRate);
+                out.rise = Math.max(out.rise, rise);
               }
               out.clearance = Math.min(out.clearance, b.clearance);
               out.blend.push(b.blend);
               out.pitch.push(b.pitch);
-              last = { now, yaw, y: b.eye[1], blend: b.blend };
+              last = { now, yaw, y: b.eye[1], blend: b.blend, at };
             }
           } catch {}
           if (now < end) requestAnimationFrame(step);
@@ -211,7 +220,13 @@ try {
   assert.ok(report.piloted > 10, `autopilot moved the rider: ${report.piloted} ft`);
   const camera = await sampleCamera(page, 4000);
   assertBackdrop(camera, 'desktop');
-  report.backdrop = { yawRate: camera.yawRate, rise: camera.rise, clearance: camera.clearance, pitch: camera.pitch.at(-1) };
+  report.backdrop = {
+    yawRate: camera.yawRate,
+    rise: camera.rise,
+    clearance: camera.clearance,
+    pitch: camera.pitch.at(-1),
+    resets: camera.resets
+  };
   if (shots) await page.screenshot({ path: `${shots}/freeride-menu-desktop.png` });
 
   // 2. Another stage page keeps the world; Back returns.
@@ -233,7 +248,13 @@ try {
   await page.mouse.click(hop.x, hop.y);
   // The chase camera blends back in, without a snap.
   const back2chase = await sampleCamera(page, 1800);
-  report.hopCamera = { rise: back2chase.rise, yawRate: back2chase.yawRate, blend: back2chase.blend.at(-1) };
+  report.hopCamera = {
+    rise: back2chase.rise,
+    yawRate: back2chase.yawRate,
+    blend: back2chase.blend.at(-1),
+    worst: back2chase.worst,
+    resets: back2chase.resets
+  };
   assert.equal(back2chase.blend.at(-1), 0, 'the chase camera after Hop in');
   assert.ok(back2chase.blend.some(b => b > 0 && b < 1), 'Hop in blends the camera');
   assert.ok(back2chase.rise < 45 && back2chase.yawRate < 3.5, `Hop in camera without a snap: ${JSON.stringify(report.hopCamera)}`);

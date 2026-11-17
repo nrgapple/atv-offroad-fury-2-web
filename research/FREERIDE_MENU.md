@@ -37,7 +37,7 @@ no shared world.
   over the silver.
 - **Backdrop camera** (#728). Under the menus the ride's camera is a
   higher, wider chase instead of the follow camera (`atv_game::ride::view::
-  Backdrop`): the eye 17 ft above and 40 ft behind the rider, aimed 34 ft
+  Backdrop`): the eye 14.5 ft above and 34 ft behind the rider, aimed 30 ft
   ahead of it and 3 ft up (about 10° down, so the horizon, terrain and
   other riders sit above the rider in the stage), and the lens 16 % wider
   (focal length × 0.84). It follows the autopilot's rider: the ground
@@ -125,7 +125,8 @@ no shared world.
   clearance, yaw under 3.5 rad/s and height under 45 ft/s each frame) at
   1280×720 and 844×390, the blend back at Hop in, Single Player keeping the
   world, Hop in and the handover, Pause → Quit to Main Menu, a click on the
-  world, the upright phone layout, an aborted game server and Start in:
+  world, the upright phone layout (frames where the rider itself jumps, a
+  reset, are not counted as camera snaps), an aborted game server and Start in:
   Menu.
 
 ## Not done / unverified

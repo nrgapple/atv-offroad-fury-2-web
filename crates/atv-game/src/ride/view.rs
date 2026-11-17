@@ -404,10 +404,10 @@ pub struct Backdrop {
 
 impl Backdrop {
     /// Eye height above, and distance behind, the rider (ft).
-    const RISE: f64 = 17.;
-    const BACK: f64 = 40.;
+    const RISE: f64 = 14.5;
+    const BACK: f64 = 34.;
     /// The aim: ahead of the rider, a little above it (ft).
-    const AHEAD: f64 = 34.;
+    const AHEAD: f64 = 30.;
     const AIM: f64 = 3.;
     /// The view widens to this share of the chase's focal length.
     const WIDEN: f64 = 0.84;
