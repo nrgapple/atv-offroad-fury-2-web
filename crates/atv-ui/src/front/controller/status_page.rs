@@ -105,7 +105,7 @@ impl Frontend {
                     lines.push(line("Rider name", self.room_name()));
                     lines
                 },
-                alt: Some("Change Rider Name".into()),
+                alt: Some("Change Name".into()),
                 link: Some(
                     if loaded {
                         "View Profile"

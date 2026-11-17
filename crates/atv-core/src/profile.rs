@@ -584,6 +584,17 @@ impl ProfileBook {
         Ok(self.profiles.len() - 1)
     }
 
+    /// Renames a profile (port: saving the rider name renames the loaded
+    /// profile). Returns the stored name.
+    pub fn rename(&mut self, index: usize, name: &str) -> Result<String, BookError> {
+        if index >= self.profiles.len() {
+            return Err(BookError::Missing);
+        }
+        let name = self.check_name(name, Some(index))?;
+        self.profiles[index].name = name.clone();
+        Ok(name)
+    }
+
     /// Delete Profile. Deleting the loaded profile leaves none loaded.
     pub fn delete(&mut self, index: usize) -> Result<Profile, BookError> {
         if index >= self.profiles.len() {
