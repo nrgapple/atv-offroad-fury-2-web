@@ -2,7 +2,8 @@
 //! pages show it, its numbers, and the popover each chip opens.
 use super::Frontend;
 use crate::front::status_bar::{
-    self as bar, Chip, POPOVER_CLOSE, POPOVER_LINK, POPOVER_PANEL, Popover, StatusBar, Sync,
+    self as bar, Chip, POPOVER_ALT, POPOVER_CLOSE, POPOVER_LINK, POPOVER_PANEL, Popover, StatusBar,
+    Sync,
 };
 use crate::{hud::Viewport, paint::Rect};
 
@@ -88,16 +89,23 @@ impl Frontend {
             Chip::Profile => Popover {
                 chip: Some(chip),
                 title: self.profile_name().unwrap_or("No profile loaded").into(),
-                lines: if loaded {
-                    vec![
-                        line("Races", p.races.to_string()),
-                        line("Wins", p.wins.to_string()),
-                        line("Points earned", bar::grouped(p.earned.max(p.points))),
-                        line("Best stunt", bar::grouped(p.best_stunt)),
-                    ]
-                } else {
-                    vec![line("Progress", "Not being saved".into())]
+                lines: {
+                    let mut lines = if loaded {
+                        vec![
+                            line("Races", p.races.to_string()),
+                            line("Wins", p.wins.to_string()),
+                            line("Points earned", bar::grouped(p.earned.max(p.points))),
+                            line("Best stunt", bar::grouped(p.best_stunt)),
+                        ]
+                    } else {
+                        vec![line("Progress", "Not being saved".into())]
+                    };
+                    // The name other riders see (online rooms, Quick Play,
+                    // Friends), changed from here in one tap.
+                    lines.push(line("Rider name", self.room_name()));
+                    lines
                 },
+                alt: Some("Change Rider Name".into()),
                 link: Some(
                     if loaded {
                         "View Profile"
@@ -109,6 +117,7 @@ impl Frontend {
             },
             Chip::Coins => Popover {
                 chip: Some(chip),
+                alt: None,
                 title: "Profile Points".into(),
                 lines: if loaded {
                     vec![
@@ -148,6 +157,7 @@ impl Frontend {
                 }
                 Popover {
                     chip: Some(chip),
+                    alt: None,
                     title: "Trophies · Normal / Expert".into(),
                     lines,
                     link: Some(
@@ -162,6 +172,7 @@ impl Frontend {
             }
             Chip::Save => Popover {
                 chip: Some(chip),
+                alt: None,
                 title: "Pass Key".into(),
                 lines: vec![
                     line(
@@ -211,6 +222,10 @@ impl Frontend {
         match id {
             POPOVER_CLOSE => self.status_open = None,
             POPOVER_PANEL => {}
+            POPOVER_ALT => {
+                self.status_open = None;
+                self.open_rider_name(view);
+            }
             POPOVER_LINK => {
                 let Some(chip) = self.status_open.take() else {
                     return true;

@@ -2010,6 +2010,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                     | "store-cheats"
                     | "passkey-entry"
                     | "friend-add"
+                    | controller::online_page::RIDER_NAME
                     | "waypoint-course"
             ) {
                 left = left.child(form(m, s));
@@ -2339,7 +2340,9 @@ fn row_value<'a>(s: &Screen, action: &str, label: &'a str) -> (&'a str, Option<(
             };
             (label, Some(value))
         }
-        _ if controller::online_page::PAGES.contains(&s.page.as_str()) => {
+        _ if action == controller::online_page::RIDER_NAME
+            || controller::online_page::PAGES.contains(&s.page.as_str()) =>
+        {
             match label.split_once(": ") {
                 Some((name, value)) => (
                     name,
