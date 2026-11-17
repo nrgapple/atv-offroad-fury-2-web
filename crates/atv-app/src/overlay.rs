@@ -1831,11 +1831,11 @@ impl Overlay {
         let wheel = chat.is_some() && self.chat.open;
         // A top minimap the panel would cover pushes it down (#697's
         // compass keeps the map's footprint).
-        let (left, width) = atv_ui::hud::quickplay::panel_span(&view);
+        let (panel_x, panel_w) = atv_ui::hud::quickplay::panel_span(&view);
         let below = if map_visible
             && map.y < view.height / 2.
-            && map.x < left + width
-            && map.right() > left
+            && map.x < panel_x + panel_w
+            && map.right() > panel_x
         {
             map.bottom() + 8.
         } else {
