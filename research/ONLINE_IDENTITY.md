@@ -45,9 +45,15 @@ and the `rider` field of `atv_core::cloud_save::Save`.
   (`atv_net::offensive_name`), at most 16 characters; a blank or refused name
   shows as "Rider". It is updated at every registration, and Save Name on
   the Rider Name page (a "Rider Name: <name>" row on Multiplayer, Quick Play
-  and Online, and Change Rider Name in the profile chip's popover) sends it
+  and Online, and Change Name in the profile chip's popover) sends it
   through `/multiplayer/players/settings` at once for a registered rider. An
-  unregistered rider sends nothing until registering, which carries it.
+  unregistered rider sends nothing until registering, which carries it. Save
+  Name also renames the loaded profile in the profile's own form (upper case,
+  eight characters), so the status bar shows the same name; a name another
+  profile already uses leaves the profile's name unchanged and says so. A
+  renamed profile reaches the Pass Key save as the old name deleted and the new
+  one added, so another device's later progress on the old name is kept, not
+  lost.
 
 ### Following the Pass Key
 

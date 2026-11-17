@@ -2590,9 +2590,13 @@ impl Frontend {
                 }
                 self.player_name = self.player_name.trim().to_string();
                 self.online_ui.name_before = None;
-                self.save(settings);
                 let name = self.player_name.clone();
+                let renamed = self.rename_profile(&name, settings);
+                self.save(settings);
                 self.back(view);
+                if let Err(e) = renamed {
+                    self.notice = Some(format!("Rider name saved. {}", e.message()));
+                }
                 return Some(Event::Online(online_page::OnlineCommand::Name(name)));
             }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
@@ -5509,7 +5513,7 @@ mod tests {
         assert!(front.status_click(PROFILE, None, &view));
         let pop = front.status_bar().unwrap().open.unwrap();
         assert!(pop.lines.contains(&("Rider name".into(), "Bea".into())));
-        assert_eq!(pop.alt.as_deref(), Some("Change Rider Name"));
+        assert_eq!(pop.alt.as_deref(), Some("Change Name"));
         assert!(front.status_click(POPOVER_ALT, None, &view));
         assert_eq!(front.page, online_page::RIDER_NAME);
         assert!(!front.status_open());

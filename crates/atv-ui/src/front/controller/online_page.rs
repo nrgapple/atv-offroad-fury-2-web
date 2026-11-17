@@ -425,9 +425,7 @@ impl Frontend {
     pub(super) fn online_status(&self) -> Option<String> {
         match self.page.as_str() {
             "friend-add" => Some("8 letters and numbers".into()),
-            RIDER_NAME => {
-                Some("Shown to other riders in online rooms, Quick Play and Friends".into())
-            }
+            RIDER_NAME => Some("Your profile's name, shown to other riders online".into()),
             _ => None,
         }
     }

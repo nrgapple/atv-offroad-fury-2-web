@@ -32,7 +32,7 @@ pub const POPOVER_CLOSE: u32 = 2465;
 pub const POPOVER_PANEL: u32 = 2466;
 /// The gear: Options from any menu page.
 pub const OPTIONS: u32 = 2467;
-/// The popover's second link (the profile chip's Change Rider Name).
+/// The popover's second link (the profile chip's Change Name).
 pub const POPOVER_ALT: u32 = 2468;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

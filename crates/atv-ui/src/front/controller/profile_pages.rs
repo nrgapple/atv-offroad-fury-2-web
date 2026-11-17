@@ -190,6 +190,23 @@ impl Frontend {
         self.profile = self.book.current_profile().cloned().unwrap_or_default();
     }
 
+    /// Saving the rider name renames the loaded profile too, so the status
+    /// bar and online rooms show one name. The profile keeps its own rules
+    /// (upper case, eight characters); the error says why it kept its name.
+    pub(super) fn rename_profile(
+        &mut self,
+        name: &str,
+        settings: &mut Settings,
+    ) -> Result<(), BookError> {
+        let Some(index) = self.book.current else {
+            return Ok(());
+        };
+        let mut book = self.book.clone();
+        book.rename(index, name)?;
+        self.store_book(settings, book);
+        Ok(())
+    }
+
     /// The loaded profile's name, if any.
     pub fn profile_name(&self) -> Option<&str> {
         self.book.current_profile().map(|p| p.name.as_str())
@@ -1110,6 +1127,50 @@ mod tests {
             scale: 1.,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn saving_the_rider_name_renames_the_loaded_profile() {
+        let view = view();
+        let mut settings = Settings::memory();
+        settings.set(crate::settings::PROFILE_KEY, "{\"points\":40}");
+        let mut front = Frontend::new(Vec::new(), &settings, true);
+        let mut book = front.book.clone();
+        book.create("ZED").unwrap();
+        book.load(0).unwrap();
+        front.store_book(&mut settings, book);
+        assert_eq!(front.profile_name(), Some("PLAYER1"));
+        let save = |front: &mut Frontend, settings: &mut Settings, name: &str| {
+            front.run(super::super::online_page::RIDER_NAME, &view, settings);
+            front.set_field("player-name", name);
+            front.run("ridernamesave", &view, settings)
+        };
+        // The profile takes the name in its own form; the points stay.
+        assert!(save(&mut front, &mut settings, "Bea Smith!?").is_some());
+        assert_eq!(front.player_name, "Bea Smith!?");
+        assert_eq!(front.profile_name(), Some("BEA SMIT"));
+        assert_eq!(
+            front.status_bar().unwrap().profile.as_deref(),
+            Some("BEA SMIT")
+        );
+        assert_eq!(front.profile.points, 40);
+        assert_eq!(
+            load_book(&settings)
+                .current_profile()
+                .map(|p| p.name.as_str()),
+            Some("BEA SMIT")
+        );
+        // A name another profile uses still saves the rider name; the
+        // profile keeps its own and says why.
+        assert!(save(&mut front, &mut settings, "zed").is_some());
+        assert_eq!(front.player_name, "zed");
+        assert_eq!(front.profile_name(), Some("BEA SMIT"));
+        assert!(
+            front
+                .notice
+                .as_deref()
+                .is_some_and(|n| n.contains(BookError::Duplicate.message()))
+        );
     }
 
     #[test]
