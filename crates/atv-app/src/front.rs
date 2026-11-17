@@ -2280,7 +2280,6 @@ impl Front {
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
             "modelStatus": self.model_status(),
             "modelYaw": self.previews.iter().map(|p| p.as_ref().map(|p| p.model.yaw)).collect::<Vec<_>>(),
-            "worldStage": self.state.world_stage,
             "lobby": self.state.lobby.as_ref().map(|l| serde_json::json!({
                 "code": l.code, "status": l.status,
             })),
@@ -2339,6 +2338,7 @@ impl Front {
                 .collect::<Vec<_>>()
         );
         out["quickplay"] = self.state.quickplay.into();
+        out["worldStage"] = self.state.world_stage.into();
         out["kinetic"] = kinetic;
         out["online"] = online;
         // Turntable rates and preview images' pixel sizes (they follow the

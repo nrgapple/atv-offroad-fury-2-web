@@ -19,6 +19,12 @@ no shared world.
   Multiplayer → Free Ride would (the saved ATV, rider and name; a
   shared-room claim; whichever venue that room is on in the server's
   rotation, research/FREERIDE_HUB.md). Nothing here assumes Arlington.
+- **While it loads** (issue #728, owner request 2026-11-16): the stage shows
+  the player's own ATV turning on the frontend's showroom turntable, in its
+  chosen paint, exactly as the vehicle preview always does, but without the
+  vehicle's name under it. No loading text, spinner or progress cue. The
+  name is hidden whenever Start in is Free Ride, so it never shows and then
+  goes; the plate keeps its space, so nothing moves at the crossfade.
 - **Crossfade.** When the world is ready it fades in (0.7 s) where the
   stage's silver showed, inside the same curved sweep (landscape) or the
   top stage with its sweeping lower edge (a phone held upright). The
@@ -29,6 +35,24 @@ no shared world.
   stays continuous through the menus; pages whose stage holds real content
   (a course hero, the garage, profile tables, the Daily Event board) keep it
   over the silver.
+- **Backdrop camera** (#728). Under the menus the ride's camera is a
+  higher, wider chase instead of the follow camera (`atv_game::ride::view::
+  Backdrop`): the eye 17 ft above and 40 ft behind the rider, aimed 34 ft
+  ahead of it and 3 ft up (about 10° down, so the horizon, terrain and
+  other riders sit above the rider in the stage), and the lens 16 % wider
+  (focal length × 0.84). It follows the autopilot's rider: the ground
+  position exactly, the rider's height eased (0.45 s) so landings do not
+  bob it, and the heading eased (1.1 s) from the follow camera's so turns
+  do not swing it. Seven samples of the ground between the eye and the
+  rider lift the eye until its sightline to the rider clears the terrain by
+  4 ft (rising over 0.12 s, settling over 0.9 s), and the eye never goes
+  under the ground. A reset that moves the rider over 80 ft jumps the
+  framing with it. The world first shows already framed; Hop in blends back
+  to the follow camera over 1.1 s (smoothstep), and Quit to Main Menu
+  blends to the backdrop the same way, as the stage's off-axis framing
+  (`view_shift`) eases. The same framing serves every aspect ratio: the
+  stage's centre is the view's (`world_centre`), so 1280×720 and a phone
+  held sideways (844×390) both frame the rider in their stage.
 - **Caption.** Where the vehicle's name was: one pill in the status bar's
   chip style (dark, rounded, gold condensed labels, white numbers with a
   shadow), `FREE RIDE · <venue> · <N> RIDING`, the venue from the live room
@@ -57,8 +81,9 @@ no shared world.
 - **Other modes.** Starting any other ride or room (Single Player modes,
   Quick Play, Training, Host/Join, Split Screen) leaves the world first, as
   leaving Free Ride does; back on the menus it loads again behind them.
-- **Fallback.** No world, no caption and no Hop in, so the menus are exactly
-  as before, when the game server has not answered (offline, unreachable),
+- **Fallback.** No world, no caption and no Hop in, the ATV turning on the
+  stage without its name (with Start in: Menu, the name too, as before), when
+  the game server has not answered (offline, unreachable),
   when the claim or the load fails, or after a dropped room (which ends on
   the main menu with its reason). After a failure the menus wait two
   minutes before trying again.
@@ -86,13 +111,22 @@ no shared world.
   HUD would; `home_hop_in` runs the usual ride start (`ride_started`);
   `home_menu` and `home_leave` return or end it. `game_cpu::Pilot` is the
   autopilot on `Riding::pilot`.
+- `Riding::backdrop` (set by `home_ready`, `home_menu` and `home_hop_in`)
+  selects the backdrop camera in `Riding::present_view`, after the chase,
+  sightline and crash views; `Screen::world_stage` hides the stage's
+  vehicle name under Start in: Free Ride. Diagnostics: `home.backdrop`
+  (blend, eye, yaw, pitch, clearance) and `front.worldStage`.
 - Browser tests open with Start in: Menu (`tools/browser/harness.mjs` saves
   `atv-start-in=menu` in every context unless the test saved a choice).
   `tools/test_engine_freeride_menu.mjs` (multiplayer group) covers the boot
   without the loader, the crossfade under the frontend layout, the
-  autopilot, Single Player keeping the world, Hop in and the handover, Pause
-  → Quit to Main Menu, a click on the world, the phone layout, an aborted
-  game server and Start in: Menu.
+  autopilot, the turning ATV while the world loads and offline, the
+  backdrop camera (full share, looking down 0.05 to 0.45 rad, over 6 ft of
+  clearance, yaw under 3.5 rad/s and height under 45 ft/s each frame) at
+  1280×720 and 844×390, the blend back at Hop in, Single Player keeping the
+  world, Hop in and the handover, Pause → Quit to Main Menu, a click on the
+  world, the upright phone layout, an aborted game server and Start in:
+  Menu.
 
 ## Not done / unverified
 
@@ -105,3 +139,8 @@ no shared world.
   world that finished loading on the lost device is dropped and loads
   again).
 - The time until the next venue change is not shown.
+- The backdrop's sightline check samples the ground at seven points: a
+  narrow spike between samples (a tree, a rock) can still hide the rider
+  for a moment. Scenery is not tested against the eye.
+- The backdrop framing was tuned on host screenshots of the venues the
+  local server's rotation picked, not on every venue or a physical phone.
