@@ -3818,7 +3818,7 @@ impl App {
                 .iter()
                 .map(|f| {
                     serde_json::json!({"visible": f.visible, "coverage": f.coverage,
-                    "ndc": f.ndc})
+                    "ndc": f.ndc, "queried": f.queried, "depthCoverage": f.depth_coverage})
                 })
                 .collect::<Vec<_>>()
                 .into();
