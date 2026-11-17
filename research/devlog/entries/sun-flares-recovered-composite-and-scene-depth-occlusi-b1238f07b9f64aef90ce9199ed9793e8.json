@@ -1,0 +1,32 @@
+{
+  "id": "sun-flares-recovered-composite-and-scene-depth-occlusi-b1238f07b9f64aef90ce9199ed9793e8",
+  "timestamp": "2026-11-17T04:27:30.706807+00:00",
+  "recorded_at": "2026-11-17T04:27:30.706807+00:00",
+  "kind": "build",
+  "title": "Sun flares: recovered composite and scene-depth occlusion",
+  "summary": "Both games' sun flares now follow the recovered GS composite path instead of the earlier approximation. The port had drawn ATV Offroad Fury 2 and MX vs. ATV Unleashed flares at half strength, and MX's flare at half size. The flare now draws at the original brightness and size, and trees, scenery and riders hide the sun, not just terrain. Code in PR #734; issue #733; facts in research/SUN_FLARES.md.",
+  "details": [
+    "Recovered from both exact builds (one shared path): the flare art is copied into a 128x128 render target; a square around the sun is z-tested and averaged on the GS into the target's alpha; the target is then drawn additively with As = share x 255 x vertex alpha / 128, which can exceed 1. The port had clamped that to half strength for both games. MX's sprite is twice flareScreenSize wide, so its flare was also half size, and its brightness, previously an approximation from the authored alpha, is now recovered.",
+    "Occlusion now uses the scene depth: 4x4 GPU occlusion queries plus an always-passing sentinel are drawn after every depth-writing draw, and resolved two frames late into the sprite's uniform with no CPU wait. WebGL falls back to terrain rays until the results report.",
+    "Verification: test_engine_sun_flares.mjs passes on host Chromium (WebGL2). ENV02 reads depth 1 and Goblin Gulch depth 1. The Glades, with the sun behind terrain, reads depth 0. At Tipperary a tree canopy over the sun reads depth 0.5 where the terrain rays read 1. Unit tests pass. The screenshots are production before and this change after: MX Goblin Gulch at sunset goes from a small dim flare to the full sunburst, and ATV2 ENV02 gets longer, brighter rays. The after shots lack the minimap because of an older local content copy."
+  ],
+  "limitation": "Host-only verification (Chromium WebGL2), not yet a verified public release. A 4x4 visible/blocked grid replaces the GS's continuous average and lags two frames. Native desktop backends were not run locally. No phone measurement. Saturation tints, MinScale/MaxScale and split screen remain undrawn.",
+  "images": [
+    {
+      "path": "/devlog-images/sun-flares-recovered-composite-and-scene-depth-occlusi-b1238f07b9f64aef90ce9199ed9793e8.png",
+      "caption": "MX Goblin Gulch sunset before (production): a small, dim flare."
+    },
+    {
+      "path": "/devlog-images/sun-flares-recovered-composite-and-scene-depth-occlusi-b1238f07b9f64aef90ce9199ed9793e8-2.png",
+      "caption": "MX Goblin Gulch sunset after: the recovered composite draws the full-size, full-strength sunburst (this capture lacks the minimap because of an older local content copy)."
+    },
+    {
+      "path": "/devlog-images/sun-flares-recovered-composite-and-scene-depth-occlusi-b1238f07b9f64aef90ce9199ed9793e8-3.png",
+      "caption": "ATV2 ENV02 before (production): the flare at half strength."
+    },
+    {
+      "path": "/devlog-images/sun-flares-recovered-composite-and-scene-depth-occlusi-b1238f07b9f64aef90ce9199ed9793e8-4.png",
+      "caption": "ATV2 ENV02 after: brighter, longer rays at the recovered strength (this capture lacks the minimap because of an older local content copy)."
+    }
+  ]
+}
