@@ -315,6 +315,9 @@ pub struct Screen {
     pub medal_strip: Option<([u32; 4], [u32; 5])>,
     /// The live Free Ride world behind the stage, and Hop in.
     pub live: Option<LiveWorld>,
+    /// Game Settings → Start in: Free Ride: the stage's vehicle turns
+    /// without its name while the world loads, and stays so without it.
+    pub world_stage: bool,
 }
 
 /// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
@@ -1275,6 +1278,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             let caption = match s.live.as_ref().filter(|_| fade >= 0.5) {
                 Some(live) => live_caption(m, live).opacity(2. * fade - 1.),
+                // Start in: Free Ride shows the vehicle without its name.
+                None if s.world_stage => plate(m, s).opacity(0.),
                 None => plate(m, s).opacity(1. - 2. * fade.min(0.5)),
             };
             panel = panel.child(slot.opacity(1. - fade)).child(caption);

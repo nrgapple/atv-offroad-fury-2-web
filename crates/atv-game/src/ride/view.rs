@@ -382,6 +382,157 @@ pub fn cinematic(frame: &CameraFrame, aspect: f32) -> View {
     }
 }
 
+/// The live Free Ride main menu's backdrop (research/FREERIDE_MENU.md; a
+/// port addition): a higher, wider chase that keeps the horizon, terrain
+/// and the room's riders in the menus' stage while following the
+/// autopilot's rider. The subject's height and the heading ease (no snap on
+/// landings or turns), the eye rises over terrain between it and the rider,
+/// and the follow camera blends in and out of it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Backdrop {
+    /// The backdrop's share of the view (0: the chase view); None until
+    /// first updated, when an active backdrop starts at full share.
+    blend: Option<f64>,
+    /// The blend's linear progress (eased by smoothstep).
+    progress: f64,
+    /// The followed rider (its height eased) and heading (yaw, radians).
+    focus: [f64; 3],
+    heading: f64,
+    /// The eye's lift over the framing for terrain (eased).
+    lift: f64,
+}
+
+impl Backdrop {
+    /// Eye height above, and distance behind, the rider (ft).
+    const RISE: f64 = 14.5;
+    const BACK: f64 = 34.;
+    /// The aim: ahead of the rider, a little above it (ft).
+    const AHEAD: f64 = 30.;
+    const AIM: f64 = 3.;
+    /// The view widens to this share of the chase's focal length.
+    const WIDEN: f64 = 0.84;
+    /// Time constants (s): the subject's height, the heading, the lift's
+    /// rise and fall.
+    const HEIGHT_EASE: f64 = 0.45;
+    const HEADING_EASE: f64 = 1.1;
+    const LIFT_RISE: f64 = 0.12;
+    const LIFT_FALL: f64 = 0.9;
+    /// Blending between the chase and the backdrop takes this long (s).
+    const BLEND: f64 = 1.1;
+    /// A rider that moves this far in a frame was reset: the framing jumps.
+    const JUMP: f64 = 80.;
+    /// The eye keeps this clearance over terrain (ft), along its sightline
+    /// to the rider too.
+    const CLEAR: f64 = 4.;
+
+    /// The view while the menus show (`active`), the chase view `chase`
+    /// otherwise, blended between them. `origin` is the presented rider;
+    /// `height` the visible ground.
+    pub fn update(
+        &mut self,
+        active: bool,
+        chase: View,
+        origin: [f32; 3],
+        dt: f32,
+        height: &dyn Fn(f32, f32) -> f32,
+    ) -> View {
+        let dt = f64::from(dt).clamp(0., 0.25);
+        let origin = origin.map(f64::from);
+        let ease = |tau: f64| 1. - (-dt / tau).exp_d();
+        let fresh = self.blend.is_none();
+        let reset = (origin[0] - self.focus[0]).hypot_d(origin[2] - self.focus[2]) > Self::JUMP
+            || !self.focus.iter().all(|v| v.is_finite());
+        if fresh && !active {
+            return chase;
+        }
+        if fresh || reset {
+            self.focus = origin;
+            self.heading = f64::from(chase.yaw);
+            self.lift = 0.;
+        }
+        if fresh {
+            self.blend = Some(1.);
+            self.progress = 1.;
+        }
+        // The rider's ground position exactly; its height and the heading ease.
+        self.focus[0] = origin[0];
+        self.focus[2] = origin[2];
+        self.focus[1] += (origin[1] - self.focus[1]) * ease(Self::HEIGHT_EASE);
+        let turn = wrap(f64::from(chase.yaw) - self.heading);
+        self.heading = wrap(self.heading + turn * ease(Self::HEADING_EASE));
+        self.progress = (self.progress + if active { dt } else { -dt } / Self::BLEND).clamp(0., 1.);
+        let blend = self.progress * self.progress * (3. - 2. * self.progress);
+        self.blend = Some(blend);
+        if blend <= 0. {
+            return chase;
+        }
+        let (sx, cz) = self.heading.sin_cos_d();
+        let ground = |x: f64, z: f64| f64::from(height(x as f32, z as f32));
+        let focus = self.focus;
+        let mut eye = [
+            focus[0] - sx * Self::BACK,
+            focus[1] + Self::RISE,
+            focus[2] - cz * Self::BACK,
+        ];
+        // The eye rises until its sightline to the rider clears the ground.
+        let mut need: f64 = 0.;
+        for t in [0.15, 0.25, 0.35, 0.5, 0.65, 0.8, 1.] {
+            let (x, z) = (
+                focus[0] - sx * Self::BACK * t,
+                focus[2] - cz * Self::BACK * t,
+            );
+            let g = ground(x, z);
+            if g.is_finite() {
+                let floor = focus[1] + Self::AIM + (g + Self::CLEAR - focus[1] - Self::AIM) / t;
+                need = need.max(floor - eye[1]);
+            }
+        }
+        let tau = if need > self.lift {
+            Self::LIFT_RISE
+        } else {
+            Self::LIFT_FALL
+        };
+        self.lift += (need - self.lift) * ease(tau);
+        eye[1] += self.lift;
+        let aim = [
+            focus[0] + sx * Self::AHEAD,
+            focus[1] + Self::AIM,
+            focus[2] + cz * Self::AHEAD,
+        ];
+        let look: [f64; 3] = std::array::from_fn(|i| aim[i] - eye[i]);
+        let pitch = look[1].atan2_d(look[0].hypot_d(look[2]));
+        let mix = |a: f64, b: f64| a + (b - a) * blend;
+        let mut position: [f64; 3] =
+            std::array::from_fn(|i| mix(f64::from(chase.position[i]), eye[i]));
+        // Never under the ground, whatever the blend passes over.
+        let floor = ground(position[0], position[2]) + 2.;
+        if floor.is_finite() && position[1] < floor {
+            position[1] = floor;
+        }
+        let yaw = f64::from(chase.yaw) + wrap(self.heading - f64::from(chase.yaw)) * blend;
+        View {
+            position: position.map(|v| v as f32),
+            yaw: yaw as f32,
+            pitch: mix(f64::from(chase.pitch), pitch) as f32,
+            focal_length: mix(
+                f64::from(chase.focal_length),
+                f64::from(chase.focal_length) * Self::WIDEN,
+            ) as f32,
+        }
+    }
+
+    /// The backdrop's share of the view (tests, diagnostics).
+    pub fn blend(&self) -> f64 {
+        self.blend.unwrap_or(0.)
+    }
+}
+
+/// An angle in -π..π.
+fn wrap(angle: f64) -> f64 {
+    use std::f64::consts::{PI, TAU};
+    (angle + PI).rem_euclid(TAU) - PI
+}
+
 /// Authored speed presentation's FOV kick (web/speed-rush.js): above 40 MPH
 /// the view widens by up to about six degrees at Normal.
 #[derive(Clone, Copy, Debug)]
@@ -462,6 +613,80 @@ pub fn fov_focal(focal: f32, percent: u8) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_backdrop_rises_eases_and_clears_terrain() {
+        let chase = |x: f32, yaw: f32| View {
+            position: [x, 4., -12.],
+            yaw,
+            pitch: -0.1,
+            focal_length: 1.45,
+        };
+        let flat = |_: f32, _: f32| 0.;
+        let mut backdrop = Backdrop::default();
+        // An inactive backdrop leaves the chase alone.
+        assert_eq!(
+            backdrop.update(false, chase(0., 0.), [0.; 3], 1. / 60., &flat),
+            chase(0., 0.)
+        );
+        // First shown under the menus it frames at once: high, behind,
+        // looking down a little, wider.
+        let view = backdrop.update(true, chase(0., 0.), [0., 6., 0.], 1. / 60., &flat);
+        assert!(
+            view.position[1] > 14. && view.position[2] < -30.,
+            "{view:?}"
+        );
+        assert!(
+            view.pitch < -0.1 && view.pitch > -0.35,
+            "horizon in view: {view:?}"
+        );
+        assert!(view.focal_length < 1.45);
+        // A sharp turn of the chase and a landing ease in: no snap.
+        let mut last = view;
+        for frame in 0..120 {
+            let landing = if frame < 2 { 6. } else { 0. };
+            let view = backdrop.update(true, chase(0., 1.2), [0., landing, 0.], 1. / 60., &flat);
+            assert!(
+                (view.yaw - last.yaw).abs() < 0.04,
+                "frame {frame}: {view:?}"
+            );
+            assert!(
+                (view.position[1] - last.position[1]).abs() < 0.4,
+                "frame {frame}"
+            );
+            last = view;
+        }
+        // A ridge between the eye and the rider lifts the eye over it.
+        let ridge = |_: f32, z: f32| 26. * (1. - ((z + 25.) / 12.).powi(2)).max(0.);
+        let mut backdrop = Backdrop::default();
+        let mut view = chase(0., 0.);
+        for _ in 0..120 {
+            view = backdrop.update(true, chase(0., 0.), [0.; 3], 1. / 60., &ridge);
+        }
+        let eye = view.position;
+        for t in [0.35f32, 0.5, 0.65, 0.8] {
+            let (y, z) = (3. + (eye[1] - 3.) * t, eye[2] * t);
+            assert!(
+                y > ridge(0., z),
+                "sightline clears the ridge at {t}: {eye:?}"
+            );
+        }
+        // Hop in: the chase comes back over the blend, then exactly.
+        let mut previous = view;
+        for _ in 0..90 {
+            let view = backdrop.update(false, chase(0., 0.), [0.; 3], 1. / 60., &ridge);
+            assert!(
+                (view.position[1] - previous.position[1]).abs() < 2.,
+                "{view:?}"
+            );
+            previous = view;
+        }
+        assert_eq!(
+            backdrop.update(false, chase(0., 0.), [0.; 3], 1. / 60., &ridge),
+            chase(0., 0.)
+        );
+        assert_eq!(backdrop.blend(), 0.);
+    }
 
     #[test]
     fn field_of_view_scales_the_angle_and_leaves_the_original_alone() {
