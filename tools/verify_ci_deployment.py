@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from urllib.request import Request, urlopen
 
+from devlog import without_screenshots
 from package_release import validate_release
 
 
@@ -41,10 +42,7 @@ def verify(base, release, commit):
     body, mime = get('devlog.json')
     if mime != 'application/json':
         raise ValueError('public dev log has incorrect MIME type')
-    log = json.loads(body)
-    for entry in log['entries']:
-        entry.pop('image', None)
-        entry.pop('caption', None)
+    log = without_screenshots(json.loads(body))
     if log != json.loads((release / 'static/devlog.json').read_text()):
         raise ValueError('public dev-log text differs from checked artifact')
     return {'url': base, 'commit': commit, 'verified_static_files': len(assets),
