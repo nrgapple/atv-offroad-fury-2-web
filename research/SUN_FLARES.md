@@ -46,8 +46,8 @@ Both games share one engine path: ATV2 001b8150/0020e3a0/002cf8c0 and
     centred on the sun, vertex alpha `max(FlareMaxAlpha, 80) >> 2`.
   - MX (001dc0c0): from the sun minus to plus `flareScreenSize`, twice that
     wide. Vertex RGB is `FlareRGBA` and vertex alpha is `flareAlpha` (times
-    the frustum test). The fixed `0x5a` alpha path is disabled
-    (DAT_00390690 = 1).
+    the frustum test). A build flag selects the source alpha over a fixed
+    `0x5a`, and the shipped build sets it.
 - Each sun strength, `1 - distance from the screen centre / 400`, feeds
   nothing in either sprite path.
 
