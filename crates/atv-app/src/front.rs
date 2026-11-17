@@ -2280,6 +2280,7 @@ impl Front {
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
             "modelStatus": self.model_status(),
             "modelYaw": self.previews.iter().map(|p| p.as_ref().map(|p| p.model.yaw)).collect::<Vec<_>>(),
+            "worldStage": self.state.world_stage,
             "lobby": self.state.lobby.as_ref().map(|l| serde_json::json!({
                 "code": l.code, "status": l.status,
             })),

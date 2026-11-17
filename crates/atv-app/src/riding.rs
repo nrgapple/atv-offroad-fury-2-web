@@ -126,6 +126,10 @@ pub struct Riding {
     /// that is full lock; `None` off.
     pub tilt_lock: Option<f32>,
     sightline: atv_game::ride::view::UphillSightline,
+    /// The live Free Ride menus show over this ride (home.rs): the camera
+    /// takes the backdrop's wider, higher framing.
+    pub backdrop: bool,
+    backdrop_view: atv_game::ride::view::Backdrop,
     /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
     /// with crashPresentation; Original keeps the recovered wreck camera.
     pub crash_camera_tight: bool,
@@ -271,6 +275,8 @@ impl Riding {
             fov_percent: 100,
             tilt_lock: None,
             sightline: Default::default(),
+            backdrop: false,
+            backdrop_view: Default::default(),
             crash_camera_tight: true,
             crash_bounds: None,
             impacts: Default::default(),
@@ -919,6 +925,10 @@ impl Riding {
             Some(subjects) => atv_game::ride::view::crash(view, aspect, &subjects, &height),
             None => view,
         };
+        // The menus' backdrop (research/FREERIDE_MENU.md) eases in and out.
+        let view = self
+            .backdrop_view
+            .update(self.backdrop, view, actor.origin, dt, &height);
         let View {
             position,
             yaw,
@@ -1063,6 +1073,11 @@ impl Riding {
             }
         }
         Ok((camera, focal, pose))
+    }
+
+    /// The menus' backdrop camera's share of the view (diagnostics).
+    pub fn backdrop_blend(&self) -> f64 {
+        self.backdrop_view.blend()
     }
 
     /// Instant replay: the fine terrain patch follows a replayed rider

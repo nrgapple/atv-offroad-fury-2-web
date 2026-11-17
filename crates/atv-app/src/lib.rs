@@ -3712,6 +3712,16 @@ impl App {
             }
             state["home"]["piloting"] =
                 (riding.pilot.is_some() && riding.paused && riding.menu_open).into();
+            // The backdrop camera's share, eye, pitch and clearance over the
+            // ground under it (tools/test_engine_freeride_menu.mjs).
+            let c = ready.camera;
+            state["home"]["backdrop"] = serde_json::json!({
+                "blend": riding.backdrop_blend(),
+                "eye": [c.x, c.y, c.z],
+                "yaw": c.yaw,
+                "pitch": c.pitch,
+                "clearance": c.y - ground(&ready.venue, c.x, c.z),
+            });
             state["shadows"] = serde_json::json!({
                 "contact": self.meter.shadows.0,
                 "map": self.meter.shadows.1,
@@ -9827,6 +9837,7 @@ impl App {
         if let Some(riding) = &mut ready.riding {
             riding.paused = true;
             riding.menu_open = true;
+            riding.backdrop = true;
             riding.clear_input();
             riding.sync_sound();
         }
@@ -9864,6 +9875,7 @@ impl App {
         if let Some(riding) = &mut ready.riding {
             riding.paused = false;
             riding.menu_open = false;
+            riding.backdrop = false;
             riding.clear_input();
             riding.sync_sound();
         }
@@ -9895,6 +9907,7 @@ impl App {
             }
             riding.paused = true;
             riding.menu_open = true;
+            riding.backdrop = true;
             riding.clear_input();
             riding.sync_sound();
         }
@@ -10135,6 +10148,7 @@ impl App {
             },
         });
         let view = f.view;
+        f.state.world_stage = !atv_ui::menu::prefs::start_menu(&f.settings);
         f.state.set_live(shown, &view);
         if live {
             // Laid out here; drawn over the world's scene in its frame.

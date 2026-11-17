@@ -496,6 +496,9 @@ pub struct Frontend {
     /// The live Free Ride world behind the menus and Hop in (set by the
     /// host; research/FREERIDE_MENU.md).
     pub live: Option<super::LiveWorld>,
+    /// Start in: Free Ride (set by the host): the stage's vehicle shows
+    /// without its name (research/FREERIDE_MENU.md).
+    pub world_stage: bool,
     /// The Host/Join forms (frontend.js playerName, createCode, roomCode).
     pub player_name: String,
     pub create_code: String,
@@ -705,6 +708,7 @@ impl Frontend {
             freeride_map: None,
             quickplay: false,
             live: None,
+            world_stage: false,
             player_name: String::new(),
             create_code: String::new(),
             room_code: String::new(),
@@ -3499,6 +3503,7 @@ impl Frontend {
             medal_strip: (self.page == "profile-overview")
                 .then(|| (self.medals.counts(), self.medals.badge_counts())),
             live: self.live.clone(),
+            world_stage: self.world_stage,
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
             } else if self.vehicle_sheet && self.page == "garage" {

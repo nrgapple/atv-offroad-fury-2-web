@@ -9,12 +9,19 @@
 //   3. Hop in hands the same ride to the player where it stands and the ride's HUD
 //      takes over; Pause → Quit to Main Menu brings the menus back over the world,
 //      the autopilot riding again; a click on the world hops in.
-//   4. A phone held upright: the world in the top stage, Hop in bottom right.
+//   4. A phone held upright, and one held sideways: the world in the stage, Hop in
+//      bottom right.
 //   5. With the game server unreachable, or Game Settings → Start in: Menu, the
 //      menus show as before with no world and no Hop in.
+//   While the world loads (and offline) the stage shows the player's ATV turning
+//   on its turntable without its name; it crossfades to the world. Under the
+//   menus the backdrop camera frames the rider higher and wider (horizon in
+//   view, clear of the ground) and moves without snapping; Hop in blends back to
+//   the chase camera.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_menu.mjs
-// ATV_SCREENSHOTS=dir saves freeride-menu-desktop.png, freeride-menu-loading.png
-// and freeride-menu-phone.png.
+// ATV_SCREENSHOTS=dir saves freeride-menu-desktop.png, freeride-menu-loading.png,
+// freeride-menu-phone.png, freeride-menu-phone-loading.png,
+// freeride-menu-landscape.png and freeride-menu-landscape-loading.png.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
@@ -24,6 +31,7 @@ const report = {};
 const BACK = 2401;
 const HOP_IN = 2418;
 const WORLD = 2419;
+const MODEL_QUAD = 2409;
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const wait = (page, predicate, arg, timeout = 60000) => page.waitForFunction(predicate, arg, { timeout });
 // Predicates are functions: the page's CSP refuses string evaluation.
@@ -102,6 +110,68 @@ async function setup(page, startIn) {
 const pages = page => page.evaluate(() => [...window.__pages]);
 const origin = page => page.evaluate(() => JSON.parse(window.furyMultiplayer ?? 'null')?.origin);
 const flat = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
+// While the world loads: the player's ATV turns on the stage without its name.
+async function turntable(page, label) {
+  await wait(page, () => {
+    const ui = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+    return ui.home?.loading && ui.front?.models?.[0];
+  });
+  const before = (await read(page)).front;
+  await nextFrames(page, 20);
+  const ui = await read(page);
+  if (ui.home.loading) {
+    assert.ok(ui.front.worldStage, `${label}: the ATV without its name`);
+    assert.ok(ui.front.hits.some(h => h.id === MODEL_QUAD), `${label}: the ATV on the stage`);
+    assert.notEqual(ui.front.modelYaw[0], before.modelYaw[0], `${label}: the turntable turns`);
+  }
+  return { yaw: [before.modelYaw[0], ui.front.modelYaw[0]], loading: ui.home.loading };
+}
+// The camera's eye and yaw sampled every frame for `ms` (in the page): the
+// fastest yaw turn (rad/s) and eye climb or drop (ft/s) while the backdrop
+// has a share, and the lowest clearance over the ground under it.
+const sampleCamera = (page, ms) =>
+  page.evaluate(
+    ms =>
+      new Promise(done => {
+        const out = { yawRate: 0, rise: 0, clearance: Infinity, blend: [], pitch: [] };
+        let last = null;
+        const end = performance.now() + ms;
+        const step = now => {
+          try {
+            const ui = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+            const b = ui.home?.backdrop;
+            const yaw = b?.yaw;
+            if (b && yaw !== undefined) {
+              // Only while the backdrop has a share (the chase is the original's).
+              if (last && now > last.now && (b.blend > 0 || last.blend > 0)) {
+                const dt = (now - last.now) / 1000;
+                let turn = yaw - last.yaw;
+                turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+                out.yawRate = Math.max(out.yawRate, Math.abs(turn) / Math.max(dt, 1 / 60));
+                out.rise = Math.max(out.rise, Math.abs(b.eye[1] - last.y) / Math.max(dt, 1 / 60));
+              }
+              out.clearance = Math.min(out.clearance, b.clearance);
+              out.blend.push(b.blend);
+              out.pitch.push(b.pitch);
+              last = { now, yaw, y: b.eye[1], blend: b.blend };
+            }
+          } catch {}
+          if (now < end) requestAnimationFrame(step);
+          else done(out);
+        };
+        requestAnimationFrame(step);
+      }),
+    ms
+  );
+// The backdrop under the menus: full share, the horizon in view (looking down
+// a little), clear of the ground, no snaps.
+function assertBackdrop(camera, label) {
+  assert.ok(camera.blend.length > 10 && camera.blend.every(b => b === 1), `${label}: backdrop framing`);
+  assert.ok(camera.pitch.every(p => p < -0.05 && p > -0.45), `${label}: horizon in view: ${camera.pitch.at(-1)}`);
+  assert.ok(camera.clearance > 6, `${label}: clear of the ground: ${camera.clearance} ft`);
+  assert.ok(camera.yawRate < 3.5, `${label}: no yaw snap: ${camera.yawRate} rad/s`);
+  assert.ok(camera.rise < 45, `${label}: no height snap: ${camera.rise} ft/s`);
+}
 
 const browser = await launch();
 const errors = [];
@@ -112,7 +182,8 @@ try {
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').home?.loading);
   let ui = await read(page);
   assert.ok(ui.front.choices.includes('hopin'), 'Hop in while the world loads');
-  if (shots) await page.screenshot({ path: `${shots}/freeride-menu-loading.png` });
+  report.loading = await turntable(page, 'desktop');
+  if (shots && (await read(page)).home.loading) await page.screenshot({ path: `${shots}/freeride-menu-loading.png` });
   await live(page);
   ui = await read(page);
   report.boot = { pages: await pages(page), home: ui.home };
@@ -138,6 +209,9 @@ try {
   assert.equal(ui.home.piloting, true, 'the autopilot rides under the menus');
   report.piloted = flat(start, await origin(page));
   assert.ok(report.piloted > 10, `autopilot moved the rider: ${report.piloted} ft`);
+  const camera = await sampleCamera(page, 4000);
+  assertBackdrop(camera, 'desktop');
+  report.backdrop = { yawRate: camera.yawRate, rise: camera.rise, clearance: camera.clearance, pitch: camera.pitch.at(-1) };
   if (shots) await page.screenshot({ path: `${shots}/freeride-menu-desktop.png` });
 
   // 2. Another stage page keeps the world; Back returns.
@@ -157,6 +231,12 @@ try {
   // 3. Hop in: the same ride, the player's, with the ride's HUD.
   start = await origin(page);
   await page.mouse.click(hop.x, hop.y);
+  // The chase camera blends back in, without a snap.
+  const back2chase = await sampleCamera(page, 1800);
+  report.hopCamera = { rise: back2chase.rise, yawRate: back2chase.yawRate, blend: back2chase.blend.at(-1) };
+  assert.equal(back2chase.blend.at(-1), 0, 'the chase camera after Hop in');
+  assert.ok(back2chase.blend.some(b => b > 0 && b < 1), 'Hop in blends the camera');
+  assert.ok(back2chase.rise < 45 && back2chase.yawRate < 3.5, `Hop in camera without a snap: ${JSON.stringify(report.hopCamera)}`);
   await riding(page);
   const before = await origin(page);
   report.handover = flat(start, before);
@@ -214,6 +294,8 @@ try {
     errors
   );
   await setup(phone, 'freeride');
+  report.phoneLoading = await turntable(phone, 'phone');
+  if (shots && (await read(phone)).home.loading) await phone.screenshot({ path: `${shots}/freeride-menu-phone-loading.png` });
   await live(phone);
   assert.ok(!(await pages(phone)).includes('loading'), 'no course loader on the phone');
   const tap = await frontHit(phone, HOP_IN);
@@ -227,6 +309,26 @@ try {
   await phone.touchscreen.tap(tap.x, tap.y);
   await riding(phone);
   await phone.close();
+  // A phone held sideways.
+  const side = await newPage(
+    browser,
+    { viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+    errors
+  );
+  await setup(side, 'freeride');
+  report.landscapeLoading = await turntable(side, 'landscape');
+  if (shots && (await read(side)).home.loading) await side.screenshot({ path: `${shots}/freeride-menu-landscape-loading.png` });
+  await live(side);
+  const sideWorld = await frontHit(side, WORLD);
+  const sideHop = await frontHit(side, HOP_IN);
+  assert.ok(sideWorld.rect.x > 844 * 0.35, `the world on the sideways stage: ${JSON.stringify(sideWorld.rect)}`);
+  assert.ok(sideHop.rect.height >= 48, 'Hop in touch target sideways');
+  await nextFrames(side, 120);
+  const sideCamera = await sampleCamera(side, 3000);
+  assertBackdrop(sideCamera, 'landscape');
+  report.landscape = { world: sideWorld.rect, pitch: sideCamera.pitch.at(-1), clearance: sideCamera.clearance };
+  if (shots) await side.screenshot({ path: `${shots}/freeride-menu-landscape.png` });
+  await side.close();
 
   // 5. Unreachable game server: the menus as before.
   // Packaged builds run a service worker, which page.route cannot see.
@@ -239,6 +341,11 @@ try {
   assert.equal(ui.front?.page, 'main');
   assert.ok(!ui.home.loading && !ui.home.world, 'no world offline');
   assert.ok(!ui.front.choices.includes('hopin'), 'no Hop in offline');
+  // The fallback: the ATV keeps turning on the stage, without its name.
+  assert.ok(ui.front.worldStage && ui.front.models[0], 'offline: the ATV on the stage');
+  await nextFrames(offline, 20);
+  assert.notEqual((await read(offline)).front.modelYaw[0], ui.front.modelYaw[0], 'offline: the turntable turns');
+  if (shots) await offline.screenshot({ path: `${shots}/freeride-menu-offline.png` });
   report.offline = ui.home;
   await offline.close();
   // Start in: Menu (the harness default for other tests).
@@ -249,6 +356,7 @@ try {
   ui = await read(menu);
   assert.equal(ui.front?.page, 'main');
   assert.ok(!ui.home.loading && !ui.home.world, 'Start in: Menu loads no world');
+  assert.equal(ui.front.worldStage, false, 'Start in: Menu keeps the vehicle name');
   report.startMenu = ui.home;
   await menu.close();
 
