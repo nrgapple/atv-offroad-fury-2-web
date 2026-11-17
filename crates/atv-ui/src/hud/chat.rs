@@ -292,10 +292,12 @@ pub const WHEEL_SPACE: f32 = 2. * (MIN_RING + 30.);
 pub fn wheel_geometry(view: &Viewport, top: f32) -> (f32, f32, f32) {
     let top = top.clamp(0., (view.height - WHEEL_SPACE).max(0.));
     let room = view.height - top;
-    let cx = view.width / 2.;
+    // Centred between the side insets (a notch, a side status bar).
+    let (left, span) = view.centred(view.width, 0.);
+    let cx = left + span / 2.;
     let cy = top + room / 2.;
     let r = 130f32
-        .min(view.width / 2. - 50.)
+        .min(span / 2. - 50.)
         .min(room / 2. - 30.)
         .max(MIN_RING);
     (cx, cy, r)

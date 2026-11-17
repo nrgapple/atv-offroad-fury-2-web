@@ -151,7 +151,7 @@ fn kbd(text: &str) -> Inline {
 
 /// The card, or None while hidden.
 pub fn element(view: &Viewport, key_names: &dyn Fn(&str) -> Vec<String>) -> El {
-    let width = 640f32.min(view.width - 28.);
+    let (left, width) = view.centred(640., 14.);
     let strut = (body(13., 400), 16.9);
     let heading = TextStyle::new(Font::display(20., 800, true), Color::hex("#f6f6f6"))
         .spacing(0.3)
@@ -309,7 +309,7 @@ pub fn element(view: &Viewport, key_names: &dyn Fn(&str) -> Vec<String>) -> El {
     El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
-            left: LengthPercentageAuto::length((view.width - width) / 2.),
+            left: LengthPercentageAuto::length(left),
             bottom: LengthPercentageAuto::length(18f32.max(view.safe[2] + 12.)),
             top: LengthPercentageAuto::auto(),
             right: LengthPercentageAuto::auto(),

@@ -2274,7 +2274,23 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
     let (name, value) = row_value(s, action, label);
     let el = el.child(bullet_slot(selected));
     let Some((value, dim)) = value else {
-        return el.child(text(name, text_style, m.row_font * 1.1));
+        // A long label (a championship's progress on a phone, or beside a
+        // side status bar's inset) ends in "…" inside its row.
+        return el.child(
+            El::new(Style {
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Ellipsis {
+                text: name.to_string(),
+                style: text_style,
+                line_height: m.row_font * 1.1,
+            }),
+        );
     };
     // A value row without arrows: the name, then its value standing right
     // in the stepper's gold value face (Free Ride's map and riders, Quick

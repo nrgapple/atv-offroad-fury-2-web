@@ -164,8 +164,7 @@ pub fn element(
     top: f32,
     photo: &dyn Fn(&str) -> Option<classic::Photo>,
 ) -> El {
-    let width = 340f32.min(view.width - 24.);
-    let left = (view.width - width) / 2.;
+    let (left, width) = view.centred(340., 12.);
     let mut root = El::new(Style {
         size: Size {
             width: length(view.width),
@@ -220,7 +219,7 @@ pub fn element(
     if let Some((options, clock)) = &state.vote {
         // The vote takes the room the screen has (up to 520 px), so each
         // venue's photo and whole name read.
-        let vote_w = 520f32.min(view.width - 24.);
+        let (vote_x, vote_w) = view.centred(520., 12.);
         let per = options.len().clamp(1, 3);
         let card_w = classic::card_width(vote_w, per);
         let cards = options
@@ -246,7 +245,7 @@ pub fn element(
             vote_w,
             vec![classic::grid(cards)],
         );
-        root = root.child(El::new(absolute((view.width - vote_w) / 2., y, vote_w)).child(sheet));
+        root = root.child(El::new(absolute(vote_x, y, vote_w)).child(sheet));
         y += 100. + card_w * 0.67 + 56.;
     }
     if let Some(toast) = &state.toast {

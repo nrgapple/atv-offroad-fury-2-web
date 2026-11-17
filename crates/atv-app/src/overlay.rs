@@ -1059,6 +1059,19 @@ impl Overlay {
         };
         // Player 1's view size (its own space).
         let [hw, hh] = frames[0].size();
+        // One view's instruments keep clear of the side insets: a landscape
+        // notch, or a side status bar in portrait (the iPhone Duo's time,
+        // battery and signal column). Split views have their own frames.
+        let instruments = if frames.len() == 1 {
+            let [left, right] = [view.safe[3], view.safe[1]];
+            atv_ui::Frame::new(
+                Rect::new(left, 0., (view.width - left - right).max(1.), view.height),
+                0,
+            )
+        } else {
+            frames[0]
+        };
+        let [iw, ih] = instruments.size();
         // The lines between the views (split.rs DIVIDER, 2 CSS px).
         let (cw, ch) = (view.width / columns as f32, view.height / rows as f32);
         if columns > 1 {
@@ -1191,8 +1204,8 @@ impl Overlay {
                 None => !self.minimap.settings.enabled || second.is_some(),
             };
             let mut items = DisplayList::default();
-            meter.paint_speed(&mut self.fonts, &mut items, &h.hud, speed, hw, hh);
-            self.list.items.extend(place(items, frames[0]));
+            meter.paint_speed(&mut self.fonts, &mut items, &h.hud, speed, iw, ih);
+            self.list.items.extend(place(items, instruments));
         }
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
@@ -1434,39 +1447,45 @@ impl Overlay {
                 let top_inset = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                     hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
                 });
-                self.lap_history = meter.paint_race(
-                    &mut self.fonts,
-                    &mut items,
-                    &RaceView {
-                        frame,
-                        score,
-                        origin,
-                        top_inset,
-                        settings: &self.race_overlays,
-                    },
-                    hw,
-                    hh,
-                );
+                self.lap_history = meter
+                    .paint_race(
+                        &mut self.fonts,
+                        &mut items,
+                        &RaceView {
+                            frame,
+                            score,
+                            origin,
+                            top_inset,
+                            settings: &self.race_overlays,
+                        },
+                        iw,
+                        ih,
+                    )
+                    .map(|mut b| {
+                        // Reported in page coordinates.
+                        b.rect.x += instruments.rect.x;
+                        b
+                    });
                 if let Some(lights) = frame.lights {
-                    meter.paint_lamps(&mut items, lights, hw, hh);
+                    meter.paint_lamps(&mut items, lights, iw, ih);
                 }
             }
             self.compass_icons = None;
             if race.is_none()
                 && let Some(compass) = h.compass.as_ref().filter(|_| meter.has_compass())
             {
-                meter.paint_compass(&mut items, compass, hw, hh);
+                meter.paint_compass(&mut items, compass, iw, ih);
                 self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
             if !race_aside && (race.is_none() || self.race_overlays.shown("info")) {
-                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
+                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, iw, ih);
             }
             if race_aside {
                 self.lap_history = None;
             }
             self.list
                 .items
-                .splice(hud_at..hud_at, place(items, frames[0]));
+                .splice(hud_at..hud_at, place(items, instruments));
             // The other players' instruments, painted for their views and
             // placed there.
             for (index, second) in others.iter().enumerate() {
@@ -1812,11 +1831,11 @@ impl Overlay {
         let wheel = chat.is_some() && self.chat.open;
         // A top minimap the panel would cover pushes it down (#697's
         // compass keeps the map's footprint).
-        let half = atv_ui::hud::quickplay::panel_width(&view) / 2.;
+        let (left, width) = atv_ui::hud::quickplay::panel_span(&view);
         let below = if map_visible
             && map.y < view.height / 2.
-            && map.x < view.width / 2. + half
-            && map.right() > view.width / 2. - half
+            && map.x < left + width
+            && map.right() > left
         {
             map.bottom() + 8.
         } else {

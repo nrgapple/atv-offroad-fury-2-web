@@ -61,12 +61,12 @@ fn line(value: String, size: f32, weight: u16, color: &str) -> El {
 
 /// The panel, laid out over the whole view (`top` clears the toolbar).
 pub fn element(view: &Viewport, state: &View, top: f32) -> El {
-    let width = 300f32.min(view.width - 24.);
+    let (left, width) = view.centred(300., 12.);
     let low = state.time_left <= 10.;
     let mut panel = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
-            left: LengthPercentageAuto::length((view.width - width) / 2.),
+            left: LengthPercentageAuto::length(left),
             top: LengthPercentageAuto::length(top),
             right: LengthPercentageAuto::auto(),
             bottom: LengthPercentageAuto::auto(),
