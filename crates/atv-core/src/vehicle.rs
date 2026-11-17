@@ -270,6 +270,9 @@ pub struct Vehicle {
     ///translation and impact delta remain until the next first integration.
     pending_contact_corrections: ContactCorrections,
     wreck_physics: Option<WreckPhysics>,
+    /// `001e8690`'s vertical impact limit scale for the ride's track kind
+    /// ([`crate::wreck::TrackKind`]).
+    vertical_limit_scale: f32,
     normal_contact: ContactConfig,
     wreck: crate::wreck::State,
     boundary_config: Option<crate::boundary_launch::Config>,
@@ -500,6 +503,7 @@ impl Vehicle {
             crash_impact_point: [0.; 3],
             pending_contact_corrections: ContactCorrections::default(),
             wreck_physics: None,
+            vertical_limit_scale: 1.0,
             normal_contact: ContactConfig::from_physics(data)?,
             wreck: crate::wreck::State::default(),
             boundary_config: None,
@@ -618,6 +622,11 @@ impl Vehicle {
             ],
         });
         Ok(())
+    }
+    /// The ride's track kind: Enduro and Freestyle scale the vertical
+    /// impact limit by 1.25 in every classifier call (`001e8690`).
+    pub fn set_track_kind(&mut self, kind: crate::wreck::TrackKind) {
+        self.vertical_limit_scale = kind.vertical_limit_scale();
     }
     pub fn set_stunt_landing_safe(&mut self, safe: bool) {
         self.stunt_landing_safe = safe;
@@ -1277,7 +1286,7 @@ impl Vehicle {
             && let Some(config) = &self.wreck_physics
             && let Some(kind) = config.rules.evaluate(crate::wreck::Input {
                 local_impact: inverse_transform(self.body.basis(), delta_velocity),
-                vertical_limit_scale: 1.,
+                vertical_limit_scale: self.vertical_limit_scale,
                 pitch: 0.,
                 roll: 0.,
                 wheel_contact: false,
@@ -2292,7 +2301,9 @@ impl Vehicle {
         {
             let angles = rider_control::body_angles(self.body.orientation, crate::math::atan2f);
             let local_impact = inverse_transform(self.body.basis(), impact);
-            let landing_candidate = config.landing.evaluate(local_impact, 1.0);
+            let landing_candidate = config
+                .landing
+                .evaluate(local_impact, self.vertical_limit_scale);
             let rider_contact = crate::wreck::rider_height_allowed(
                 crate::wreck::rider_height_contact(
                     self.chassis_contact_count + self.obstacle_contact_count > 0,
@@ -2313,7 +2324,7 @@ impl Vehicle {
             };
             if let Some(kind) = config.rules.evaluate(crate::wreck::Input {
                 local_impact,
-                vertical_limit_scale: 1.0,
+                vertical_limit_scale: self.vertical_limit_scale,
                 pitch,
                 roll,
                 wheel_contact: self.contacts.iter().any(|c| c.grounded),

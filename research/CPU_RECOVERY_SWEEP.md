@@ -166,7 +166,8 @@ Facts:
   therefore the body-local pitch rate, not an angle.
 - **Wreck limits.** `001e8690` scales the vertical impact limit by 1.25 only
   for track kinds 0–2 (Enduro, Freestyle); race courses use 1.0, as the
-  port does. The port never applies the 1.25 (#660).
+  port does. Since #660 the port applies it too (ANIMATION.md "Vertical
+  impact limit by track kind").
 - The hay bales are ordinary static collision models (material 0).
 
 Not established: whether the original CPUs strike the same bales; the

@@ -273,6 +273,7 @@ impl CpuRacer {
         let mut vehicle = Vehicle::new(&model.mesh, &model.physics, origin, yaw)?;
         vehicle.place_on_ground(terrain, origin, yaw)?;
         vehicle.enable_wrecks(&model.physics)?;
+        vehicle.set_track_kind(sim.track_kind);
         vehicle.set_wreck_rays(model.wreck_rays.clone())?;
         if let Some(config) = sim.boundary {
             vehicle.set_boundary(config, sim.extended_boundary)?;

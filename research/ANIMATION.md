@@ -88,6 +88,45 @@ checks do not establish whole-game scoring, hand/foot IK, RNG ordering, PS2
 hardware math, female runtime integration or full animation parity. Private
 reports and probe sources remain in `private/reports/` and `work/`.
 
+## Vertical impact limit by track kind (2026-11-17, #660)
+
+Exact-build evidence (private exports of `SCUS_972.11`, bounded reading, no
+runtime traces):
+
+- `001e8690` multiplies the vertical impact limit (vehicle +0x104) by 1.25
+  when the race settings' track kind (+4) is 0, 1 or 2, else by 1.0. The
+  hard-landing checks follow that scaled comparison in the same branch chain,
+  so a landing between the plain and scaled limits becomes a hard landing
+  instead of a wreck.
+- `002f65e0` derives the track kind from the event type: Amateur and Pro
+  Enduro 0 and 1, Amateur/Pro Freestyle 2, Nationals 3, Short Tracks 4,
+  Supercross 5, the Training list 6, the four mini-games 7-10, and the
+  Waypoint Editor and User Created Enduro 1. Race creation `001f9690`
+  switches on the same field. The event-type order is the track-list order
+  of `0021cca0` (`Num...Tracks` names).
+- The scale is computed inside the classifier from the global race settings,
+  so every caller (player, CPUs) and every impact source sees it.
+
+Port: `atv_core::wreck::TrackKind` holds the mapping, `Vehicle::set_track_kind`
+applies it to the main classifier, the hard-landing check and the authored
+quad-to-quad contact proxy (which calls the same classifier; the original
+has one classifier for all impacts, so it shares the scale).
+`atv_game::launch::track_kind` picks the kind of a load: a race by its
+variant (a Supercross venue's race is Supercross), mini-games, Freestyle
+objectives and the Training Course by their mode, and a Free Ride by the one
+`Tracks.dat` list that offers its venue: Freestyle venues are only in the
+Sponsored Stunt list (1.25), National and Supercross venues only in their own
+lists (1.0). The ride gives the player's and every CPU's quad the kind, split
+screen and room races load the same way, and a room Freestyle session runs as
+Freestyle on any venue (`Ride::set_freestyle_session`).
+
+Assumption: the eight Environments appear in the National, Enduro, Short
+Track and Unsponsored Stunt lists, so their Free Ride has no single original
+kind; the port keeps 1.0 (the National-rules load it uses). Motorcycles keep
+their own wreck path and are unchanged. The World boards' Enduro house times
+were measured before this change and were not re-measured; Enduro CPUs now
+wreck less on hard landings, as the original's do.
+
 ## Stunt scoring and chaining (host checkpoint)
 
 `stunt_score` now implements the recovered single-rider event accounting from

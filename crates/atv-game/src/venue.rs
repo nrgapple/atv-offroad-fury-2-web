@@ -60,6 +60,8 @@ pub struct Venue {
     pub environment: String,
     /// The race a race load read (National for free ride).
     pub race: crate::launch::RaceVariant,
+    /// The load's original track kind ([`crate::launch::track_kind`]).
+    pub track_kind: atv_core::wreck::TrackKind,
     pub scene: Scene,
     pub terrain: Terrain,
     pub sky: Option<Sky>,
@@ -894,6 +896,12 @@ async fn load_selected(
     };
     Ok(Venue {
         environment: environment.to_string(),
+        track_kind: crate::launch::track_kind(
+            environment,
+            racing.then_some(options.race),
+            options.game_scene.is_some(),
+            options.objective.is_some(),
+        ),
         race: if racing {
             options.race
         } else {

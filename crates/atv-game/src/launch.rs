@@ -107,6 +107,42 @@ impl RaceVariant {
     }
 }
 
+/// The original track kind (race settings +4) of a load, which scales the
+/// wreck classifier's vertical impact limit (`atv_core::wreck::TrackKind`).
+/// A race takes its variant's kind (a Supercross venue's National-rules race
+/// is Supercross; the Waypoint Editor and User Created Enduro are long
+/// Enduro, `002f65e0`); mini-games, Freestyle objectives and the Training
+/// Course take theirs. A Free Ride takes the one event list that offers its
+/// venue (`Tracks.dat`): Freestyle venues only appear in the Sponsored Stunt
+/// list, National venues in the National lists and Supercross venues in the
+/// Supercross lists. Environments appear in the National, Enduro, Short
+/// Track and Unsponsored Stunt lists, so their Free Ride has no single
+/// original kind; it keeps the National-rules 1.0 the port loads them with.
+pub fn track_kind(
+    environment: &str,
+    race: Option<RaceVariant>,
+    game: bool,
+    objective: bool,
+) -> atv_core::wreck::TrackKind {
+    use atv_core::wreck::TrackKind;
+    let family = environment.trim_end_matches(|c: char| c.is_ascii_digit());
+    match race {
+        Some(RaceVariant::EnduroShort) => TrackKind::ShortEnduro,
+        Some(RaceVariant::EnduroLong | RaceVariant::UserEnduro) => TrackKind::LongEnduro,
+        Some(RaceVariant::ShortTrack) => TrackKind::ShortTrack,
+        Some(RaceVariant::National) if family == "sx" => TrackKind::Supercross,
+        Some(RaceVariant::National) => TrackKind::National,
+        None if game => TrackKind::Game,
+        None if objective => TrackKind::Freestyle,
+        None if environment.eq_ignore_ascii_case("training") => TrackKind::Training,
+        None => match family {
+            "free" => TrackKind::Freestyle,
+            "sx" => TrackKind::Supercross,
+            _ => TrackKind::National,
+        },
+    }
+}
+
 /// A race course id: the venue for its National race, else the venue and
 /// the variant's stem (`env05ends`, `env05endl`, `env06st`).
 pub fn race_course_id(environment: &str, variant: RaceVariant) -> String {
@@ -837,6 +873,33 @@ pub fn mx_course_resource(id: &str) -> Option<CourseResource> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn track_kinds_follow_the_original_event_lists() {
+        use super::{RaceVariant as R, track_kind};
+        use atv_core::wreck::TrackKind as K;
+        let race = |env, variant| track_kind(env, Some(variant), false, false);
+        assert_eq!(race("env05", R::EnduroShort), K::ShortEnduro);
+        assert_eq!(race("env05", R::EnduroLong), K::LongEnduro);
+        assert_eq!(race("env05", R::UserEnduro), K::LongEnduro);
+        assert_eq!(race("env06", R::ShortTrack), K::ShortTrack);
+        assert_eq!(race("env05", R::National), K::National);
+        assert_eq!(race("nat03", R::National), K::National);
+        assert_eq!(race("sx12", R::National), K::Supercross);
+        let free = |env| track_kind(env, None, false, false);
+        assert_eq!(free("free03"), K::Freestyle);
+        assert_eq!(free("env05"), K::National);
+        assert_eq!(free("nat01"), K::National);
+        assert_eq!(free("sx01"), K::Supercross);
+        assert_eq!(free("training"), K::Training);
+        assert_eq!(track_kind("env05", None, false, true), K::Freestyle);
+        assert_eq!(track_kind("free03", None, true, false), K::Game);
+        let scale = |kind: K| kind.vertical_limit_scale();
+        assert_eq!(scale(race("env05", R::EnduroLong)), 1.25);
+        assert_eq!(scale(free("free03")), 1.25);
+        assert_eq!(scale(race("env05", R::National)), 1.0);
+        assert_eq!(scale(race("sx12", R::National)), 1.0);
+        assert_eq!(scale(race("env06", R::ShortTrack)), 1.0);
+    }
     use super::*;
 
     #[test]

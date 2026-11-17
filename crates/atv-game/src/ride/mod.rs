@@ -126,6 +126,11 @@ struct Simulation {
     ecosystem: Option<atv_core::ecosystem::Ecosystem>,
     boundary: Option<atv_core::boundary_launch::Config>,
     extended_boundary: bool,
+    /// The original track kind every quad's wreck classifier scales its
+    /// vertical impact limit by (`001e8690`).
+    track_kind: atv_core::wreck::TrackKind,
+    /// The venue's own track kind ([`crate::venue::Venue::track_kind`]).
+    venue_track_kind: atv_core::wreck::TrackKind,
     camera: FollowCamera,
     /// The course's `FollowCamPresets.pb`, for another viewport layout's
     /// sections (split screen).
@@ -509,6 +514,7 @@ impl Ride {
     ) -> Result<Vehicle> {
         let mut vehicle = Vehicle::new(mesh, &rig.physics, origin, yaw)?;
         vehicle.enable_wrecks(&rig.physics)?;
+        vehicle.set_track_kind(sim.track_kind);
         if let Some(config) = sim.boundary {
             vehicle.set_boundary(config, sim.extended_boundary)?;
         }
@@ -798,6 +804,35 @@ impl Ride {
     /// Freestyle").
     pub fn start_pose(&self) -> ([f32; 3], f32) {
         self.start
+    }
+
+    /// The track kind the wreck classifiers use (the venue's, or Freestyle
+    /// while a room Freestyle session runs).
+    pub fn track_kind(&self) -> atv_core::wreck::TrackKind {
+        self.sim.track_kind
+    }
+
+    /// A room Freestyle session is a Freestyle event on its course whatever
+    /// the venue's Free Ride kind: while it runs the player's and CPUs' quads
+    /// use Freestyle's vertical impact limit; afterwards the venue's again.
+    pub fn set_freestyle_session(&mut self, on: bool) {
+        let kind = if on {
+            atv_core::wreck::TrackKind::Freestyle
+        } else {
+            self.sim.venue_track_kind
+        };
+        if self.sim.track_kind == kind {
+            return;
+        }
+        self.sim.track_kind = kind;
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            vehicle.set_track_kind(kind);
+        }
+        if let Some(race) = &mut self.race {
+            for cpu in &mut race.cpus {
+                cpu.vehicle.set_track_kind(kind);
+            }
+        }
     }
 
     /// Moves the slot Reset ATV returns to outside a race (a split-screen

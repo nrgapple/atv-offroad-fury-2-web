@@ -16,12 +16,20 @@ async function race(browser, venue, course, frames) {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
   await page.addInitScript(f => localStorage.setItem('furyScript', JSON.stringify([{ frames: f, input: {} }])), frames);
-  await page.goto(url(`/play.html?venue=${venue}&race=1&course=${course}&laps=1&cpu=3&seed=7&weather=off&script=storage&autopilot=1`));
+  await page.goto(url(`/play.html?venue=${venue}&race=1&course=${course}&laps=1&cpu=3&seed=7&weather=off&script=storage&autopilot=1&uiDiagnostics=1`));
   await page.waitForFunction(() => document.querySelector('#trace') || /error|fail|missing/i.test(document.querySelector('#status')?.textContent), null, { timeout: 300000 });
   const text = await page.locator('#trace').textContent().catch(() => null);
   assert.ok(text, `trace for ${venue} ${course}: ${await page.locator('#status').textContent()}`);
   const trace = JSON.parse(text);
   return { page, errors, race: (Array.isArray(trace) ? trace.at(-1) : trace).race };
+}
+
+// The wreck classifier's track kind (#660, `001e8690`): Enduro scales the
+// vertical impact limit by 1.25, Short Track keeps 1.0.
+async function trackKind(page) {
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.trackKind, null, { timeout: 30000 });
+  const ride = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).ride);
+  return [ride.trackKind, ride.verticalLimitScale];
 }
 
 const browser = await launch();
@@ -33,6 +41,7 @@ try {
   assert.ok(r.enduro_gate[0] > 1, `the player crossed gates: ${JSON.stringify(r.enduro_gate)}`);
   assert.equal(r.finish_at, null, 'Enduro ignores the TDF finish box');
   assert.equal(r.off_track, false);
+  assert.deepEqual(await trackKind(page), ['ShortEnduro', 1.25]);
   await optionalScreenshot(page, 'ATV_ENDURO_SCREENSHOT', 'env05-enduro-short');
   assertNoErrors(errors);
   await page.close();
@@ -48,6 +57,7 @@ try {
   ({ page, errors, race: r } = await race(browser, 'env06', 'short-track', 1200));
   assert.equal(r.enduro_gate ?? null, null);
   assert.ok(r.finish_at > 0, `Short Track finish gate ${r.finish_at}`);
+  assert.deepEqual(await trackKind(page), ['ShortTrack', 1]);
   assertNoErrors(errors);
   console.log(`PASS: Rust engine Enduro: env05 short Enduro 13 gates, player lap ${you.time.toFixed(1)}s; env06 Short Track finish gate at ${Math.round(r.finish_at)}ft`);
 } finally {
