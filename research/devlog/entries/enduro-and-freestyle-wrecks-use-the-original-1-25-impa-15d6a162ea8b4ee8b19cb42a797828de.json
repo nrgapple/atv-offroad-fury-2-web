@@ -1,0 +1,14 @@
+{
+  "id": "enduro-and-freestyle-wrecks-use-the-original-1-25-impa-15d6a162ea8b4ee8b19cb42a797828de",
+  "timestamp": "2026-11-17T17:45:47.139729+00:00",
+  "recorded_at": "2026-11-17T17:48:21.360986+00:00",
+  "kind": "build",
+  "title": "Enduro and Freestyle wrecks use the original 1.25 impact limit",
+  "summary": "Enduro and Freestyle rides, player and CPU, now use the original game's 1.25 vertical impact limit for wrecks and hard landings, recovered from the exact US v2.00 build. Nationals, Supercross and Short Tracks stay at 1.0. PR #740, closes #660.",
+  "details": [
+    "The wreck classifier and race creation in the exact build switch on track kind, which the port now mirrors. Verification: new unit tests for the scale and the track-kind mapping; browser test test_engine_enduro_race.mjs checks Enduro 1.25 against Short Track 1.0."
+  ],
+  "limitation": "Free Ride on Environment venues stays 1.0 (assumption: those venues appear in both lists). Training and mini-games stay 1.0. World-board Enduro house times were not re-measured. Host-only; no phone check.",
+  "image": "/devlog-images/enduro-and-freestyle-wrecks-use-the-original-1-25-impa-15d6a162ea8b4ee8b19cb42a797828de.png",
+  "caption": "An Enduro race on ENV05"
+}
