@@ -16,7 +16,7 @@ async function race(browser, venue, course, frames) {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
   await page.addInitScript(f => localStorage.setItem('furyScript', JSON.stringify([{ frames: f, input: {} }])), frames);
-  await page.goto(url(`/play.html?venue=${venue}&race=1&course=${course}&laps=1&cpu=3&seed=7&weather=off&script=storage&autopilot=1`));
+  await page.goto(url(`/play.html?venue=${venue}&race=1&course=${course}&laps=1&cpu=3&seed=7&weather=off&script=storage&autopilot=1&uiDiagnostics=1`));
   await page.waitForFunction(() => document.querySelector('#trace') || /error|fail|missing/i.test(document.querySelector('#status')?.textContent), null, { timeout: 300000 });
   const text = await page.locator('#trace').textContent().catch(() => null);
   assert.ok(text, `trace for ${venue} ${course}: ${await page.locator('#status').textContent()}`);
