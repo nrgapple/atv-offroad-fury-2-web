@@ -322,6 +322,7 @@ pub struct Vehicle {
     /// moving support (the Arlington train) and its body contacts keep
     /// friction. Off retains the recovered world-frame 001d8540 path.
     realistic_train: bool,
+    pub tires: crate::tire_wear::Tires<4>,
     /// Game Settings → Ecosystem Collision (settings +0x674).
     ecosystem_collision: bool,
 }
@@ -536,6 +537,7 @@ impl Vehicle {
             arcade_spin: None,
             flip_events: Vec::new(),
             realistic_train: false,
+            tires: Default::default(),
             ecosystem_collision: true,
         })
     }
@@ -1899,26 +1901,28 @@ impl Vehicle {
                 );
                 self.rear_contact_speed = rear_velocity[2];
                 let m = grip_material;
-                let forces = grip::lateral_forces(LateralInput {
-                    any_contact: true,
-                    front_contact: front_grounded,
-                    front_point_velocity: front_velocity,
-                    rear_point_velocity: rear_velocity,
-                    steering_sine: steering.sin_d(),
-                    steering_cosine: steering.cos_d(),
-                    tire_friction: self.tire_friction,
-                    steering_reduction: self.steering_reduction,
-                    material_grip: m.grip,
-                    material_powerslide: m.powerslide,
-                    throttle,
-                })?;
-                // 001d8540 rotates and accumulates front then rear separately.
-                for (force, offset) in forces.into_iter().zip([3., -3.]) {
-                    self.body.apply_local_force(
-                        &self.body_config,
-                        [force, 0., 0.],
-                        [0., 0., self.body_config.center_of_mass[2] + offset],
-                    );
+                if self.tires.mode == crate::tire_wear::Handling::Original {
+                    let forces = grip::lateral_forces(LateralInput {
+                        any_contact: true,
+                        front_contact: front_grounded,
+                        front_point_velocity: front_velocity,
+                        rear_point_velocity: rear_velocity,
+                        steering_sine: steering.sin_d(),
+                        steering_cosine: steering.cos_d(),
+                        tire_friction: self.tire_friction,
+                        steering_reduction: self.steering_reduction,
+                        material_grip: m.grip,
+                        material_powerslide: m.powerslide,
+                        throttle,
+                    })?;
+                    // 001d8540 rotates and accumulates front then rear separately.
+                    for (force, offset) in forces.into_iter().zip([3., -3.]) {
+                        self.body.apply_local_force(
+                            &self.body_config,
+                            [force, 0., 0.],
+                            [0., 0., self.body_config.center_of_mass[2] + offset],
+                        );
+                    }
                 }
                 self.body.force = add(
                     self.body.force,
@@ -2081,13 +2085,48 @@ impl Vehicle {
                     self.supports[i].available = false;
                 }
                 self.contacts[i] = output;
-                // Original001ed330 applies the driveforce at CofG-(0,0.3,0).
-                let application = sub(self.body_config.center_of_mass, [0., 0.3, 0.]);
-                self.body.apply_local_force(
-                    &self.body_config,
-                    [0., 0., d.longitudinal_force],
-                    application,
-                );
+                if self.tires.mode == crate::tire_wear::Handling::Original {
+                    // Original001ed330 applies the driveforce at CofG-(0,0.3,0).
+                    let application = sub(self.body_config.center_of_mass, [0., 0.3, 0.]);
+                    self.body.apply_local_force(
+                        &self.body_config,
+                        [0., 0., d.longitudinal_force],
+                        application,
+                    );
+                } else if output.grounded {
+                    let right = if i < 2 {
+                        sub(scale(b[0], steering.cos_d()), scale(b[2], steering.sin_d()))
+                    } else {
+                        b[0]
+                    };
+                    let heading = wheel::cross(right, normal);
+                    let length = dot(heading, heading).sqrt();
+                    if length > 0.0001 {
+                        let forward = scale(heading, 1. / length);
+                        let side = wheel::cross(normal, forward);
+                        let lateral_speed = dot(point_velocity, side);
+                        let surface = materials[support.surface];
+                        // Half the recovered axle cornering stiffness per wheel.
+                        let cornering = 22.5 * self.tire_friction * surface.grip;
+                        let scrub = self.wheels[i].angular_speed * self.wheel_config[i].radius
+                            - dot(point_velocity, forward);
+                        let [drive, lateral] = self.tires.forces(
+                            i,
+                            crate::tire_wear::TireContact {
+                                demand: [d.longitudinal_force, -lateral_speed * cornering],
+                                slip: [scrub, lateral_speed],
+                                normal_load: dot(output.force, normal),
+                                static_load: self.body_config.mass * 32.2 / 4.,
+                                friction: surface.grip,
+                            },
+                            step,
+                        );
+                        self.body.apply_world_force(
+                            add(scale(forward, drive), scale(side, lateral)),
+                            output.point,
+                        );
+                    }
+                }
                 self.body.local_torque[0] += d.airborne_brake_torque;
             }
             self.chassis_contact_count = 0;

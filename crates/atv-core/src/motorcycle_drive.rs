@@ -1102,7 +1102,8 @@ impl Motorcycle {
         for i in 0..2 {
             let tire = &p.tires[i];
             let state = self.drive.tires[i];
-            let contact = state.grounded || state.borrowed;
+            let contact = state.grounded
+                || (state.borrowed && self.tires.mode == crate::tire_wear::Handling::Original);
             // Route physics only; state.surface stays raw for effects and water.
             let zone = self.surface_source.tire_zone(state.surface);
             let material = self.materials.and_then(|m| m.get(state.surface).copied());
@@ -1153,7 +1154,22 @@ impl Motorcycle {
                     SideState::Rolling
                 };
                 let f_lat = grip * tire.lateral(zone, v_lat, v_long, state.load, side_state);
-                let force = add(scale(lat, f_lat), scale(long, l.force));
+                let [f_long, f_lat] = if self.tires.mode == crate::tire_wear::Handling::Original {
+                    [l.force, f_lat]
+                } else {
+                    self.tires.forces(
+                        i,
+                        crate::tire_wear::TireContact {
+                            demand: [l.force, f_lat],
+                            slip: [state.omega * tire.radius - v_long, v_lat],
+                            normal_load: state.load,
+                            static_load: p.weight * 0.5,
+                            friction: traction * tire.max_drive[zone],
+                        },
+                        h,
+                    )
+                };
+                let force = add(scale(lat, f_lat), scale(long, f_long));
                 self.body.force = add(self.body.force, force);
                 let local = dynamics::inverse_transform(basis, force);
                 self.body.local_torque = add(
@@ -1162,13 +1178,13 @@ impl Motorcycle {
                 );
                 out.spin = l.spin;
                 out.lock = l.lock;
-                out.force = l.force;
+                out.force = f_long;
                 out.omega = if l.lock {
                     0.
                 } else if !l.spin {
                     v_long / tire.radius
                 } else {
-                    out.omega + h * (torque - l.force * tire.radius) / tire.spin_inertia
+                    out.omega + h * (torque - f_long * tire.radius) / tire.spin_inertia
                 };
             } else {
                 out.spin = false;

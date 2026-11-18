@@ -163,6 +163,7 @@ pub struct PauseMenu {
     /// The ride is a race: Pause's second row is Restart Race
     /// (frontend.js `raceActive`).
     pub race_active: bool,
+    pub tread_percent: Option<u8>,
     /// The ride is the Training Course (Restart Training).
     pub training_active: bool,
     /// The ride is a mini-game (Restart Game).
@@ -235,6 +236,7 @@ impl PauseMenu {
             notice: None,
             seek_to: None,
             race_active: false,
+            tread_percent: None,
             training_active: false,
             game_active: false,
             editor_active: false,
@@ -420,6 +422,9 @@ impl PauseMenu {
             "chase_assist": p.chase_assist,
             "flips": p.flips,
             "realistic_train": p.realistic_train,
+            "handling": p.handling,
+            "tread_percent": self.tread_percent,
+            "online_handling": ctx.lobby.is_some(),
             "metric": p.metric,
             "ecosystem_collision": p.ecosystem_collision,
             "sound_configuration": p.sound_configuration,
@@ -1818,6 +1823,7 @@ mod parity_tests {
                 "new-profiles",
                 "free-ride-cpus",
                 "start-in",
+                "handling",
                 "back"
             ]
         );

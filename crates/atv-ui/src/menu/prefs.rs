@@ -44,6 +44,7 @@ pub struct Preferences {
     pub chase_assist: bool,
     pub flips: bool,
     pub realistic_train: bool,
+    pub handling: atv_core::tire_wear::Handling,
     /// Game Settings → Free Ride CPU riders (authored; 0 is off, the original):
     /// CPU riders added to a single-player or split-screen free ride.
     pub free_ride_cpus: u8,
@@ -129,6 +130,11 @@ impl Preferences {
             chase_assist: get("atv-chase-camera").as_deref() == Some("assisted"),
             flips: get("atv-flips").as_deref() == Some("unleashed"),
             realistic_train: get("atv-train-riding").as_deref() == Some("realistic"),
+            handling: match get("atv-handling").as_deref() {
+                Some("sport") => atv_core::tire_wear::Handling::Sport,
+                Some("simulation") => atv_core::tire_wear::Handling::Simulation,
+                _ => atv_core::tire_wear::Handling::Original,
+            },
             free_ride_cpus: free_ride_cpus(settings),
             start_menu: start_menu(settings),
             diagnostics: one_of(get("atv.diagnostics.v1"), &DIAGNOSTICS, "off"),
@@ -306,6 +312,10 @@ impl Preferences {
             "flips" => {
                 self.flips = !self.flips;
                 settings.set("atv-flips", if self.flips { "unleashed" } else { "off" });
+            }
+            "handling" => {
+                self.handling = self.handling.cycle(direction);
+                settings.set("atv-handling", self.handling.name());
             }
             "train-riding" => {
                 self.realistic_train = !self.realistic_train;

@@ -2190,6 +2190,9 @@ impl App {
             );
             riding.menu_open =
                 overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
+            if let Some(menu) = &mut overlay.menu {
+                menu.tread_percent = Some(((1. - riding.ride.tire_wear()) * 100.).round() as u8);
+            }
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
                 let playing = match sound.ride.mode {
@@ -4104,6 +4107,8 @@ impl App {
                 "crashMode": riding.crashes.as_ref().map(|c| c.mode.name()),
                 "flips": riding.ride.options.flips,
                 "realisticTrain": riding.ride.options.realistic_train,
+                "handling": riding.ride.options.handling,
+                "tireWear": riding.ride.tire_wear(),
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
@@ -5187,6 +5192,11 @@ impl App {
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
+            handling: if riding.online {
+                Default::default()
+            } else {
+                prefs.handling
+            },
             arcade_flips: prefs.alpha("arcade-flips"),
             metric: prefs.metric,
             // "In i.LINK, LAN, and online play, Ecosystem Collision is

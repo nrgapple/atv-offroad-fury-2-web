@@ -72,6 +72,7 @@ pub mod stunt_score;
 pub mod tag;
 pub mod terrain;
 pub mod texture;
+pub mod tire_wear;
 pub mod toy_actors;
 pub mod train;
 pub mod training;

@@ -70,7 +70,14 @@ try {
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).settings.dust === 24);
   // Extras → Crashes back to Original drops the crash layer at once.
   await key(page, 'Escape'); await onPage(page, 'pause');
-  await click(page, 'settings'); await click(page, 'extras'); await onPage(page, 'extras');
+  await click(page, 'settings'); await click(page, 'game-settings'); await onPage(page, 'game-settings');
+  assert.equal((await settings(page)).handling, 'original');
+  for (const mode of ['sport', 'simulation', 'original']) {
+    await click(page, 'handling');
+    assert.equal((await settings(page)).handling, mode);
+    assert.equal(await page.evaluate(() => localStorage.getItem('atv-handling')), mode);
+  }
+  await key(page, 'Escape'); await click(page, 'extras'); await onPage(page, 'extras');
   await click(page, 'funnycrashes'); // gorn → original
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-crash-mode')), 'original');
   assert.equal((await settings(page)).crashMode, null);

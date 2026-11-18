@@ -368,6 +368,7 @@ fn step_train_with(
 pub struct RideOptions {
     pub flips: bool,
     pub realistic_train: bool,
+    pub handling: atv_core::tire_wear::Handling,
     /// Alpha Arcade flips (authored analog air rotation; replaces the
     /// Unleashed gestures while on).
     pub arcade_flips: bool,
@@ -559,6 +560,14 @@ impl Ride {
         self.input_generation = None;
         self.wreck_camera = None;
         Ok(())
+    }
+
+    /// Fraction of tread worn off the most worn player tire this ride.
+    pub fn tire_wear(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.worst_wear(),
+            Mount::Bike(bike) => bike.tires.worst_wear(),
+        }
     }
 
     /// The player rides a motorcycle (atv-web's `vehicle_kind`).
@@ -1046,6 +1055,16 @@ impl Ride {
         contacts: &mut dyn FnMut(&mut Ride),
     ) -> Result<()> {
         self.apply_game_settings()?;
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.mode = self.options.handling,
+            Mount::Bike(bike) => bike.tires.mode = self.options.handling,
+        }
+        if self.options.handling != atv_core::tire_wear::Handling::Original {
+            self.assisted = true;
+            if let Some(race) = &mut self.race {
+                race.race.drop_records();
+            }
+        }
         if let Some(actors) = &self.sim.actors {
             let actors = actors.borrow();
             let offset = self

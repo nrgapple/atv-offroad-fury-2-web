@@ -1,0 +1,12 @@
+{
+  "id": "sport-and-simulation-handling-for-atvs-and-motorcycles-29b8d756fe1c4c12ba561411e1d97a9e",
+  "timestamp": "2026-11-18T02:29:13.954158+00:00",
+  "recorded_at": "2026-11-18T02:29:13.954158+00:00",
+  "kind": "build",
+  "title": "Sport and Simulation handling for ATVs and motorcycles",
+  "summary": "In a local ride, open Settings \u2192 Game Settings \u2192 Physics. Sport gives the tires more grip for fast corners. Simulation makes it easier to use up the grip available for turning when accelerating or braking.",
+  "details": [
+    "Each tire has its own load and tread. Sustained sliding wears the loaded tire, and Game Settings shows the remaining tread of the most worn tire. Six 600-step host runs on Caribou Peak exercised acceleration, cornering and braking on an ATV and a Suzuki RM125 across all three modes. Both optional modes accumulated wear. Original recorded zero wear."
+  ],
+  "limitation": "These are authored presets tuned for play. Wear covers tires during a ride. Calibration against instrumented vehicles and physical-phone handling tests remain open. Online rooms use Original."
+}
