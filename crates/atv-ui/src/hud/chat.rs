@@ -392,7 +392,9 @@ pub fn paint_wheel(
     let clear_top = (top + 18.).max(view.safe[0].max(14.) + 44. + 18.);
     if above >= clear_top {
         list.text(title, &style, cx - width / 2., above);
-    } else if below <= view.height - view.safe[2] - 6. {
+    } else if below <= view.height - view.safe[2] - 48. {
+        // Not in the bottom band, where the touch coach's lines sit; a short
+        // view goes without the title.
         list.text(title, &style, cx - width / 2., below);
     }
     for (index, (rect, id)) in targets.into_iter().enumerate() {

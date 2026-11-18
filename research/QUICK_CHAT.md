@@ -58,7 +58,8 @@ positive or neutral.
   aims at it. The hub is a dark disc with the silver rim, split by a line:
   the page switch above, the horn below, and the lit half glows gold.
   "QUICK CHAT" (or "EMOTES") sits over the ring in gold, below it when an
-  open panel leaves no room. Keyboard players see each segment's key
+  open panel leaves no room, and is left out when neither fits clear of the
+  toolbar and the bottom 48 px. Keyboard players see each segment's key
   (1-8) in its corner. Lines are the HUD's outlined italic lettering, white
   and larger when lit; it all sits on a soft dark shade. The hit targets
   are unchanged. Paths are relative to the centre, so each ring size and
