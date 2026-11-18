@@ -1,5 +1,13 @@
 # Motorcycle reconstruction
 
+**Since 2026-11-18 the default ground handling, airborne assists, trick
+pacing, rider body movement and thrown rider are authored for this port: see
+research/MOTORCYCLE_HANDLING.md.** The recovered side-force curves and
+steer-proportional bank described below remain in the code behind
+`Motorcycle::set_classic` for parity research; suspension, engine, clutch,
+wheelie/stoppie, preload, chassis collision and the wreck limits below are
+still what every bike rides on.
+
 **Status: the riding controller is recovered component by component from the
 MX vs. ATV Unleashed game module, running through authored adapters.** Steer,
 bank, tires/suspension, engine/clutch/shifting, wheelie/stoppie, airborne

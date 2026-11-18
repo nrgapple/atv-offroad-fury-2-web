@@ -57,6 +57,10 @@ pub(super) struct Controls {
     /// Peg pin strength per foot (left, right).
     pub feet: [f32; 2],
     pub contact_ik: bool,
+    /// Bike bank (rad, + toward +x) the upper body stays upright against,
+    /// and the turn the rider is looking into (-1..1, + toward +x).
+    pub roll: f32,
+    pub look: f32,
     foot_return: [f32; 2],
     /// Pelvis offset (ft, bike frame) and its rate.
     pub pelvis: V,
@@ -216,6 +220,22 @@ fn rotate_world(pose: &mut animation::Pose, nodes: &[mesh::Node], node: usize, f
     };
     compose(pose, nodes);
 }
+/// Turn `node` (and its children) about a model-space axis through itself.
+fn turn_world(pose: &mut animation::Pose, nodes: &[mesh::Node], node: usize, axis: V, angle: f32) {
+    if angle == 0. {
+        return;
+    }
+    let world = pose.world_matrices[node];
+    let mut next = mul(&axis_rotation(axis, angle), &world);
+    next[12..15].copy_from_slice(&world[12..15]);
+    let parent = nodes[node].parent;
+    pose.local_matrices[node] = if parent >= 0 {
+        mul(&inverse(&pose.world_matrices[parent as usize]), &next)
+    } else {
+        next
+    };
+    compose(pose, nodes);
+}
 fn unit(v: V) -> V {
     scale(v, 1. / dot(v, v).sqrt().max(1e-9))
 }
@@ -365,8 +385,16 @@ impl Model {
         angles: [f32; 2],
         compression: [f32; 2],
         steering: f32,
+        overlay: Option<(animation::Channels, f32)>,
     ) -> Result<(animation::Pose, V)> {
-        let mut pose = self.riding_channels(c)?.pose(&self.rider.nodes)?;
+        // A trick clip laid over the riding pose frees the hands and feet
+        // from the bike by the same share.
+        let riding = self.riding_channels(c)?;
+        let (channels, held) = match overlay {
+            Some((clip, weight)) => (blend(riding, clip, weight), 1. - weight),
+            None => (riding, 1.),
+        };
+        let mut pose = channels.pose(&self.rider.nodes)?;
         let bike = self.pose(steering, angles, compression);
         let nodes = &self.rider.nodes;
         let peg = |name: &str| {
@@ -381,28 +409,28 @@ impl Model {
                 self.node("HandL")?,
                 self.node("Dummy_hand_L")?,
                 self.grips[0],
-                1.,
+                held,
             ),
             (
                 self.node("HandR")?,
                 self.node("Dummy_hand_R")?,
                 self.grips[1],
-                1.,
+                held,
             ),
             (
                 self.node("FootL")?,
                 self.node("Dummy_foot_L")?,
                 peg("Dummy_Foot_L")?,
-                c.feet[0],
+                held * c.feet[0],
             ),
             (
                 self.node("FootR")?,
                 self.node("Dummy_foot_R")?,
                 peg("Dummy_Foot_R")?,
-                c.feet[1],
+                held * c.feet[1],
             ),
         ];
-        let mut shift = c.pelvis;
+        let mut shift = scale(c.pelvis, held);
         if c.contact_ik {
             let mut available = 1_f32;
             for (end, marker, anchor, weight) in pins {
@@ -431,17 +459,24 @@ impl Model {
             };
             compose(&mut pose, &self.rider.nodes);
         }
-        for (i, (end, marker, anchor, weight)) in pins.into_iter().enumerate() {
+        // Motocross cornering form: the bike leans under the rider, whose
+        // spine and head stay nearer upright, and he looks through the turn.
+        let upright = c.roll * held;
+        for (name, share) in [("LwrTorso", 0.2), ("UprTorso", 0.2), ("Head", 0.2)] {
+            if let Ok(node) = self.node(name) {
+                turn_world(&mut pose, nodes, node, [0., 0., 1.], share * upright);
+            }
+        }
+        if let Ok(head) = self.node("Head") {
+            turn_world(&mut pose, nodes, head, [0., 1., 0.], 0.3 * c.look * held);
+        }
+        for (end, marker, anchor, weight) in pins {
             if weight <= 0. {
                 continue;
             }
             let anchor = position(&bike[anchor]);
-            let target = if i < 2 {
-                anchor
-            } else {
-                let clip = position(&pose.world_matrices[marker]);
-                add(clip, scale(sub(anchor, clip), weight))
-            };
+            let clip = position(&pose.world_matrices[marker]);
+            let target = add(clip, scale(sub(anchor, clip), weight));
             limb(&mut pose, nodes, end, marker, target, c.contact_ik);
         }
         Ok((pose, shift))

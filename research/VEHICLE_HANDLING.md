@@ -2,6 +2,13 @@
 
 Local riders select a preset under **Settings → Game Settings → Physics**. Original uses the existing ATV and motorcycle solvers. Sport eases power during excessive wheelspin. Simulation gives the rider finer responsibility for throttle and braking. A new ride or race restart supplies fresh components. Repositioning during an event carries its wear forward. Online rooms use Original and modified runs use the existing record exclusion.
 
+Since 2026-11-18 the motorcycle's steering, side grip, bank and rider movement
+in every preset come from the authored single-track handling in
+research/MOTORCYCLE_HANDLING.md. The presets change its grip, slide and assist
+values, and Sport and Simulation keep the wheel momentum, wear and heat below.
+The motorcycle balance and rider paragraphs in this section describe the
+recovered ground model, which is no longer the default.
+
 ## Contact and balance
 
 The optional solver integrates each wheel's angular speed from its drive torque, braking, bearing resistance and the reaction torque from the ground. It measures slip against the velocity of the support at the contact point. A spinning wheel keeps its momentum in flight and exchanges it with the chassis on landing. Both components of tire force share a load-dependent friction limit. Wheel dimensions, inertia, gearing and terrain properties come from the existing model data. The relaxation time (20 ms) and grip multipliers are game tuning. [PhysX wheel dynamics](https://nvidia-omniverse.github.io/PhysX/physx/latest/_api_build/classPxVehicleDirectDrivetrainComponent.html)

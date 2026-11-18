@@ -32,6 +32,8 @@ mod balance;
 mod chassis;
 #[path = "motorcycle_drive.rs"]
 mod drive;
+#[path = "motorcycle_handling.rs"]
+mod handling;
 #[path = "motorcycle_pose.rs"]
 mod pose;
 type V = [f32; 3];
@@ -531,6 +533,11 @@ pub struct Frame {
     pub rider_pelvis_offset: V,
     /// Rider boot peg pins (0 released for feet down / foot out, 1 pinned).
     pub rider_foot_pins: [f32; 2],
+    /// Bank the rider holds (rad, + toward the bike's +x), rear sideslip
+    /// (rad) and how hard the rear is sliding (0..1).
+    pub lean: f32,
+    pub rear_slip: f32,
+    pub rear_slide: f32,
     pub boundary_launch: crate::boundary_launch::State,
     pub mud_amount: [f32; 2],
     pub surfaces: [usize; 2],
@@ -543,6 +550,10 @@ pub struct Motorcycle {
     body_config: dynamics::BodyConfig,
     params: drive::Params,
     drive: drive::Drive,
+    handling: handling::State,
+    /// Ride the recovered MX side-force curves and steer-proportional bank
+    /// instead of the authored single-track handling (parity research).
+    classic: bool,
     springs: [f32; 2],
     pub tires: crate::tire_wear::Tires<2>,
     preload_axis: f32,
@@ -557,6 +568,13 @@ pub struct Motorcycle {
     boundary_launch: crate::boundary_launch::State,
     boundary_random: crate::engine_audio::OriginalRandom,
     rider_body: Option<(M, V)>,
+    /// The thrown rider: an articulated body that tumbles and comes to rest
+    /// on the terrain. `rider_body` follows its pelvis.
+    ragdoll: Option<crate::ragdoll::Ragdoll>,
+    /// World rider pose after the last riding step and the bike's velocity
+    /// entering the current step: what the rider carries into a wreck.
+    rider_last: Vec<M>,
+    entry_velocity: V,
     pose_controls: pose::Controls,
     /// Last two pelvis-box world positions for the rider load estimate.
     pelvis_history: [Option<V>; 2],
@@ -591,7 +609,15 @@ pub struct Motorcycle {
     clutch_down: bool,
     active_stunt: Option<usize>,
     stunt_hold: bool,
+    /// The trick clip laid over the riding pose and how much of it shows
+    /// (0 riding, 1 the clip): tricks ease in and out instead of cutting.
+    stunt_clip: Option<(String, f32)>,
+    stunt_weight: f32,
 }
+/// Trick clips play this much faster than the source timings, which were
+/// authored for MX Unleashed's long jumps: an ATV2 jump is over in about a
+/// second.
+const STUNT_RATE: f32 = 1.5;
 impl Motorcycle {
     pub fn new(model: Model, origin: V, yaw: f32) -> Result<Self> {
         if !yaw.is_finite() || origin.iter().any(|x| !x.is_finite()) {
@@ -620,6 +646,8 @@ impl Motorcycle {
             body_config: config,
             params,
             drive,
+            handling: handling::State::default(),
+            classic: false,
             springs,
             tires: Default::default(),
             preload_axis: 0.,
@@ -634,6 +662,9 @@ impl Motorcycle {
             boundary_launch: crate::boundary_launch::State::default(),
             boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             rider_body: None,
+            ragdoll: None,
+            rider_last: Vec::new(),
+            entry_velocity: [0.; 3],
             pose_controls: pose::Controls::default(),
             pelvis_history: [None; 2],
             normal_pose: None,
@@ -662,6 +693,8 @@ impl Motorcycle {
             clutch_down: false,
             active_stunt: None,
             stunt_hold: false,
+            stunt_clip: None,
+            stunt_weight: 0.,
         };
         result.refresh();
         Ok(result)
@@ -689,12 +722,15 @@ impl Motorcycle {
         self.clutch_down = false;
         self.wreck_time = 0.;
         self.drive = drive::Drive::new(&self.params);
+        self.handling.reset();
         self.springs = self.params.tires.map(|t| t.spring_stopped);
         self.trick_mask = 0;
         self.trick_axes = [0.; 2];
         self.preload_axis = 0.;
         self.reset_count = self.reset_count.wrapping_add(1);
         self.rider_body = None;
+        self.ragdoll = None;
+        self.rider_last.clear();
         self.pose_controls = pose::Controls::default();
         self.pelvis_history = [None; 2];
         self.normal_pose = None;
@@ -704,6 +740,8 @@ impl Motorcycle {
         self.stunt_name = None;
         self.active_stunt = None;
         self.stunt_hold = false;
+        self.stunt_clip = None;
+        self.stunt_weight = 0.;
         self.refresh();
         Ok(())
     }
@@ -738,6 +776,14 @@ impl Motorcycle {
         }
         self.frame.boundary_launch = self.boundary_launch;
         Ok(())
+    }
+    /// Select the recovered MX ground handling (true) or the authored
+    /// single-track handling (false, the default).
+    pub fn set_classic(&mut self, classic: bool) {
+        self.classic = classic;
+    }
+    pub fn classic(&self) -> bool {
+        self.classic
     }
     /// Race recovery returns to the racing line, like the ATV checkpoint.
     pub fn set_race_checkpoint(&mut self, checkpoint: Option<(V, f32)>) {
@@ -895,8 +941,19 @@ impl Motorcycle {
     /// Rear contact location and tread scrub speed used by enhanced roost.
     pub fn rear_roost(&self) -> Option<(V, f32)> {
         let rear = &self.drive.tires[1];
-        (self.tires.mode != crate::tire_wear::Handling::Original && rear.grounded)
-            .then_some((rear.point, rear.scrub_speed))
+        if !rear.grounded {
+            return None;
+        }
+        if self.tires.mode != crate::tire_wear::Handling::Original {
+            return Some((rear.point, rear.scrub_speed));
+        }
+        if self.classic {
+            return None;
+        }
+        // Single-track handling: the tread scrubs when the rear runs wide
+        // and when it is driving or braking hard.
+        let sideways = self.handling.slip.abs() * self.frame.speed_magnitude;
+        Some((rear.point, sideways.min(30.) + 7. * self.handling.drive))
     }
     pub fn frame(&self) -> &Frame {
         &self.frame
@@ -939,9 +996,11 @@ impl Motorcycle {
             ..input
         };
         self.last_input = input;
+        self.entry_velocity = self.body.linear_velocity;
         self.frame.crash_impact_speed = 0.;
         self.preload_axis = input.preload_axis.unwrap_or(input.lean).clamp(-1., 1.);
         self.prepare(input, dt);
+        self.predict_landing(terrain)?;
         self.select_contacts()?;
         self.detect_chassis(terrain)?;
         // The source world steps at 55 Hz: int(dt·55)+1 substeps per frame.
@@ -986,8 +1045,37 @@ impl Motorcycle {
                 let r = rotation(1, yaw);
                 world[..12].copy_from_slice(&r[..12]);
                 self.rider_body = Some((world, add(self.body.linear_velocity, [0., 8., 0.])));
+                self.ragdoll = self.throw_rider(dt);
             }
-            if let Some((world, velocity)) = &mut self.rider_body {
+            let floor = |p: V| {
+                terrain
+                    .contact(p[0], p[2])
+                    .ok()
+                    .flatten()
+                    .map(|hit| (hit.height, hit.normal))
+            };
+            if let Some(ragdoll) = &mut self.ragdoll {
+                ragdoll.step(dt, &floor);
+                let pelvis = ragdoll.center(
+                    self.model
+                        .rider
+                        .nodes
+                        .iter()
+                        .position(|n| n.name.eq_ignore_ascii_case("Pelvis"))
+                        .and_then(|node| ragdoll.body_of_node(node))
+                        .unwrap_or(0),
+                );
+                if pelvis.iter().all(|v| v.is_finite())
+                    && let Some((world, velocity)) = &mut self.rider_body
+                {
+                    let previous: V = [world[12], world[13], world[14]];
+                    if dt > 0. {
+                        *velocity = scale(sub(pelvis, previous), 1. / dt);
+                    }
+                    *world = rotation(1, 0.);
+                    world[12..15].copy_from_slice(&pelvis);
+                }
+            } else if let Some((world, velocity)) = &mut self.rider_body {
                 velocity[1] -= 32.2 * dt;
                 for i in 0..3 {
                     world[12 + i] += velocity[i] * dt;
@@ -1004,19 +1092,21 @@ impl Motorcycle {
             }
         } else {
             self.rider_body = None;
+            self.ragdoll = None;
         }
         let load = self.pelvis_load(dt);
         let b = self.body.basis();
         let pose_input = pose::Input {
             lean: self.drive.lean,
-            crab: self.drive.crab,
+            crab: self.pose_crab(),
             max_crab: self.params.max_crossup,
             speed: self.frame.speed_magnitude,
             yaw_rate: self.body.world_angular_velocity()[1],
             up_y: b[1][1],
             grounded: self.frame.grounded.iter().any(|v| *v),
             reverse: self.drive.reverse,
-            smooth_release: self.tires.mode != crate::tire_wear::Handling::Original,
+            smooth_release: !self.classic
+                || self.tires.mode != crate::tire_wear::Handling::Original,
             load,
         };
         self.pose_controls
@@ -1025,10 +1115,36 @@ impl Motorcycle {
         let mut riding_pose = self.pose_controls;
         riding_pose.contact_ik = pose_input.smooth_release;
         riding_pose.pelvis = add(riding_pose.pelvis, self.drive.stance.shift);
+        if !self.classic && pose_input.grounded {
+            riding_pose.roll = self.handling.lean;
+            riding_pose.look = self.handling.command;
+        }
         let visual = self.steer + self.frame.crossup;
+        let showing =
+            self.stunt_name.is_some() && self.frame.wreck.phase == crate::wreck::Phase::Riding;
+        self.stunt_weight = if showing {
+            (self.stunt_weight + 9. * dt).min(1.)
+        } else {
+            (self.stunt_weight - 7. * dt).max(0.)
+        };
+        if self.stunt_weight == 0. {
+            self.stunt_clip = None;
+        }
+        let overlay = self.stunt_clip.as_ref().and_then(|(name, time)| {
+            let motion = self.model.motions.get(name)?;
+            let channels = motion
+                .sample_channels(
+                    &self.model.rider.nodes,
+                    time.clamp(0., motion.duration),
+                    Default::default(),
+                )
+                .ok()?;
+            let w = self.stunt_weight;
+            Some((channels, w * w * (3. - 2. * w)))
+        });
         let (normal, pelvis) =
             self.model
-                .normal_pose(riding_pose, self.angles, self.compression, visual)?;
+                .normal_pose(riding_pose, self.angles, self.compression, visual, overlay)?;
         self.frame.rider_pelvis_offset = pelvis;
         self.normal_pose = Some(normal);
         self.visual_steer = visual;
@@ -1059,7 +1175,68 @@ impl Motorcycle {
                 motion.duration * self.pose_controls.sweep
             };
         }
+        if self.frame.wreck.phase == crate::wreck::Phase::Riding {
+            let world = self.world();
+            self.rider_last = self
+                .rider_matrices()?
+                .iter()
+                .map(|m| mul(&world, m))
+                .collect();
+        }
         Ok(())
+    }
+    /// The rider leaves the bike as an articulated body. He keeps most of
+    /// the speed the bike had before whatever stopped it, each limb keeps the
+    /// motion it had in the riding pose, and the kind of wreck sets which way
+    /// he is thrown. None when this rider's skeleton cannot be articulated;
+    /// the rigid stand-in is used then.
+    fn throw_rider(&self, dt: f32) -> Option<crate::ragdoll::Ragdoll> {
+        use crate::wreck::Kind;
+        let nodes = &self.model.rider.nodes;
+        let b = self.body.basis();
+        let p = self.body.origin(&self.body_config);
+        let world = [
+            b[0][0], b[0][1], b[0][2], 0., b[1][0], b[1][1], b[1][2], 0., b[2][0], b[2][1],
+            b[2][2], 0., p[0], p[1], p[2], 1.,
+        ];
+        let local = match &self.normal_pose {
+            Some(pose) => pose.world_matrices.clone(),
+            None => self
+                .model
+                .rider_pose(&self.motion_name, self.motion_time)
+                .ok()?,
+        };
+        let pose: Vec<M> = local.iter().map(|m| mul(&world, m)).collect();
+        let previous = (self.rider_last.len() == pose.len() && dt > 0.)
+            .then_some((self.rider_last.as_slice(), dt));
+        // An impact stops the bike within the step; the rider carries on.
+        let carried = if dot(self.entry_velocity, self.entry_velocity)
+            > dot(self.body.linear_velocity, self.body.linear_velocity)
+        {
+            add(
+                scale(self.entry_velocity, 0.8),
+                scale(self.body.linear_velocity, 0.2),
+            )
+        } else {
+            self.body.linear_velocity
+        };
+        let flat = |v: V| {
+            let l = (v[0] * v[0] + v[2] * v[2]).sqrt().max(1e-6);
+            [v[0] / l, 0., v[2] / l]
+        };
+        let (forward, side) = (flat(b[2]), flat(b[0]));
+        // Enough to clear the bike; the carried speed does the rest.
+        let kick = match self.frame.wreck.kind {
+            Some(Kind::Front) => add(scale(forward, 3.), [0., 9., 0.]),
+            Some(Kind::Back) => add(scale(forward, -5.), [0., 4., 0.]),
+            Some(Kind::Left) => add(scale(side, -3.), [0., 5., 0.]),
+            Some(Kind::Right) => add(scale(side, 3.), [0., 5., 0.]),
+            _ => [0., 6., 0.],
+        };
+        let launch = add(carried, kick);
+        let speed = dot(launch, launch).sqrt();
+        let launch = scale(launch, 1. / (speed / 95.).max(1.));
+        crate::ragdoll::Ragdoll::new(nodes, &pose, previous, launch)
     }
     /// Wrecked bikes keep normal mass, gravity and roll freedom and rest on
     /// the wreck whiskers and tires (source MX class 0 applies no wreck
@@ -1081,8 +1258,14 @@ impl Motorcycle {
             self.body.linear_velocity[1] = self.body.linear_velocity[1].max(0.);
         }
         let speed = dot(self.body.linear_velocity, self.body.linear_velocity).sqrt();
+        // With an articulated rider, wait for him to stop tumbling too.
+        let tumbling = self.ragdoll.is_some()
+            && self
+                .rider_body
+                .as_ref()
+                .is_some_and(|(_, v)| dot(*v, *v) > 36.);
         if self.wreck_time > 0.5 + self.params.max_wreck_time
-            && (speed < 3. || self.wreck_time > 6.)
+            && ((speed < 3. && !tumbling) || self.wreck_time > 6.)
         {
             self.recover()?;
             return Ok(true);
@@ -1115,6 +1298,9 @@ impl Motorcycle {
             d.crab
                 .clamp(-self.params.max_crossup, self.params.max_crossup)
         };
+        self.frame.lean = self.handling.lean;
+        self.frame.rear_slip = self.handling.slip;
+        self.frame.rear_slide = self.handling.slide;
         let riding = self.frame.wreck.phase == crate::wreck::Phase::Riding;
         if riding
             && d.tires.iter().all(|t| t.grounded)
@@ -1142,6 +1328,19 @@ impl Motorcycle {
                 }
             }
         }
+    }
+    /// What the rider's turn sweep follows. The source sweeps its riding
+    /// clips with the crab angle, which its tires always carry in a corner;
+    /// the single-track handling corners without crabbing, so the lean
+    /// stands in for it and a real slide adds to it.
+    fn pose_crab(&self) -> f32 {
+        let grounded = self.frame.grounded.iter().any(|g| *g);
+        if self.classic || !grounded {
+            return self.drive.crab;
+        }
+        let max = self.params.max_crossup;
+        let lean = (self.handling.lean / 0.9).clamp(-1., 1.);
+        (self.drive.crab - 0.62 * max * lean).clamp(-max, max)
     }
     /// Rider load at the pelvis box: (gravity − point acceleration) in the bike
     /// frame minus the level 1 g, from the box's world track (which includes
@@ -1199,6 +1398,8 @@ impl Motorcycle {
         if self.frame.wreck.phase != crate::wreck::Phase::Riding {
             self.active_stunt = None;
             self.stunt_name = None;
+            self.stunt_clip = None;
+            self.stunt_weight = 0.;
             return Ok(());
         }
         let mut mapping = String::new();
@@ -1227,6 +1428,7 @@ impl Motorcycle {
             if let Some(motion) = self.model.motions.get(name) {
                 self.motion_name = name.into();
                 self.motion_time = self.drive.airtime % motion.duration.max(0.01);
+                self.stunt_clip = Some((self.motion_name.clone(), self.motion_time));
             }
             self.stunt_name = Some(if flip { "Backflip" } else { "Three Sixty" }.into());
             return Ok(());
@@ -1234,14 +1436,20 @@ impl Motorcycle {
         if self.active_stunt.is_none() {
             self.stunt_name = None;
         }
+        let matches = |s: &StuntDefinition| {
+            s.mapping.len() == mapping.len() && s.mapping.chars().all(|c| mapping.contains(c))
+        };
         if air
             && self.active_stunt.is_none()
             && modifiers != 0
-            && let Some(index) = self.model.stunts.iter().position(|s| {
-                s.mapping.len() == mapping.len()
-                    && s.mapping.chars().all(|c| mapping.contains(c))
-                    && s.duration > 0.
-            })
+            // Authored: only once clear of the ground, with air enough for
+            // the quickest version of the trick.
+            && (self.classic || (self.drive.airtime > 0.12 && self.drive.landing_in > 0.45))
+            && let Some(index) = self
+                .model
+                .stunts
+                .iter()
+                .position(|s| matches(s) && s.duration > 0.)
         {
             self.active_stunt = Some(index);
             self.stunt_timer = 0.;
@@ -1249,14 +1457,33 @@ impl Motorcycle {
         }
         if let Some(index) = self.active_stunt {
             let s = &self.model.stunts[index];
-            self.stunt_hold = air
-                && s.mapping.len() == mapping.len()
-                && s.mapping.chars().all(|c| mapping.contains(c));
-            self.stunt_timer =
-                (self.stunt_timer + dt).min(if self.stunt_hold { s.hold } else { s.duration });
+            self.stunt_hold = air && matches(s);
+            let rate = if self.classic {
+                1.
+            } else {
+                // Fit what is left of the trick into the air that is left: a
+                // tap on a short jump is a quick trick, and a released hold
+                // is back in the seat before the predicted landing.
+                let left = (s.duration - self.stunt_timer).max(0.);
+                (left / (self.drive.landing_in - 0.12).max(0.05)).clamp(STUNT_RATE, 4.)
+            };
+            self.stunt_timer = (self.stunt_timer + rate * dt).min(if self.stunt_hold {
+                s.hold
+            } else {
+                s.duration
+            });
             self.stunt_name = Some(s.display.clone());
             if !air {
-                if self.stunt_timer < s.safe {
+                let exposed = if self.classic {
+                    self.stunt_timer < s.safe
+                } else {
+                    // Authored: a wreck only when the rider is still well out
+                    // of the seat, not for a trick that had barely started or
+                    // was most of the way back.
+                    let back = (self.stunt_timer - s.hold) / (s.safe - s.hold).max(0.05);
+                    self.stunt_timer > 0.3 * s.hold && back < 0.55
+                };
+                if exposed {
                     self.frame.wreck.begin(crate::wreck::Kind::Vertical);
                     self.wreck_time = 0.;
                 }
@@ -1267,11 +1494,55 @@ impl Motorcycle {
                 if let Some(motion) = self.model.motions.get(&motion_name) {
                     self.motion_name = motion_name;
                     self.motion_time = self.stunt_timer / s.duration * motion.duration;
+                    self.stunt_clip = Some((self.motion_name.clone(), self.motion_time));
                 }
                 if !self.stunt_hold && self.stunt_timer >= s.duration {
                     self.active_stunt = None;
                     self.stunt_name = None;
                 }
+            }
+        }
+        Ok(())
+    }
+    /// Whether the rider is far enough into a trick to wreck if the bike
+    /// touches down while it is held.
+    fn stunt_exposed(&self) -> bool {
+        self.active_stunt
+            .is_some_and(|index| self.stunt_timer > 0.3 * self.model.stunts[index].hold)
+    }
+    /// While airborne: seconds until the bike's ballistic path meets the
+    /// terrain (sampled thirty times a second for up to four seconds, 9 when
+    /// it never does) and the slope of the ground there along the travel.
+    /// Tricks finish before it, and the bike comes down matched to it.
+    fn predict_landing(&mut self, terrain: &Terrain) -> Result<()> {
+        self.drive.landing_in = 9.;
+        self.drive.landing_slope = 0.;
+        if self.classic || self.drive.tires.iter().any(|t| t.grounded) {
+            return Ok(());
+        }
+        let gravity = 32.2 * self.params.gravity_scale;
+        let (p, v) = (self.body.center, self.body.linear_velocity);
+        let clearance = self.body_config.center_of_mass[1]
+            - (self.model.wheel_rest[1][1] - self.params.tires[1].radius);
+        for i in 1..=120 {
+            let t = i as f32 / 30.;
+            let y = p[1] + v[1] * t - 0.5 * gravity * t * t;
+            let (x, z) = (p[0] + v[0] * t, p[2] + v[2] * t);
+            let above = terrain
+                .contact(x, z)?
+                .is_some_and(|hit| y - clearance > hit.height);
+            if !above {
+                self.drive.landing_in = t;
+                let level = (v[0] * v[0] + v[2] * v[2]).sqrt();
+                if level > 1. {
+                    let reach = 3. / level;
+                    let ahead = terrain.contact(x + v[0] * reach, z + v[2] * reach)?;
+                    let behind = terrain.contact(x - v[0] * reach, z - v[2] * reach)?;
+                    if let (Some(ahead), Some(behind)) = (ahead, behind) {
+                        self.drive.landing_slope = (ahead.height - behind.height).atan2_d(6.);
+                    }
+                }
+                break;
             }
         }
         Ok(())
@@ -1291,8 +1562,22 @@ impl Motorcycle {
         (steering, self.angles, self.compression)
     }
     pub fn rider_matrices(&self) -> Result<Vec<M>> {
-        if self.stunt_name.is_none()
-            && self.frame.wreck.phase == crate::wreck::Phase::Riding
+        if let (Some(ragdoll), Some((world, _))) = (&self.ragdoll, &self.rider_body) {
+            // World-space segments, expressed about the pelvis the camera,
+            // sound and triggers follow (`rider_world`).
+            return Ok(ragdoll
+                .matrices()
+                .into_iter()
+                .map(|mut m| {
+                    for k in 0..3 {
+                        m[12 + k] -= world[12 + k];
+                    }
+                    m
+                })
+                .collect());
+        }
+        // The riding pose carries any trick clip laid over it.
+        if self.frame.wreck.phase == crate::wreck::Phase::Riding
             && let Some(pose) = &self.normal_pose
         {
             return Ok(pose.world_matrices.clone());
