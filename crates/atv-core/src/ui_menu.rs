@@ -230,6 +230,10 @@ pub struct Request {
     /// Authored train riding relative to the moving support; off is original.
     #[serde(default)]
     pub realistic_train: bool,
+    #[serde(default)]
+    pub handling: crate::tire_wear::Handling,
+    #[serde(default)]
+    pub online_handling: bool,
     /// Authored CPU riders in a single-player or split-screen free ride
     /// (0-3; research/CPU_MINIGAMES.md); 0, off, is original.
     #[serde(default)]
@@ -1866,6 +1870,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ),
                 ],
             };
+            if request.page == "game-settings" && !request.online_handling {
+                let label = match request.handling {
+                    crate::tire_wear::Handling::Original => "Physics: Original",
+                    crate::tire_wear::Handling::Sport => "Physics: Sport",
+                    crate::tire_wear::Handling::Simulation => "Physics: Simulation",
+                };
+                choices.push((label, "handling"));
+            }
             if request.page == "hud-settings" && request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
             }
@@ -2560,6 +2572,7 @@ mod tests {
         let game = labels(r);
         for row in [
             "Game Settings",
+            "Physics: Original",
             "Measurement: Metric",
             "Ecosystem Collision: On",
             "Sound Configuration: Stereo (Swapped)",
@@ -2729,6 +2742,8 @@ mod tests {
             chase_assist: false,
             flips: false,
             realistic_train: false,
+            handling: Default::default(),
+            online_handling: false,
             free_ride_cpus: 0,
             start_menu: false,
             menu_world: false,

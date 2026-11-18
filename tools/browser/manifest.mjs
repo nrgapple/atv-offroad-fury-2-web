@@ -70,6 +70,7 @@ export const TESTS = {
       'Compares with the JavaScript game: serve the pinned reference (python3 tools/js_reference.py serve) and set ATV_JS_URL'
   },
   'test_engine_settings.mjs': { group: 'content' },
+  'test_engine_brake_rotors.mjs': { group: 'content' },
   'test_engine_game_settings.mjs': { group: 'content' },
   'test_engine_accessibility.mjs': { group: 'content' },
   'test_engine_options_layout.mjs': { group: 'content' },

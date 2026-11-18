@@ -1725,6 +1725,11 @@ impl SceneRenderer {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
     }
 
+    /// Whether the player pass has a heated rotor batch in its current pose.
+    pub fn hot_rotors(&self) -> bool {
+        self.vehicle.as_ref().is_some_and(|v| v.has_hot_rotors())
+    }
+
     /// How many multiplayer rider slots are shown (split screen's other
     /// players, or a room's riders).
     pub fn peers_shown(&self) -> usize {

@@ -24,6 +24,7 @@ struct Globals {
 struct Bones {
   world: mat4x4<f32>,
   nodes: array<mat4x4<f32>, 32>,
+  brake_glow: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var world_shadow_map: texture_depth_2d;
@@ -42,6 +43,7 @@ struct Varyings {
   // Coverage and clip W, so the ratio interpolates screen-linearly (web/fog.js).
   @location(2) fog: vec2<f32>,
   @location(3) world: vec3<f32>,
+  @location(4) heat: f32,
 };
 
 // render-support.js paintGlsl: saturated body-atlas pixels take the hue
@@ -81,7 +83,10 @@ fn native_fog_coverage(distance: f32) -> f32 {
 fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>,
       @location(2) uv: vec2<f32>, @location(3) node: f32) -> Varyings {
   var out: Varyings;
-  let pose = bones.nodes[u32(node)];
+  let tag = u32(node);
+  let pose = bones.nodes[tag % 32u];
+  out.heat = -1.0;
+  if (tag >= 32u) { out.heat = bones.brake_glow[tag / 32u - 1u]; }
   let world = bones.world * pose * vec4<f32>(position, 1.0);
   let w = bones.world;
   out.normal = mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * mat3x3<f32>(pose[0].xyz, pose[1].xyz, pose[2].xyz) * normal;
@@ -105,8 +110,14 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   // GS source alpha: decoded bytes over 128 are full coverage. A texel with no
   // alpha at all draws nothing (no colour, no depth), as the cut-outs need.
   let source_alpha = select(1.0, clamp(texel.a * (255.0 / 128.0), 0.0, 1.0), blended);
-  if (blended && texel.a < 0.5 / 255.0) { discard; }
   let mud = textureSample(mud_texture, base_sampler, in.uv);
+  if (in.heat >= 0.0) {
+    if (in.heat <= 0.0) { discard; }
+    let h = in.heat;
+    let metal = vec3<f32>(0.08 + 1.45 * h, 0.024 + h * h * 0.65, 0.017 + h * h * h * 0.14) * in.uv.y;
+    return vec4<f32>(mix(g.fog_color.rgb, metal, clamp(in.fog.x / in.fog.y, 0.0, 1.0)), g.surface.w);
+  }
+  if (blended && texel.a < 0.5 / 255.0) { discard; }
   var base = select(g.surface.rgb, sampled, textured);
   if (textured && material.w > 0.5) {
     base = apply_paint(base, g.paint.xy);

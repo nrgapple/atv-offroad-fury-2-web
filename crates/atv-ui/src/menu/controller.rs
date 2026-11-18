@@ -350,9 +350,11 @@ impl PauseMenu {
                 _ => None,
             },
             // `.pause-header .pause-status`: Audio's soundtrack line.
-            status: (self.page == "music")
-                .then(|| ctx.music.map(music_status))
-                .flatten(),
+            status: if self.page == "music" {
+                ctx.music.map(music_status)
+            } else {
+                None
+            },
         }
     }
 
@@ -479,6 +481,10 @@ impl PauseMenu {
         request["menu_world"] = self.world.into();
         request["start_menu"] = p.start_menu.into();
         request["free_ride_cpus"] = p.free_ride_cpus.into();
+        if page == "game-settings" {
+            request["handling"] = p.handling.name().into();
+            request["online_handling"] = ctx.lobby.is_some().into();
+        }
         if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
@@ -1818,6 +1824,7 @@ mod parity_tests {
                 "new-profiles",
                 "free-ride-cpus",
                 "start-in",
+                "handling",
                 "back"
             ]
         );

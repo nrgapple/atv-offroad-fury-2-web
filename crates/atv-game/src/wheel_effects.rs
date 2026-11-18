@@ -339,6 +339,7 @@ impl WheelEffects {
                         &bike.model.effects_config,
                         f,
                         &bike.world(),
+                        bike.rear_roost(),
                         dt,
                         ride.terrain(),
                     )?;

@@ -544,6 +544,7 @@ pub struct Motorcycle {
     params: drive::Params,
     drive: drive::Drive,
     springs: [f32; 2],
+    pub tires: crate::tire_wear::Tires<2>,
     preload_axis: f32,
     trick_mask: u8,
     trick_axes: [f32; 2],
@@ -620,6 +621,7 @@ impl Motorcycle {
             params,
             drive,
             springs,
+            tires: Default::default(),
             preload_axis: 0.,
             trick_mask: 0,
             trick_axes: [0.; 2],
@@ -890,6 +892,12 @@ impl Motorcycle {
         self.materials = materials;
         self.surface_source = crate::materials::SurfaceSource::Atv2;
     }
+    /// Rear contact location and tread scrub speed used by enhanced roost.
+    pub fn rear_roost(&self) -> Option<(V, f32)> {
+        let rear = &self.drive.tires[1];
+        (self.tires.mode != crate::tire_wear::Handling::Original && rear.grounded)
+            .then_some((rear.point, rear.scrub_speed))
+    }
     pub fn frame(&self) -> &Frame {
         &self.frame
     }
@@ -1008,18 +1016,20 @@ impl Motorcycle {
             up_y: b[1][1],
             grounded: self.frame.grounded.iter().any(|v| *v),
             reverse: self.drive.reverse,
+            smooth_release: self.tires.mode != crate::tire_wear::Handling::Original,
             load,
         };
         self.pose_controls
             .step(pose_input, self.model.sweep_side, dt);
         self.frame.rider_foot_pins = self.pose_controls.feet;
-        self.frame.rider_pelvis_offset = self.pose_controls.pelvis;
-        let (normal, visual) = self.model.normal_pose(
-            self.pose_controls,
-            self.angles,
-            self.compression,
-            self.steer + self.frame.crossup,
-        )?;
+        let mut riding_pose = self.pose_controls;
+        riding_pose.contact_ik = pose_input.smooth_release;
+        riding_pose.pelvis = add(riding_pose.pelvis, self.drive.stance.shift);
+        let visual = self.steer + self.frame.crossup;
+        let (normal, pelvis) =
+            self.model
+                .normal_pose(riding_pose, self.angles, self.compression, visual)?;
+        self.frame.rider_pelvis_offset = pelvis;
         self.normal_pose = Some(normal);
         self.visual_steer = visual;
         self.tick += 1;

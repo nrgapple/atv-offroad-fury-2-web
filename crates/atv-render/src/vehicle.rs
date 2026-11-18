@@ -39,6 +39,7 @@ struct Globals {
 struct Bones {
     world: [f32; 16],
     nodes: [[f32; 16]; BONES],
+    brake_glow: [f32; 4],
 }
 
 /// A material group's range of the vehicle's shared buffers (one vertex and
@@ -50,6 +51,7 @@ struct Chunk {
     /// First vertex of the group in the shared buffer (severed index rebase).
     base: u32,
     rider: bool,
+    rotor: bool,
     material: wgpu::BindGroup,
     /// Rider groups: CPU indices and vertex nodes for Gorn severing.
     source: Option<(Vec<u32>, Vec<u16>)>,
@@ -74,6 +76,7 @@ pub struct VehiclePass {
     quad: (wgpu::Buffer, wgpu::BindGroup),
     rider: (wgpu::Buffer, wgpu::BindGroup),
     chunks: Vec<Chunk>,
+    hot_rotors: std::cell::Cell<bool>,
     pub triangles: u32,
     /// Shadow casting (High shadow map) reuses the bone uniforms.
     pub(crate) bones_layout: wgpu::BindGroupLayout,
@@ -87,6 +90,88 @@ pub struct VehiclePass {
     /// The last pose's quad world matrix and, when the rider is detached
     /// (more than 1.5 ft from the quad), its torso: contact shadow casters.
     placed: std::cell::Cell<Option<Placed>>,
+}
+
+/// Thin annuli at the wheel hubs. The two faces and outer edge keep the
+/// heated metal visible from the side and at a shallow chase-camera angle.
+fn append_rotors(quad: &Model, vertices: &mut Vec<f32>, indices: &mut Vec<u32>) {
+    const SECTORS: usize = 24;
+    for (node, wheel) in quad.mesh.nodes.iter().enumerate() {
+        let (slot, side) = match wheel.name.to_ascii_lowercase().as_str() {
+            "tirefront" | "wheelfrontleft" => (0, -1.),
+            "tirerear" | "wheelfrontright" => (1, 1.),
+            "wheelrearleft" => (2, -1.),
+            "wheelrearright" => (3, 1.),
+            _ => continue,
+        };
+        let mut radius = 0_f32;
+        let mut face = 0_f32;
+        // On assembled MX bikes the animated wheel is a placement node.
+        // Its tire and rim vertices belong to the attached sub-object.
+        let mut on_wheel = [false; BONES];
+        on_wheel[node] = true;
+        for (i, child) in quad.mesh.nodes.iter().enumerate().skip(node + 1) {
+            on_wheel[i] = child.parent >= 0 && on_wheel[child.parent as usize];
+        }
+        for group in &quad.mesh.lods[0].groups {
+            for vertex in group
+                .vertices
+                .iter()
+                .filter(|v| on_wheel[usize::from(v.node)])
+            {
+                let [x, y, z] = if usize::from(vertex.node) == node {
+                    vertex.local_position
+                } else {
+                    let bind = &wheel.world_matrix;
+                    let from_axle = std::array::from_fn(|i| vertex.position[i] - bind[12 + i]);
+                    inverse_direction(bind, from_axle)
+                };
+                radius = radius.max(y.hypot(z));
+                face = face.max(side * x);
+            }
+        }
+        if radius <= 0. {
+            continue;
+        }
+        let base = (vertices.len() / FLOATS_PER_VERTEX) as u32;
+        // The tag selects a heat channel on the same animated wheel bone.
+        let tag = (node + BONES * (slot + 1)) as f32;
+        for sector in 0..SECTORS {
+            let angle = std::f32::consts::TAU * sector as f32 / SECTORS as f32;
+            let (y, z) = angle.sin_cos();
+            for (offset, size, shade) in [
+                (0., 0.27, 0.65),
+                (0., 0.43, 1.),
+                (0.025, 0.43, 1.),
+                (0.025, 0.27, 0.65),
+            ] {
+                let x = side * (face * 0.94 + radius * offset);
+                vertices.extend_from_slice(&[
+                    x,
+                    y * radius * size,
+                    z * radius * size,
+                    side,
+                    0.,
+                    0.,
+                    0.,
+                    shade,
+                    tag,
+                ]);
+            }
+            let current = base + 4 * sector as u32;
+            let next = base + 4 * ((sector + 1) % SECTORS) as u32;
+            for edge in 0..3 {
+                indices.extend_from_slice(&[
+                    current + edge,
+                    next + edge,
+                    next + edge + 1,
+                    current + edge,
+                    next + edge + 1,
+                    current + edge + 1,
+                ]);
+            }
+        }
+    }
 }
 
 /// A posed vehicle's shadow casters: quad world and detached torso.
@@ -614,6 +699,7 @@ impl VehiclePass {
                     count: group.indices.len() as u32,
                     base,
                     rider,
+                    rotor: false,
                     material,
                     source: rider.then(|| {
                         (
@@ -624,6 +710,23 @@ impl VehiclePass {
                     cut: None,
                 });
                 all_indices.extend(group.indices.iter().map(|i| i + base));
+            }
+        }
+        if let Some(material) = chunks.iter().find(|c| !c.rider).map(|c| c.material.clone()) {
+            let first = all_indices.len() as u32;
+            append_rotors(quad, &mut all_vertices, &mut all_indices);
+            let count = all_indices.len() as u32 - first;
+            if count > 0 {
+                chunks.push(Chunk {
+                    first,
+                    count,
+                    base: 0,
+                    rider: false,
+                    rotor: true,
+                    material,
+                    source: None,
+                    cut: None,
+                });
             }
         }
         if all_vertices.is_empty() {
@@ -670,6 +773,7 @@ impl VehiclePass {
             quad: bones("quad bones"),
             rider: bones("rider bones"),
             chunks,
+            hot_rotors: Default::default(),
             triangles,
             footprint: [max[2] - min[2], max[0] - min[0]],
             rider_parents: nodes.iter().map(|n| n.parent).collect(),
@@ -728,6 +832,10 @@ impl VehiclePass {
         self.placed.get()
     }
 
+    pub(crate) fn has_hot_rotors(&self) -> bool {
+        self.hot_rotors.get() && self.chunks.last().is_some_and(|group| group.rotor)
+    }
+
     pub fn pose(&self, gpu: &Gpu, pose: &Pose) {
         let (q, r) = (&pose.quad_world, &pose.rider_world);
         let apart = (r[12] - q[12]).hypot(r[13] - q[13]).hypot(r[14] - q[14]) > 1.5;
@@ -737,6 +845,7 @@ impl VehiclePass {
                 .map_or(*r, |node| crate::camera::multiply(r, node))
         });
         self.placed.set(Some((*q, torso)));
+        self.hot_rotors.set(pose.brake_glow.iter().any(|v| *v > 0.));
         for ((buffer, _), world, nodes) in [
             (&self.quad, pose.quad_world, &pose.quad_nodes),
             (&self.rider, pose.rider_world, &pose.rider_nodes),
@@ -744,6 +853,7 @@ impl VehiclePass {
             let mut bones = Bones {
                 world,
                 nodes: [[0.; 16]; BONES],
+                brake_glow: pose.brake_glow,
             };
             for (slot, matrix) in bones.nodes.iter_mut().zip(nodes) {
                 *slot = *matrix;
@@ -882,6 +992,9 @@ impl VehiclePass {
         let mut main_bound = false;
         let mut bound_rider = None;
         for chunk in &self.chunks {
+            if chunk.rotor && (!materials || !self.hot_rotors.get()) {
+                continue;
+            }
             if bound_rider != Some(chunk.rider) {
                 let bones = if chunk.rider {
                     &self.rider.1

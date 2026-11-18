@@ -4147,7 +4147,13 @@ impl App {
                 "colour": atv_ui::hud::palette::mode().label(),
             });
             // Game Settings (tools/test_engine_game_settings.mjs).
+            state["ride"]["speed"] = riding.ride.frame().speed_magnitude.into();
             let game = &mut state["settings"];
+            game["handling"] = riding.ride.options.handling.name().into();
+            game["shockWear"] = riding.ride.shock_wear().into();
+            game["hotRotors"] = ready.scene.hot_rotors().into();
+            game["brakeHeat"] = riding.ride.brake_heat().into();
+            game["tireWear"] = riding.ride.tire_wear().into();
             game["worldShadows"] = graphics.world_shadows.into();
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
             // The streamed soundtrack's routing (web: a graph once not Stereo).
@@ -5187,6 +5193,11 @@ impl App {
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
+            handling: if riding.online {
+                Default::default()
+            } else {
+                prefs.handling
+            },
             arcade_flips: prefs.alpha("arcade-flips"),
             metric: prefs.metric,
             // "In i.LINK, LAN, and online play, Ecosystem Collision is

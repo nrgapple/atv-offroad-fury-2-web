@@ -184,6 +184,7 @@ fn decode(cells: &[Cell], quad: usize, i: usize) -> Affine {
 /// the sample's row: the header, quad nodes, rider nodes).
 #[derive(Clone, Copy, Debug, Default)]
 struct Slot {
+    brake_glow: [u8; 4],
     kind: Kind,
     quad: u16,
     rider: u16,
@@ -224,9 +225,13 @@ pub struct Moment {
 /// in the following sample) by `t`.
 fn fill(pose: &mut Pose, row: &[Cell], slot: &Slot, next: Option<(&[Cell], &Slot)>, t: f32) {
     let own = &row[slot.at as usize..][..slot.width()];
-    let other = next
-        .filter(|(_, n)| n.quad == slot.quad && n.rider == slot.rider)
-        .map(|(s, n)| &s[n.at as usize..][..n.width()]);
+    let next = next.filter(|(_, n)| n.quad == slot.quad && n.rider == slot.rider);
+    pose.brake_glow = std::array::from_fn(|i| {
+        let a = f32::from(slot.brake_glow[i]);
+        let b = next.map_or(a, |(_, n)| f32::from(n.brake_glow[i]));
+        (a + (b - a) * t) / 255.
+    });
+    let other = next.map(|(s, n)| &s[n.at as usize..][..n.width()]);
     let quad = usize::from(slot.quad);
     let matrix = |i: usize| match other {
         Some(other) => blend(&decode(own, quad, i), &decode(other, quad, i), t),
@@ -439,6 +444,7 @@ impl Recorder {
         encode(&mut self.slab[base..base + width], pose);
         let s = &mut self.samples[at];
         s.riders[usize::from(s.count)] = Slot {
+            brake_glow: pose.brake_glow.map(|v| (v * 255.).round() as u8),
             kind,
             quad: pose.quad_nodes.len() as u16,
             rider: pose.rider_nodes.len() as u16,
@@ -707,6 +713,7 @@ mod tests {
         world[15] = 1.;
         world[12] = x;
         Pose {
+            brake_glow: [(x / 10.).clamp(0., 1.), 0., 0., 0.],
             quad_world: world,
             quad_nodes: vec![world; nodes],
             rider_world: world,
@@ -736,6 +743,7 @@ mod tests {
         assert!((m.player.quad_world[12] - 5.).abs() < 1e-5);
         assert!((m.cpus[0].quad_nodes[2][12] + 5.).abs() < 1e-5);
         assert_eq!(m.player.rider_nodes.len(), 2);
+        assert_eq!(m.player.brake_glow, [0.5, 0., 0., 0.]);
         // Past either end: the end samples.
         r.sample(100., &mut m);
         assert_eq!(m.player.quad_world[12], 10.);

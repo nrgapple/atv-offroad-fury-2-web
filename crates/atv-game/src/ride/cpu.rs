@@ -757,6 +757,7 @@ impl Puppet {
             sent_cue(&mut self.held);
         }
         self.pose = Some(super::Pose {
+            brake_glow: [0.; 4],
             quad_world,
             quad_nodes,
             rider_world,

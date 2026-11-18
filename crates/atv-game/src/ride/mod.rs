@@ -368,6 +368,7 @@ fn step_train_with(
 pub struct RideOptions {
     pub flips: bool,
     pub realistic_train: bool,
+    pub handling: atv_core::tire_wear::Handling,
     /// Alpha Arcade flips (authored analog air rotation; replaces the
     /// Unleashed gestures while on).
     pub arcade_flips: bool,
@@ -385,6 +386,8 @@ pub struct RideOptions {
 /// World pose of the player's quad and rider for drawing.
 #[derive(Clone, Debug, Default)]
 pub struct Pose {
+    /// Rotor emission, in physics wheel order (front/rear on a bike).
+    pub brake_glow: [f32; 4],
     pub quad_world: [f32; 16],
     pub quad_nodes: Vec<[f32; 16]>,
     pub rider_world: [f32; 16],
@@ -559,6 +562,28 @@ impl Ride {
         self.input_generation = None;
         self.wreck_camera = None;
         Ok(())
+    }
+
+    /// Fraction of tread worn off the most worn player tire this ride.
+    pub fn tire_wear(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.worst_wear(),
+            Mount::Bike(bike) => bike.tires.worst_wear(),
+        }
+    }
+
+    pub fn shock_wear(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.worst_shock_wear(),
+            Mount::Bike(bike) => bike.tires.worst_shock_wear(),
+        }
+    }
+
+    pub fn brake_heat(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.hottest_brake(),
+            Mount::Bike(bike) => bike.tires.hottest_brake(),
+        }
     }
 
     /// The player rides a motorcycle (atv-web's `vehicle_kind`).
@@ -971,7 +996,9 @@ impl Ride {
         self.sound = None;
         match &mut self.mount {
             Mount::Quad { rig, vehicle } => {
-                **vehicle = Self::place(&self.sim, rig, &self.quad.mesh, start)?;
+                let mut placed = Self::place(&self.sim, rig, &self.quad.mesh, start)?;
+                placed.tires = vehicle.tires;
+                **vehicle = placed;
                 if self.race.is_some() {
                     race::place_racer(vehicle, &self.sim.terrain)?;
                 }
@@ -1046,6 +1073,16 @@ impl Ride {
         contacts: &mut dyn FnMut(&mut Ride),
     ) -> Result<()> {
         self.apply_game_settings()?;
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.mode = self.options.handling,
+            Mount::Bike(bike) => bike.tires.mode = self.options.handling,
+        }
+        if self.options.handling != atv_core::tire_wear::Handling::Original {
+            self.assisted = true;
+            if let Some(race) = &mut self.race {
+                race.race.drop_records();
+            }
+        }
         if let Some(actors) = &self.sim.actors {
             let actors = actors.borrow();
             let offset = self
@@ -1933,6 +1970,7 @@ impl Ride {
                     None => (quad_world, rig.animator.pose(nodes)?.world_matrices),
                 };
                 Ok(Pose {
+                    brake_glow: vehicle.tires.brake_glow(),
                     quad_world,
                     quad_nodes,
                     rider_world,
@@ -1940,6 +1978,10 @@ impl Ride {
                 })
             }
             Mount::Bike(bike) => Ok(Pose {
+                brake_glow: {
+                    let [front, rear] = bike.tires.brake_glow();
+                    [front, rear, 0., 0.]
+                },
                 quad_world,
                 quad_nodes: bike.matrices(),
                 rider_world: self.rider_world(),
