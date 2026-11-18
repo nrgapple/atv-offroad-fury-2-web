@@ -71,7 +71,8 @@ The model here:
    corners at about twice that so ATV2 courses stay rideable at speed.
 5. **Slides are deliberate.** A locked rear (braking) keeps 62% of its side
    grip and steps out; full drive or braking costs a fifth of the side grip
-   (nearly all of it in Simulation). The front steers into the slide, the
+   (two fifths in Simulation, where a pinned throttle at full lean holds the
+   rear about 15° out). The front steers into the slide, the
    rider holds the turn rate he asked for, and a rear that has come round
    digs in (to 1.4 × grip by 24° of slip) while the front pushes. A slide
    settles at an angle. It cannot spin the bike, whatever the surface or the
@@ -137,8 +138,8 @@ The model here:
 - Motocross form: stand on the pegs on a straight and in the air, sit forward
   and to the outside in a corner, come down into bent knees as the suspension
   compresses, move back under braking. The spine and head stay nearer upright
-  than the bike (60% of the lean is taken out through the torso and head) and
-  the head turns into the turn. Hands and feet are solved to the grips and
+  than the bike (about 40% of the lean is taken out through the torso and
+  head) and the head turns into the turn. Hands and feet are solved to the grips and
   pegs after all of it.
 - **The thrown rider** is the existing articulated body
   (`ragdoll.rs`, previously only in the Crazy/Gorn crash options), now part of

@@ -88,7 +88,7 @@ impl Tuning {
                 response: [8., 5.5],
                 lean_scale: 1.,
                 catch: 2.5,
-                drive_cost: 0.92,
+                drive_cost: 0.8,
                 dig: 1.15,
             },
         }
@@ -248,7 +248,7 @@ impl State {
             // a bump mid-corner does not throw the bike wide.
             let load = 0.6 * p.load + 0.4 * static_load[i].min(2. * p.load);
             // Driving or braking spends side grip: a fifth of it at full
-            // use by default, nearly all of it in Simulation.
+            // use by default, two fifths in Simulation.
             let combined = (1. - (tuning.drive_cost * p.used.clamp(0., 1.)).powi(2)).sqrt();
             let base = combined.min(match (p.sliding, i) {
                 (false, _) => 1.,

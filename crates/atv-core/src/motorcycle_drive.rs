@@ -676,7 +676,7 @@ impl Motorcycle {
             // into bent knees as the suspension compresses and move back
             // under braking.
             let target = [
-                -0.16 * corner,
+                -0.1 * corner,
                 0.22 * pace * (1. - 0.8 * corner.abs()) + 0.12 * touchdown - 0.24 * stroke,
                 pace * (0.1 * d.gas - 0.24 * d.brake + 0.1 * corner.abs()) - 0.13 * d.lean,
             ];

@@ -462,7 +462,7 @@ impl Model {
         // Motocross cornering form: the bike leans under the rider, whose
         // spine and head stay nearer upright, and he looks through the turn.
         let upright = c.roll * held;
-        for (name, share) in [("LwrTorso", 0.2), ("UprTorso", 0.2), ("Head", 0.2)] {
+        for (name, share) in [("LwrTorso", 0.13), ("UprTorso", 0.13), ("Head", 0.16)] {
             if let Ok(node) = self.node(name) {
                 turn_world(&mut pose, nodes, node, [0., 0., 1.], share * upright);
             }
