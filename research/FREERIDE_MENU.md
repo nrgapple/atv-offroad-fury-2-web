@@ -123,6 +123,12 @@ no shared world.
   sightline and crash views; `Screen::world_stage` hides the stage's
   vehicle name under Start in: Free Ride. Diagnostics: `home.backdrop`
   (blend, eye, yaw, pitch, clearance) and `front.worldStage`.
+- `tools/test_engine_freeride_menu.mjs` measures the backdrop camera's
+  height and yaw speed over windows of at least 0.15 s and separately
+  bounds any single frame's change (4 ft, 0.35 rad). Per-rAF rates read a
+  headless browser's ~20 engine frames a second two or three times too
+  fast and failed on hilly venues (#744: 62-67 ft/s measured where the eye
+  climbed at most 21 ft/s with no step over 1.7 ft).
 - Browser tests open with Start in: Menu (`tools/browser/harness.mjs` saves
   `atv-start-in=menu` in every context unless the test saved a choice).
   `tools/test_engine_freeride_menu.mjs` (multiplayer group) covers the boot

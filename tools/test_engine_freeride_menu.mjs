@@ -130,38 +130,43 @@ async function turntable(page, label) {
 // The camera's eye and yaw sampled every frame for `ms` (in the page): the
 // fastest yaw turn (rad/s) and eye climb or drop (ft/s) while the backdrop
 // has a share, and the lowest clearance over the ground under it.
+// Rates are measured over at least WINDOW seconds: a headless browser presents
+// engine frames (~20 a second) less often than requestAnimationFrame fires, so
+// a single frame's motion over one rAF gap reads two or three times too fast
+// (#744). A snap still shows as one large step (`jump`, ft or radians).
+const WINDOW = 0.15;
 const sampleCamera = (page, ms) =>
   page.evaluate(
-    ms =>
+    ([ms, window]) =>
       new Promise(done => {
-        const out = { yawRate: 0, rise: 0, clearance: Infinity, blend: [], pitch: [], resets: 0 };
+        const out = { yawRate: 0, rise: 0, jump: 0, turn: 0, clearance: Infinity, blend: [], pitch: [], resets: 0 };
+        const frames = [];
+        let segment = 0;
         let last = null;
         const end = performance.now() + ms;
+        const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
         const step = now => {
           try {
             const ui = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
             const b = ui.home?.backdrop;
             const yaw = b?.yaw;
-            const at = JSON.parse(window.furyMultiplayer ?? 'null')?.origin;
+            const at = JSON.parse(globalThis.furyMultiplayer ?? 'null')?.origin;
             if (b && yaw !== undefined) {
               // A reset (a wreck's recovery or the autopilot's stuck rules)
               // cuts the ride's own camera, as in any ride: not a backdrop snap.
               const reset =
                 (last && ui.reset_count !== last.resetCount) ||
                 (last?.at && at && Math.hypot(at[0] - last.at[0], at[2] - last.at[2]) > 20);
-              if (reset) out.resets++;
-              // Only while the backdrop has a share (the chase is the original's).
-              if (last && !reset && now > last.now && (b.blend > 0 || last.blend > 0)) {
-                const dt = (now - last.now) / 1000;
-                let turn = yaw - last.yaw;
-                turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-                const yawRate = Math.abs(turn) / Math.max(dt, 1 / 60);
-                const rise = Math.abs(b.eye[1] - last.y) / Math.max(dt, 1 / 60);
-                if (yawRate > out.yawRate || rise > out.rise)
-                  out.worst = { yawRate, rise, dt, blend: [last.blend, b.blend], y: [last.y, b.eye[1]], yaw: [last.yaw, yaw] };
-                out.yawRate = Math.max(out.yawRate, yawRate);
-                out.rise = Math.max(out.rise, rise);
+              if (reset) {
+                out.resets++;
+                segment++;
               }
+              // Only while the backdrop has a share (the chase is the original's).
+              if (last && !reset && (b.blend > 0 || last.blend > 0)) {
+                out.jump = Math.max(out.jump, Math.abs(b.eye[1] - last.y));
+                out.turn = Math.max(out.turn, Math.abs(wrap(yaw - last.yaw)));
+              }
+              frames.push({ now, yaw, y: b.eye[1], blend: b.blend, segment });
               out.clearance = Math.min(out.clearance, b.clearance);
               out.blend.push(b.blend);
               out.pitch.push(b.pitch);
@@ -169,11 +174,28 @@ const sampleCamera = (page, ms) =>
             }
           } catch {}
           if (now < end) requestAnimationFrame(step);
-          else done(out);
+          else {
+            for (let i = 0, j = 0; i < frames.length; i++) {
+              const a = frames[i];
+              j = Math.max(j, i + 1);
+              while (j < frames.length && frames[j].now - a.now < window * 1000) j++;
+              if (j >= frames.length) break;
+              const b = frames[j];
+              if (a.segment !== b.segment || (a.blend <= 0 && b.blend <= 0)) continue;
+              const dt = (b.now - a.now) / 1000;
+              const yawRate = Math.abs(wrap(b.yaw - a.yaw)) / dt;
+              const rise = Math.abs(b.y - a.y) / dt;
+              if (yawRate > out.yawRate || rise > out.rise)
+                out.worst = { yawRate, rise, dt, blend: [a.blend, b.blend], y: [a.y, b.y], yaw: [a.yaw, b.yaw] };
+              out.yawRate = Math.max(out.yawRate, yawRate);
+              out.rise = Math.max(out.rise, rise);
+            }
+            done(out);
+          }
         };
         requestAnimationFrame(step);
       }),
-    ms
+    [ms, WINDOW]
   );
 // The backdrop under the menus: full share, the horizon in view (looking down
 // a little), clear of the ground, no snaps.
@@ -183,6 +205,8 @@ function assertBackdrop(camera, label) {
   assert.ok(camera.clearance > 6, `${label}: clear of the ground: ${camera.clearance} ft`);
   assert.ok(camera.yawRate < 3.5, `${label}: no yaw snap: ${camera.yawRate} rad/s`);
   assert.ok(camera.rise < 45, `${label}: no height snap: ${camera.rise} ft/s`);
+  assert.ok(camera.jump < 4, `${label}: no height jump in one frame: ${camera.jump} ft`);
+  assert.ok(camera.turn < 0.35, `${label}: no yaw jump in one frame: ${camera.turn} rad`);
 }
 
 const browser = await launch();
