@@ -1923,7 +1923,9 @@ impl Net {
                     .presented
                     .iter()
                     .find(|(peer, _, stale, _)| *peer == p.id && !*stale)
-                    .map(|(_, at, ..)| (at[0] - origin[0]).hypot(at[2] - origin[2])),
+                    .map(|(_, at, ..)| {
+                        atv_core::math::Det::hypot_d(at[0] - origin[0], at[2] - origin[2])
+                    }),
             })
             .collect();
         atv_ui::hud::riders::sort(&mut riders);
