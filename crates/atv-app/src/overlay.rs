@@ -207,6 +207,9 @@ pub struct Overlay {
     /// most once a ride session (`CHAT_TIP_KEY` counts sessions).
     chat_tip: Option<f64>,
     chat_tip_seen: bool,
+    /// The hub's and Quick Play's panels this frame: a tip waits while it
+    /// would cover one.
+    panel_rects: Vec<Rect>,
     ride_started: bool,
     /// Laid-out toolbar and keyboard card, reused while their inputs are
     /// unchanged (the browser HUD's unchanged-state redraw avoidance).
@@ -366,6 +369,7 @@ impl Overlay {
             chat_shown: false,
             chat_tip: None,
             chat_tip_seen: false,
+            panel_rects: Vec::new(),
             tags: 0,
             view_tags: Vec::new(),
             compass_icons: None,
@@ -968,6 +972,7 @@ impl Overlay {
         let started = web_time::Instant::now();
         self.list.clear();
         self.hits.clear();
+        self.panel_rects.clear();
         if let Some([r, g, b]) = self.backdrop {
             self.list.rect(
                 Rect::new(0., 0., self.view.width, self.view.height),
@@ -1810,6 +1815,7 @@ impl Overlay {
                 &mut hits,
             );
             hub_bottom = panels_bottom(&list, view.width);
+            self.panel_rects.extend(panel_rects(&list, view.width));
             self.list.items.extend(list.items);
             self.hits.extend(hits);
         }
@@ -2036,24 +2042,39 @@ impl Overlay {
         };
         let view = self.view;
         let detail = if view.touch_first {
-            "TAP THE BUBBLE · LINES, EMOTES, HORN"
+            "TAP THE BUBBLE"
         } else if view.coarse {
-            "TAP OR PRESS T · LINES, EMOTES, HORN"
+            "TAP IT OR PRESS T"
         } else {
-            "CLICK OR PRESS T · LINES, EMOTES, HORN"
+            "CLICK IT OR PRESS T"
         };
+        let tip = atv_ui::hud::tips::Tip {
+            at: [rect.x + rect.w / 2., rect.bottom() - 6.],
+            title: "CHAT WITH RIDERS".into(),
+            detail: detail.into(),
+        };
+        let margin = view.safe[3].max(14.);
+        // A hub prompt or Quick Play panel in the way: the tip waits and
+        // shows in full once it has gone.
+        let area = atv_ui::hud::tips::bounds(&mut self.fonts, &tip, margin);
+        let clear = |r: &Rect| {
+            area.right() + 12. <= r.x
+                || r.right() + 12. <= area.x
+                || area.bottom() <= r.y
+                || r.bottom() <= area.y
+        };
+        if !self.panel_rects.iter().all(clear) {
+            self.chat_tip = Some(now + 500.);
+            return;
+        }
         atv_ui::hud::tips::paint(
             &mut self.fonts,
             &mut self.list,
             &mut self.hits,
-            &atv_ui::hud::tips::Tip {
-                at: [rect.x + rect.w / 2., rect.bottom() - 6.],
-                title: "CHAT WITH RIDERS".into(),
-                detail: detail.into(),
-            },
+            &tip,
             now,
             atv_ui::hud::tips::fade(age, CHAT_TIP_LIFE),
-            view.safe[3].max(14.),
+            margin,
         );
     }
 
@@ -2143,6 +2164,7 @@ impl Overlay {
             if wheel && view.height - bottom < atv_ui::hud::chat::WHEEL_SPACE {
                 return 0.;
             }
+            self.panel_rects.extend(panel_rects(&list, view.width));
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(&hits);
             return bottom;
@@ -3065,6 +3087,14 @@ pub(crate) fn terrain_blocks(
 /// The lowest edge of a laid-out overlay's panels: boxes at least 120 px
 /// wide and short of the whole view (a win flash covers it; buttons and
 /// confetti are narrower), 0 for none.
+/// The panel-sized boxes of a HUD piece (as [`panels_bottom`] counts them).
+fn panel_rects(list: &DisplayList, width: f32) -> impl Iterator<Item = Rect> + '_ {
+    list.items.iter().filter_map(move |item| match item {
+        atv_ui::paint::Item::Box(b) if b.rect.w >= 120. && b.rect.w < width - 1. => Some(b.rect),
+        _ => None,
+    })
+}
+
 fn panels_bottom(list: &DisplayList, width: f32) -> f32 {
     list.items
         .iter()

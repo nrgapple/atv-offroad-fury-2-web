@@ -124,7 +124,7 @@ pub fn paint_hop_target(
     let portrait = screen[1] > screen[0];
     // Under the rider (world_centre puts it mid-stage, higher upright),
     // above the caption.
-    let cy = top + (bottom - top) * if portrait { 0.66 } else { 0.76 };
+    let cy = top + (bottom - top) * if portrait { 0.73 } else { 0.76 };
     let phase = ((now % 1400.) / 1400.) as f32;
     let t = if selected {
         1.

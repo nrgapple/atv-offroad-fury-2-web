@@ -360,10 +360,11 @@ pub fn paint_wheel(
     list.push(Item::Box(BoxPaint {
         rect: Rect::new(cx - glow, cy - glow, glow * 2., glow * 2.),
         radii: [glow; 4],
+        // Clear before the circle's rim (0.707 of farthest-corner).
         fill: Some(Fill::radial(&[
             (0., Color::hex("#0000008c")),
-            (0.6, Color::hex("#00000066")),
-            (1., Color::TRANSPARENT),
+            (0.42, Color::hex("#00000066")),
+            (0.68, Color::TRANSPARENT),
         ])),
         ..Default::default()
     }));

@@ -59,9 +59,11 @@ positive or neutral.
 ## First-time tip
 
 Issue #742. In a room with chat, 2 s into the ride, a tip points at the
-CHAT button: "CHAT WITH RIDERS" in gold and "TAP THE BUBBLE · LINES, EMOTES,
-HORN" ("CLICK OR PRESS T · …" with a mouse) under a bobbing gold arrow, for
-12 s. Tapping it opens the wheel. It shows on at most three rides
+CHAT button: "CHAT WITH RIDERS" in gold and "TAP THE BUBBLE" ("CLICK IT OR
+PRESS T" with a mouse) under a bobbing gold arrow, for 12 s. While a hub
+prompt (Challenge, an offer, the map vote) or the Quick Play panel would
+overlap it, it waits, then shows in full half a second after the panel has
+gone. Tapping it opens the wheel. It shows on at most three rides
 (`atv-tip-chat` counts them) and never again once the player has opened
 chat by any means ("done"). Chat goes to the whole room; the tip says
 "riders", not a person.

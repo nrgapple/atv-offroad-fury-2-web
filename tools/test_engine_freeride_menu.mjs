@@ -243,6 +243,13 @@ try {
   while ((await read(page)).front.selection !== single) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await onFront(page, 'single');
+  // The target follows once the page has slid in.
+  await wait(
+    page,
+    id => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.hits?.some(h => h.id === id),
+    HOP_IN,
+    10000
+  );
   ui = await read(page);
   assert.ok(ui.home.live && ui.home.world, 'the world stays behind Single Player');
   assert.ok(ui.front.hits.some(h => h.id === WORLD) && ui.front.hits.some(h => h.id === HOP_IN));

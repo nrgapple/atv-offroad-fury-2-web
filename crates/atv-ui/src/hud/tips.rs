@@ -44,14 +44,9 @@ pub fn paint(
     let phase = ((now % 1400.) / 1400.) as f32;
     let bob = 3. * (0.5 - 0.5 * (phase * std::f32::consts::TAU).cos());
     let [x, y] = tip.at;
-    let title = classic::hud_style(17., RACE_GOLD);
-    let detail = classic::hud_style(12., RACE_TEXT);
-    let title_w = fonts.measure(&tip.title, &title.font, 0.).width;
-    let detail_w = fonts.measure(&tip.detail, &detail.font, 0.).width;
-    let width = title_w.max(detail_w);
-    // Left-aligned under the arrow, never past the left margin.
-    let left = (x - 14.).max(margin);
-    let top = y + 30.;
+    let (title, detail) = styles();
+    let area = bounds(fonts, tip, margin);
+    let (left, width, top) = (area.x, area.w, y + 30.);
     list.opacity(alpha);
     // A soft shade under the lettering, as the riders list's.
     list.push(Item::Box(BoxPaint {
@@ -59,10 +54,11 @@ pub fn paint(
         radii: [24.; 4],
         fill: Some(Fill::ellipse_at(
             [0.5, 0.5],
+            // Clear before the box's edges (0.707 of the ellipse).
             &[
-                (0., Color::hex("#00000066")),
-                (0.7, Color::hex("#00000033")),
-                (1., Color::TRANSPARENT),
+                (0., Color::hex("#00000059")),
+                (0.4, Color::hex("#0000002e")),
+                (0.68, Color::TRANSPARENT),
             ],
         )),
         ..Default::default()
@@ -89,6 +85,26 @@ pub fn paint(
     list.text(&tip.detail, &detail, left, top + 33.);
     list.unopacity();
     hits.push((Rect::new(left - 8., y, width + 16., top + 42. - y), TIP_HIT));
+}
+
+fn styles() -> (crate::text::TextStyle, crate::text::TextStyle) {
+    (
+        classic::hud_style(17., RACE_GOLD),
+        classic::hud_style(12., RACE_TEXT),
+    )
+}
+
+/// Where `tip` draws: from its arrow down to its second line, the
+/// lettering left-aligned under the arrow but never past `margin`.
+pub fn bounds(fonts: &mut Fonts, tip: &Tip, margin: f32) -> Rect {
+    let (title, detail) = styles();
+    let width = fonts
+        .measure(&tip.title, &title.font, 0.)
+        .width
+        .max(fonts.measure(&tip.detail, &detail.font, 0.).width);
+    let [x, y] = tip.at;
+    let left = (x - 14.).max(margin);
+    Rect::new(left, y, width, 72.)
 }
 
 /// A tip's opacity `age` seconds after it appeared, shown for `life`

@@ -97,10 +97,12 @@ pub fn paint(
         radii: [18.; 4],
         fill: Some(Fill::ellipse_at(
             [0.75, 0.4],
+            // Clear by 0.68: the box's edges sit at 0.707 of a
+            // farthest-corner ellipse, so no edge shows.
             &[
-                (0., Color::hex("#00000059")),
-                (0.7, Color::hex("#00000026")),
-                (1., Color::TRANSPARENT),
+                (0., Color::hex("#0000004d")),
+                (0.4, Color::hex("#00000029")),
+                (0.68, Color::TRANSPARENT),
             ],
         )),
         ..Default::default()
