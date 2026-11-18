@@ -227,6 +227,39 @@ impl Kind {
 struct Plane {
     origin: V,
     normal: V,
+    /// Surface velocity (a moving train); the origin travels with it.
+    velocity: V,
+    /// Contacts count only this far along the plane from `origin`: a scene
+    /// face is local, unlike the terrain under a capsule end.
+    extent: f32,
+}
+
+/// The nearest scene face a ray found: world point, outward normal and the
+/// surface's point velocity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneHit {
+    pub point: V,
+    pub normal: V,
+    pub velocity: V,
+}
+
+/// A moving capsule the rider collides with but never pushes (his own bike).
+/// `velocity` is the velocity of each segment end.
+#[derive(Clone, Copy, Debug)]
+pub struct Solid {
+    pub segment: [V; 2],
+    pub velocity: [V; 2],
+    pub radius: f32,
+}
+const MAX_SOLIDS: usize = 4;
+
+/// The caller's nearby scene. `cast` fills the nearest face each (start,
+/// end) ray reaches; `moving` is the velocity of a moving mesh among them
+/// (the train), so a rider in its path looks for it.
+pub type Cast<'a> = dyn FnMut(&[(V, V)], &mut [Option<SceneHit>]) + 'a;
+pub struct Scene<'a> {
+    pub cast: &'a mut Cast<'a>,
+    pub moving: Option<V>,
 }
 
 struct Body {
@@ -253,6 +286,13 @@ struct Body {
     reach: f32,
     scale: V,
     planes: [Option<Plane>; 2],
+    /// Nearest scene face ahead of each capsule end this step.
+    scene: [Option<Plane>; 2],
+    /// Set once the body has separated from every solid; a rider thrown
+    /// from the saddle starts inside his bike.
+    clear: bool,
+    /// Touched a scene face (1) or a solid (2) during the last step.
+    touched: u8,
     impact: f32,
     impact_point: V,
     impact_normal: V,
@@ -319,6 +359,8 @@ struct Contact {
     normal: V,
     lambda: f32,
     approach: f32,
+    /// Surface velocity at the contact.
+    ground: V,
 }
 
 pub struct Ragdoll {
@@ -328,6 +370,12 @@ pub struct Ragdoll {
     attachments: Vec<(usize, M)>,
     pairs: Vec<(usize, usize)>,
     contacts: Vec<Contact>,
+    /// Reused scene ray buffers: (start, end) per capsule end and the owner
+    /// (body, end) of each ray.
+    rays: Vec<(V, V)>,
+    owners: Vec<(usize, usize)>,
+    hits: Vec<Option<SceneHit>>,
+    solids: [Option<Solid>; MAX_SOLIDS],
     calm: f32,
     pub sleeping: bool,
     torn: usize,
@@ -474,6 +522,9 @@ impl Ragdoll {
                     length(column(&pose[i], 2)),
                 ],
                 planes: [None; 2],
+                scene: [None; 2],
+                clear: false,
+                touched: 0,
                 impact: 0.,
                 impact_point: [0.; 3],
                 impact_normal: UP,
@@ -769,6 +820,10 @@ impl Ragdoll {
             attachments,
             pairs,
             contacts: Vec::new(),
+            rays: Vec::new(),
+            owners: Vec::new(),
+            hits: Vec::new(),
+            solids: [None; MAX_SOLIDS],
             calm: 0.,
             sleeping: false,
             torn: 0,
@@ -824,6 +879,11 @@ impl Ragdoll {
             .map(|p| dot(sub(world, p.origin), p.normal))
             .reduce(f32::min)
     }
+    /// Segments that touched a scene face, and a solid, during the last step.
+    pub fn touching(&self) -> (usize, usize) {
+        let count = |bit: u8| self.bodies.iter().filter(|b| b.touched & bit != 0).count();
+        (count(1), count(2))
+    }
     /// Strongest contact approach speed per body during the last step.
     pub fn impact(&self, body: usize) -> (f32, V, V) {
         let b = &self.bodies[body];
@@ -839,10 +899,71 @@ impl Ragdoll {
     }
 
     pub fn step(&mut self, dt: f32, floor: &impl Fn(V) -> Option<(f32, V)>) {
+        self.step_in_scene(dt, floor, None, &[]);
+    }
+
+    /// `step` that also collides with scene meshes and moving solids. Once
+    /// per presentation step each capsule end moving toward something casts
+    /// one ray; `cast` fills the nearest scene face each ray reaches (the
+    /// caller tests only the meshes it already selected). The substeps then
+    /// hold each end off that face as they do off the terrain. `solids` are
+    /// capsules the rider meets but never moves.
+    pub fn step_in_scene(
+        &mut self,
+        dt: f32,
+        floor: &impl Fn(V) -> Option<(f32, V)>,
+        mut scene: Option<Scene<'_>>,
+        solids: &[Solid],
+    ) {
         for b in &mut self.bodies {
             b.impact = 0.;
+            b.touched = 0;
         }
-        if self.sleeping || dt.is_nan() || dt <= 0. {
+        self.solids = [None; MAX_SOLIDS];
+        for (slot, solid) in self.solids.iter_mut().zip(solids) {
+            *slot = Some(*solid);
+        }
+        if dt.is_nan() || dt <= 0. {
+            return;
+        }
+        // Bodies thrown from inside a solid ignore it until they are clear;
+        // a moving solid that reaches a resting rider wakes him.
+        let mut struck = false;
+        for b in self.bodies.iter_mut().filter(|_| !solids.is_empty()) {
+            let (p, q) = (b.world(b.segment[0]), b.world(b.segment[1]));
+            let mut inside = false;
+            for solid in self.solids.iter().flatten() {
+                let (pi, ps) = closest_segments(p, q, solid.segment[0], solid.segment[1]);
+                if length(sub(pi, ps)) < b.radius + solid.radius {
+                    inside = true;
+                    struck |=
+                        b.clear && length(solid.velocity[0]).max(length(solid.velocity[1])) > 1.;
+                }
+            }
+            b.clear |= !inside;
+        }
+        let mut cast = false;
+        if self.sleeping
+            && !struck
+            && let Some(scene) = scene.as_mut().filter(|s| s.moving.is_some())
+        {
+            // A resting rider only wakes when a moving face reaches him.
+            self.cast_scene(dt, scene);
+            cast = true;
+            struck = self.bodies.iter().any(|b| {
+                (0..2).any(|k| {
+                    b.scene[k].is_some_and(|plane| {
+                        let p = b.world(b.segment[k]);
+                        dot(sub(p, plane.origin), plane.normal) < b.radius + 0.05
+                    })
+                })
+            });
+        }
+        if self.sleeping && struck {
+            self.sleeping = false;
+            self.calm = 0.;
+        }
+        if self.sleeping {
             return;
         }
         // One terrain sample per capsule end per presentation step; the
@@ -858,9 +979,20 @@ impl Ragdoll {
                         (h.is_finite() && n[1] > 0.05).then_some(Plane {
                             origin: [p[0], h, p[2]],
                             normal: n,
+                            velocity: [0.; 3],
+                            extent: f32::INFINITY,
                         })
                     })
                 };
+            }
+        }
+        match scene {
+            Some(_) if cast => {}
+            Some(mut scene) => self.cast_scene(dt, &mut scene),
+            None => {
+                for b in &mut self.bodies {
+                    b.scene = [None; 2];
+                }
             }
         }
         // Hard tumbles need 480 Hz for stiff limits; a settling body does not.
@@ -888,8 +1020,109 @@ impl Ragdoll {
         }
     }
 
+    /// Per capsule end: one ray back into the face it rested on last step,
+    /// one along its motion relative to that face, and near a moving mesh
+    /// one along its motion relative to that mesh, each long enough for this
+    /// step's travel.
+    fn cast_scene(&mut self, dt: f32, scene: &mut Scene<'_>) {
+        self.rays.clear();
+        self.owners.clear();
+        let carrier = self
+            .bodies
+            .iter()
+            .flat_map(|b| b.scene.iter().flatten())
+            .map(|plane| plane.velocity)
+            .find(|v| length(*v) > 1.)
+            .or(scene.moving);
+        for (i, b) in self.bodies.iter_mut().enumerate() {
+            let previous = b.scene;
+            b.scene = [None; 2];
+            let shared = previous[0].or(previous[1]);
+            for (k, previous) in previous.iter().enumerate() {
+                if k == 1 && b.segment[0] == b.segment[1] {
+                    continue;
+                }
+                // An end follows the other end's face until it finds its own.
+                let previous = previous.or(shared);
+                let p = b.world(b.segment[k]);
+                let motion = add(b.v, cross(b.w, sub(p, b.x)));
+                let ground = previous.map_or([0.; 3], |plane| plane.velocity);
+                let v = sub(motion, ground);
+                let speed = length(v);
+                let relative = carrier.map(|c| sub(motion, c));
+                let reach = b.radius + 1.5 * dt * speed.max(relative.map_or(0., length)) + 1.;
+                // Rays start behind the end so one pressed into a face still
+                // finds it (faces are one-sided).
+                let mut ray = |direction: V, behind: f32| {
+                    self.rays.push((
+                        sub(p, scale(direction, behind)),
+                        add(p, scale(direction, reach)),
+                    ));
+                    self.owners.push((i, k));
+                };
+                let back = previous.map(|plane| scale(plane.normal, -1.));
+                if let Some(back) = back {
+                    ray(back, b.radius + 1.);
+                }
+                let mut along = None;
+                for v in std::iter::once(v).chain(relative) {
+                    let speed = length(v);
+                    if speed <= 0.5 {
+                        continue;
+                    }
+                    let direction = scale(v, 1. / speed);
+                    let repeated = |d: Option<V>| d.is_some_and(|d| dot(d, direction) > 0.95);
+                    if !repeated(back) && !repeated(along) {
+                        ray(direction, b.radius);
+                        along = Some(direction);
+                    }
+                }
+            }
+        }
+        if self.rays.is_empty() {
+            return;
+        }
+        self.hits.clear();
+        self.hits.resize(self.rays.len(), None);
+        (scene.cast)(&self.rays, &mut self.hits);
+        for ((&(i, k), &(start, end)), hit) in self.owners.iter().zip(&self.rays).zip(&self.hits) {
+            let Some(hit) = hit else {
+                continue;
+            };
+            if !hit.point.iter().chain(&hit.velocity).all(|x| x.is_finite()) {
+                continue;
+            }
+            let ray = sub(end, start);
+            let n = unit_or(hit.normal, scale(ray, -1.));
+            let normal = if dot(n, ray) > 0. { scale(n, -1.) } else { n };
+            let b = &mut self.bodies[i];
+            let p = b.world(b.segment[k]);
+            let height = dot(sub(p, hit.point), normal);
+            // Of two faces, the end holds off the one it is nearer.
+            if b.scene[k].is_some_and(|plane| dot(sub(p, plane.origin), plane.normal) <= height) {
+                continue;
+            }
+            b.scene[k] = Some(Plane {
+                origin: hit.point,
+                normal,
+                velocity: hit.velocity,
+                extent: length(ray) + 0.5,
+            });
+        }
+    }
+
     fn substep(&mut self, h: f32) {
         self.substeps += 1;
+        for b in &mut self.bodies {
+            for plane in b.scene.iter_mut().flatten() {
+                plane.origin = add(plane.origin, scale(plane.velocity, h));
+            }
+        }
+        for solid in self.solids.iter_mut().flatten() {
+            for e in 0..2 {
+                solid.segment[e] = add(solid.segment[e], scale(solid.velocity[e], h));
+            }
+        }
         for b in &mut self.bodies {
             b.start_v = b.v;
             b.start_w = b.w;
@@ -905,27 +1138,59 @@ impl Ragdoll {
         self.solve_joints(false);
         self.contacts.clear();
         for b in 0..self.bodies.len() {
-            for k in 0..2 {
-                let Some(plane) = self.bodies[b].planes[k] else {
+            // Terrain under each end, then the scene face ahead of it.
+            for slot in 0..4 {
+                let k = slot % 2;
+                let body = &self.bodies[b];
+                let Some(plane) = (if slot < 2 {
+                    body.planes[k]
+                } else {
+                    body.scene[k]
+                }) else {
                     continue;
                 };
-                let body = &self.bodies[b];
                 let p = body.world(body.segment[k]);
-                let penetration = body.radius - dot(sub(p, plane.origin), plane.normal);
-                if penetration <= 0. {
+                let offset = sub(p, plane.origin);
+                let height = dot(offset, plane.normal);
+                let penetration = body.radius - height;
+                if penetration <= 0.
+                    || length(sub(offset, scale(plane.normal, height))) > plane.extent
+                {
                     continue;
                 }
                 let touch = sub(p, scale(plane.normal, body.radius));
-                let r = sub(touch, body.x);
-                let approach = -dot(add(body.start_v, cross(body.start_w, r)), plane.normal);
-                let lambda = self.translate(b, touch, None, scale(plane.normal, penetration));
-                self.contacts.push(Contact {
-                    body: b,
-                    r: sub(touch, self.bodies[b].x),
-                    normal: plane.normal,
-                    lambda,
-                    approach,
-                });
+                self.contact(b, touch, plane.normal, penetration, plane.velocity);
+                if slot >= 2 {
+                    self.bodies[b].touched |= 1;
+                }
+            }
+            if !self.bodies[b].clear {
+                continue;
+            }
+            for s in 0..MAX_SOLIDS {
+                let Some(solid) = self.solids[s] else {
+                    continue;
+                };
+                let body = &self.bodies[b];
+                let (p, q) = (body.world(body.segment[0]), body.world(body.segment[1]));
+                let (pi, ps) = closest_segments(p, q, solid.segment[0], solid.segment[1]);
+                let delta = sub(pi, ps);
+                let d = length(delta);
+                let penetration = body.radius + solid.radius - d;
+                if penetration <= 0. || d < 1e-5 {
+                    continue;
+                }
+                let n = scale(delta, 1. / d);
+                let axis = sub(solid.segment[1], solid.segment[0]);
+                let t = (dot(sub(ps, solid.segment[0]), axis) / dot(axis, axis).max(1e-8))
+                    .clamp(0., 1.);
+                let ground = add(
+                    scale(solid.velocity[0], 1. - t),
+                    scale(solid.velocity[1], t),
+                );
+                let touch = sub(pi, scale(n, body.radius));
+                self.contact(b, touch, n, penetration, ground);
+                self.bodies[b].touched |= 2;
             }
         }
         for k in 0..self.pairs.len() {
@@ -973,7 +1238,7 @@ impl Ragdoll {
                 (c.body, c.r, c.normal, c.lambda, c.approach)
             };
             let b = &self.bodies[body];
-            let v = add(b.v, cross(b.w, r));
+            let v = sub(add(b.v, cross(b.w, r)), self.contacts[k].ground);
             let vn = dot(v, n);
             let vt = sub(v, scale(n, vn));
             let vt_len = length(vt);
@@ -1020,6 +1285,26 @@ impl Ragdoll {
             self.bodies[c].w = add(self.bodies[c].w, dc);
             self.bodies[p].w = sub(self.bodies[p].w, dp);
         }
+    }
+
+    /// Pushes body `b` out along `normal` at `touch` and records the contact
+    /// for the velocity pass.
+    fn contact(&mut self, b: usize, touch: V, normal: V, penetration: f32, ground: V) {
+        let body = &self.bodies[b];
+        let r = sub(touch, body.x);
+        let approach = -dot(
+            sub(add(body.start_v, cross(body.start_w, r)), ground),
+            normal,
+        );
+        let lambda = self.translate(b, touch, None, scale(normal, penetration));
+        self.contacts.push(Contact {
+            body: b,
+            r: sub(touch, self.bodies[b].x),
+            normal,
+            lambda,
+            approach,
+            ground,
+        });
     }
 
     fn solve_joints(&mut self, limits_first: bool) {
@@ -1489,6 +1774,156 @@ pub(crate) mod tests {
         let before = r.matrices();
         r.step(1. / 60., &flat);
         assert_eq!(before, r.matrices());
+    }
+
+    /// A wall at x = `at` facing -x, as a scene face the caller's meshes
+    /// would report (one-sided: only rays heading +x reach it).
+    fn wall(at: f32, velocity: V) -> impl FnMut(&[(V, V)], &mut [Option<SceneHit>]) {
+        move |rays, hits| {
+            for (&(start, end), hit) in rays.iter().zip(hits.iter_mut()) {
+                let (a, b) = (start[0] - at, end[0] - at);
+                if a < 0. && b >= 0. {
+                    let t = a / (a - b);
+                    *hit = Some(SceneHit {
+                        point: add(start, scale(sub(end, start), t)),
+                        normal: [-1., 0., 0.],
+                        velocity,
+                    });
+                }
+            }
+        }
+    }
+
+    fn farthest_x(r: &Ragdoll) -> f32 {
+        r.bodies
+            .iter()
+            .flat_map(|b| b.segment.map(|e| b.world(e)[0] + b.radius))
+            .fold(f32::MIN, f32::max)
+    }
+
+    #[test]
+    fn a_thrown_rider_stops_at_scenery_instead_of_passing_through() {
+        let nodes = rider();
+        let pose = posed(&nodes, axis_angle([0., 0., 1.], 0.3), [0., 1.5, 0.]);
+        let launch = [45., 6., 0.];
+        let mut free = Ragdoll::new(&nodes, &pose, None, launch).unwrap();
+        let mut walled = Ragdoll::new(&nodes, &pose, None, launch).unwrap();
+        let mut cast = wall(6., [0.; 3]);
+        let mut reached = f32::MIN;
+        for _ in 0..240 {
+            free.step(1. / 60., &flat);
+            walled.step_in_scene(
+                1. / 60.,
+                &flat,
+                Some(Scene {
+                    cast: &mut cast,
+                    moving: None,
+                }),
+                &[],
+            );
+            reached = reached.max(farthest_x(&walled));
+            assert!(
+                walled
+                    .bodies
+                    .iter()
+                    .all(|b| b.x.iter().all(|v| v.is_finite()))
+            );
+        }
+        assert!(farthest_x(&free) > 20., "terrain-only rider should fly on");
+        assert!(reached < 6.15, "rider passed into the wall: {reached}");
+        let pelvis = walled.body_of_node(0).unwrap();
+        assert!(walled.center(pelvis)[0] < 6.);
+        assert!(length(walled.bodies[pelvis].v) < 5.);
+    }
+
+    #[test]
+    fn a_moving_face_carries_the_rider_with_it() {
+        // A train side sweeping toward a rider lying asleep in its path.
+        let nodes = rider();
+        let pose = posed(&nodes, axis_angle([1., 0., 0.], -1.5), [0., 1., 0.]);
+        let mut r = Ragdoll::new(&nodes, &pose, None, [0.; 3]).unwrap();
+        for _ in 0..600 {
+            r.step(1. / 60., &flat);
+        }
+        assert!(r.sleeping);
+        let mut at = 4.;
+        for _ in 0..60 {
+            let mut cast = wall(at, [-20., 0., 0.]);
+            r.step_in_scene(
+                1. / 60.,
+                &flat,
+                Some(Scene {
+                    cast: &mut cast,
+                    moving: Some([-20., 0., 0.]),
+                }),
+                &[],
+            );
+            at -= 20. / 60.;
+            assert!(farthest_x(&r) < at + 0.6, "train face passed the rider");
+        }
+        assert!(!r.sleeping, "the train woke him");
+        let pelvis = r.body_of_node(0).unwrap();
+        assert!(r.center(pelvis)[0] < -10.);
+    }
+
+    #[test]
+    fn the_rider_lands_on_his_bike_and_ignores_it_until_clear() {
+        let nodes = rider();
+        // A bike lying on its side across the landing spot.
+        let bike = Solid {
+            segment: [[-3., 1., 0.], [3., 1., 0.]],
+            velocity: [[0.; 3]; 2],
+            radius: 1.,
+        };
+        let pose = posed(&nodes, axis_angle([1., 0., 0.], -1.5), [0., 6., 0.]);
+        let mut r = Ragdoll::new(&nodes, &pose, None, [0., -5., 0.]).unwrap();
+        for _ in 0..240 {
+            r.step_in_scene(1. / 60., &flat, None, &[bike]);
+        }
+        let pelvis = r.body_of_node(0).unwrap();
+        // He came to rest on top of it rather than on the ground through it.
+        assert!(r.bodies.iter().all(|b| b.clear));
+        assert!(r.touching().1 > 0, "he rests on the bike");
+        let torso = r.center(pelvis);
+        assert!(
+            torso[1] > 1.6 || torso[2].abs() > 1.5,
+            "rider sank into his bike: {torso:?}"
+        );
+        // Thrown from the saddle: starting inside the bike does not blast
+        // him out of it.
+        let seated = posed(&nodes, [0., 0., 0., 1.], [0., 0., 0.]);
+        let mut r = Ragdoll::new(&nodes, &seated, None, [20., 4., 0.]).unwrap();
+        r.step_in_scene(1. / 60., &flat, None, &[bike]);
+        assert!(r.bodies.iter().any(|b| !b.clear));
+        assert!(r.bodies.iter().all(|b| length(b.v) < 40.));
+    }
+
+    #[test]
+    fn a_moving_bike_wakes_a_resting_rider() {
+        let nodes = rider();
+        let pose = posed(&nodes, axis_angle([1., 0., 0.], -1.5), [0., 1., 0.]);
+        let mut r = Ragdoll::new(&nodes, &pose, None, [0., 0., 0.]).unwrap();
+        for _ in 0..600 {
+            r.step(1. / 60., &flat);
+            if r.sleeping {
+                break;
+            }
+        }
+        assert!(r.sleeping);
+        let far = Solid {
+            segment: [[-30., 1., 0.], [-28., 1., 0.]],
+            velocity: [[15., 0., 0.]; 2],
+            radius: 1.,
+        };
+        r.step_in_scene(1. / 60., &flat, None, &[far]);
+        assert!(r.sleeping, "a distant bike does not wake him");
+        let near = Solid {
+            segment: [[-1.5, 0.6, -3.], [-1.5, 0.6, 3.]],
+            velocity: [[15., 0., 0.]; 2],
+            radius: 1.,
+        };
+        r.step_in_scene(1. / 60., &flat, None, &[near]);
+        assert!(!r.sleeping, "a bike sliding into him wakes him");
     }
 
     #[test]

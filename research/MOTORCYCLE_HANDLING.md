@@ -148,7 +148,25 @@ The model here:
   and the kind of wreck sets which way he leaves. He tumbles and comes to
   rest on the terrain. The camera, sound and triggers follow his pelvis, other
   players receive the same pose, and the respawn waits for him to stop
-  tumbling (6 s at most). He does not collide with scenery or the bike.
+  tumbling (6 s at most).
+- **The thrown rider meets scenery and his bike** (#751). Each frame the
+  bike's own scene query (props, plant proxies and the moving train, the set
+  its whiskers and tires already test) is widened to reach the rider while he
+  is within 40 ft. Each capsule end then casts one ray along its motion (and
+  one back into the face it last rested on, and near a moving train one along
+  its motion relative to the train) against only those meshes; the nearest
+  face holds that end off for the frame's substeps the way the terrain plane
+  does, moving with the train when it is the train. The bike is two capsules
+  (through the wheels, and along the seat and tank). The rider is pushed by
+  it but never pushes it, ignores it until he first comes clear of the saddle,
+  and is woken if it slides into him at rest. Measured on ENV01 with the
+  RM125 ridden into eight trees, in seven runs he travelled 15 to 35 ft less
+  past the tree in the first second after the throw than with terrain-only
+  collision; in the eighth he glanced off
+  (`crates/atv-game/tests/thrown_rider.rs`).
+  The ATV crash ragdoll is unchanged. Source fact: none; the original
+  motorcycle rider never collides after a wreck. Assumed: the bike capsule
+  sizes are hand-set, not taken from the bike mesh.
 
 ## Measurements
 
@@ -188,7 +206,9 @@ measured 3 to 22° and banks to 81°.
   thrust, tire relaxation or load sensitivity.
 - Pitch, the suspension and whoops behaviour are the recovered controller's;
   the bike still pitches about 20° through whoops at 35 mph.
-- The thrown rider collides with terrain only.
+- The thrown rider tests scenery with one or two rays per capsule end per
+  frame, so a fast limb can still clip a thin branch it grazes, and he leaves
+  the scene query beyond 40 ft from the bike.
 - The chassis collision response is the recovered one. On steep ENV01 faces
   a 50cc can still clip the ground with its chassis while just airborne and
   be flipped over backwards (one of its six test turns; it wrecked more often

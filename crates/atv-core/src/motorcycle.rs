@@ -25,6 +25,9 @@ use crate::{
     wheel::{add, dot, scale, sub},
 };
 use serde::Serialize;
+/// Farthest a thrown rider may be from the bike and still share its scene
+/// query (the native cache cell is 40 ft).
+const RIDER_SCENE_REACH: f32 = 40.;
 use std::collections::BTreeMap;
 #[path = "motorcycle_balance.rs"]
 mod balance;
@@ -529,6 +532,9 @@ pub struct Frame {
     pub dynamic_candidates: usize,
     /// Chassis contacts against plant (tree) proxies this frame.
     pub vegetation_contact_count: usize,
+    /// Thrown-rider segments touching scenery and touching the bike this step.
+    pub rider_scene_contacts: usize,
+    pub rider_bike_contacts: usize,
     /// Rider pelvis spring offset (ft, bike frame).
     pub rider_pelvis_offset: V,
     /// Rider boot peg pins (0 released for feet down / foot out, 1 pinned).
@@ -571,6 +577,11 @@ pub struct Motorcycle {
     /// The thrown rider: an articulated body that tumbles and comes to rest
     /// on the terrain. `rider_body` follows its pelvis.
     ragdoll: Option<crate::ragdoll::Ragdoll>,
+    /// Reused scene rays for the thrown rider.
+    rider_rays: Vec<crate::collision::CollisionRay>,
+    /// The thrown rider meets scenery and his bike (off: terrain only, for
+    /// comparison runs).
+    rider_scene: bool,
     /// World rider pose after the last riding step and the bike's velocity
     /// entering the current step: what the rider carries into a wreck.
     rider_last: Vec<M>,
@@ -663,6 +674,8 @@ impl Motorcycle {
             boundary_random: crate::engine_audio::OriginalRandom::with_seed(1),
             rider_body: None,
             ragdoll: None,
+            rider_rays: Vec::new(),
+            rider_scene: true,
             rider_last: Vec::new(),
             entry_velocity: [0.; 3],
             pose_controls: pose::Controls::default(),
@@ -880,6 +893,10 @@ impl Motorcycle {
             .as_ref()
             .map_or_else(|| self.world(), |b| b.0)
     }
+    /// Diagnostic: with `false` the thrown rider collides with terrain only.
+    pub fn set_rider_scene(&mut self, on: bool) {
+        self.rider_scene = on;
+    }
     pub fn set_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {
         self.obstacles = obstacles;
     }
@@ -898,7 +915,16 @@ impl Motorcycle {
     /// motion. Without a partitioned scene, every static obstacle is a candidate.
     fn select_contacts(&mut self) -> Result<()> {
         let center = self.body.center;
-        let radius = 12. + dot(self.body.linear_velocity, self.body.linear_velocity).sqrt() / 30.;
+        let mut radius =
+            12. + dot(self.body.linear_velocity, self.body.linear_velocity).sqrt() / 30.;
+        // The same query also covers a thrown rider within reach of the bike,
+        // so his limbs meet the props, plants and train the bike sees.
+        if self.ragdoll.is_some()
+            && let Some((world, _)) = &self.rider_body
+        {
+            let gap = sub([world[12], world[13], world[14]], center);
+            radius = radius.max((dot(gap, gap).sqrt() + 6.).min(RIDER_SCENE_REACH));
+        }
         self.contacts.clear();
         let selected = if let Some(scene) = &mut self.scene {
             let mud = scene.mud_obstacles().to_vec();
@@ -1054,8 +1080,69 @@ impl Motorcycle {
                     .flatten()
                     .map(|hit| (hit.height, hit.normal))
             };
-            if let Some(ragdoll) = &mut self.ragdoll {
-                ragdoll.step(dt, &floor);
+            if self.ragdoll.is_some() {
+                let solids = self.bike_solids();
+                let pelvis = self
+                    .rider_body
+                    .as_ref()
+                    .map_or(self.body.center, |(w, _)| [w[12], w[13], w[14]]);
+                let moving = self
+                    .contacts
+                    .iter()
+                    .find_map(|c| c.1)
+                    .map(|m| m.point_velocity(pelvis));
+                let (contacts, segments) = (&self.contacts, &mut self.rider_rays);
+                let mut cast = |rays: &[(V, V)], hits: &mut [Option<crate::ragdoll::SceneHit>]| {
+                    segments.clear();
+                    segments.extend(
+                        rays.iter()
+                            .map(|&(start, end)| crate::collision::CollisionRay { start, end }),
+                    );
+                    for (obstacle, motion, _) in contacts {
+                        // Presentation only: a failed query leaves the rays clear.
+                        let Ok(found) = crate::wreck::query_static_segments(
+                            segments,
+                            std::slice::from_ref(obstacle),
+                            rays.len(),
+                        ) else {
+                            continue;
+                        };
+                        for hit in found {
+                            let start = rays[hit.ray_index].0;
+                            let d = sub(hit.world_point, start);
+                            let nearer = hits[hit.ray_index].is_none_or(|h| {
+                                let e = sub(h.point, start);
+                                dot(d, d) < dot(e, e)
+                            });
+                            if nearer {
+                                hits[hit.ray_index] = Some(crate::ragdoll::SceneHit {
+                                    point: hit.world_point,
+                                    normal: hit.world_normal,
+                                    velocity: motion
+                                        .map_or([0.; 3], |m| m.point_velocity(hit.world_point)),
+                                });
+                            }
+                        }
+                    }
+                };
+                let on = self.rider_scene;
+                if let Some(ragdoll) = &mut self.ragdoll {
+                    ragdoll.step_in_scene(
+                        dt,
+                        &floor,
+                        on.then_some(crate::ragdoll::Scene {
+                            cast: &mut cast,
+                            moving,
+                        }),
+                        if on { &solids } else { &[] },
+                    );
+                }
+            }
+            (
+                self.frame.rider_scene_contacts,
+                self.frame.rider_bike_contacts,
+            ) = self.ragdoll.as_ref().map_or((0, 0), |r| r.touching());
+            if let Some(ragdoll) = &self.ragdoll {
                 let pelvis = ragdoll.center(
                     self.model
                         .rider
@@ -1184,6 +1271,33 @@ impl Motorcycle {
                 .collect();
         }
         Ok(())
+    }
+    /// The bike as the thrown rider meets it: a capsule through both wheels
+    /// and one along the seat and tank (authored shapes; the source rider
+    /// never touches his bike after a wreck).
+    fn bike_solids(&self) -> [crate::ragdoll::Solid; 2] {
+        let s = if self.model.size == 50 { 0.62 } else { 1. };
+        let [a, b] = self.model.wheel_rest;
+        let lerp = |t: f32| add(a, scale(sub(b, a), t));
+        let wheel = self.params.tires[0].radius.min(self.params.tires[1].radius);
+        let shapes = [
+            ([a, b], wheel),
+            (
+                [
+                    add(lerp(0.25), [0., 1.5 * s, 0.]),
+                    add(lerp(0.8), [0., 1.5 * s, 0.]),
+                ],
+                0.55 * s,
+            ),
+        ];
+        shapes.map(|(ends, radius)| {
+            let segment = ends.map(|e| self.chassis_world(e));
+            crate::ragdoll::Solid {
+                segment,
+                velocity: segment.map(|p| self.body.velocity_at(p)),
+                radius,
+            }
+        })
     }
     /// The rider leaves the bike as an articulated body. He keeps most of
     /// the speed the bike had before whatever stopped it, each limb keeps the
