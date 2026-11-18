@@ -256,8 +256,9 @@ const MAX_SOLIDS: usize = 4;
 /// The caller's nearby scene. `cast` fills the nearest face each (start,
 /// end) ray reaches; `moving` is the velocity of a moving mesh among them
 /// (the train), so a rider in its path looks for it.
+pub type Cast<'a> = dyn FnMut(&[(V, V)], &mut [Option<SceneHit>]) + 'a;
 pub struct Scene<'a> {
-    pub cast: &'a mut dyn FnMut(&[(V, V)], &mut [Option<SceneHit>]),
+    pub cast: &'a mut Cast<'a>,
     pub moving: Option<V>,
 }
 

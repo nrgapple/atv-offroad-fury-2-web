@@ -3,6 +3,7 @@
 //! once with the rider meeting scenery and his bike and once against
 //! terrain only, as before.
 use atv_content::{Content, Store};
+use atv_core::math::Det;
 use atv_game::ride::{Controls, Ride};
 use std::future::Future;
 use std::task::{Context, Poll, Waker};
@@ -29,7 +30,7 @@ struct Run {
 
 /// Rides flat out at `target` from `back` ft away, then lets the rider land.
 fn ride_into(ride: &mut Ride, target: [f32; 3], back: f32, angle: f32) -> Option<Run> {
-    let (dx, dz) = (angle.sin(), angle.cos());
+    let (dx, dz) = angle.sin_cos_d();
     let start = [target[0] - dx * back, 0., target[2] - dz * back];
     let ground = ride.ground(start[0], start[2])?;
     ride.place_beside([start[0], ground + 0.5, start[2]], angle, [0.; 3])
@@ -106,14 +107,16 @@ fn thrown_rider_stops_at_trees_and_props() {
             .filter(|(_, b)| b.half[1] > 3. && b.half[0].max(b.half[2]) < 6.)
             .collect();
         let distance = |b: &atv_core::scene_partition::Bounds| {
-            (b.center[0] - start[0]).hypot(b.center[2] - start[2])
+            let (x, z) = (b.center[0] - start[0], b.center[2] - start[2]);
+            (x * x + z * z).sqrt()
         };
         targets.sort_by(|a, b| distance(&a.1).total_cmp(&distance(&b.1)));
         // Each run twice: the rider against scenery and his bike, and
         // against terrain only as before #751.
         let (mut checked, mut stopped) = (0, 0);
         for (kind, bounds) in targets.iter().take(40) {
-            for angle in [0., 1.57, 3.14, 4.71] {
+            for quarter in 0..4 {
+                let angle = quarter as f32 * std::f32::consts::FRAC_PI_2;
                 let mut run = |on: bool| {
                     ride.motorcycle_mut().unwrap().set_rider_scene(on);
                     ride_into(&mut ride, bounds.center, 45., angle)
