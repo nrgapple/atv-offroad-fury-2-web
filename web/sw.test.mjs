@@ -130,6 +130,7 @@ test('routes cache only app shell, pages, manifests and content blobs; everythin
   assert.equal(route('/fury-remastered-home-180-v1.png'), 'static');
   assert.equal(route('/fury-remastered-maskable-512-v1.png'), 'static');
   assert.equal(route('/favicon.ico'), 'static');
+  assert.equal(route('/favicon.svg'), 'static');
   assert.equal(route(blob, 'GET', 'cors', true), null, 'ranged reads pass through');
   assert.equal(route(`/content/${'d'.repeat(64)}.m4a`), null, 'soundtrack streams pass through');
   assert.equal(route(blob, 'POST'), null);

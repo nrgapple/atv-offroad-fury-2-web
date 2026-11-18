@@ -37,9 +37,11 @@ for (const size of [192, 512]) {
   maskableIcons.push(kept(previous?.maskable, file) ?? entry(await png(maskable, size), { size, file }));
 }
 // favicon.ico: an ICO directory of PNG images (supported by every current browser).
-let favicon = reuse && previous?.favicon?.file === 'favicon.ico' ? previous.favicon : null;
+const mark = await readFile(new URL('web/favicon.svg', root));
+const markSha = createHash('sha256').update(mark).digest('hex');
+let favicon = !process.argv.includes('--force') && previous?.favicon?.source_sha256 === markSha ? previous.favicon : null;
 if (!favicon) {
-  const sizes = [16, 32, 48], images = await Promise.all(sizes.map(size => png(square, size)));
+  const sizes = [16, 32, 48], images = await Promise.all(sizes.map(size => sharp(mark).resize(size, size).png().toBuffer()));
   const header = Buffer.alloc(6 + 16 * sizes.length);
   header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(sizes.length, 4);
   let offset = header.length;
@@ -50,7 +52,7 @@ if (!favicon) {
     header.writeUInt32LE(images[i].length, at + 8); header.writeUInt32LE(offset, at + 12);
     offset += images[i].length;
   });
-  favicon = entry(Buffer.concat([header, ...images]), { file: 'favicon.ico', sizes });
+  favicon = entry(Buffer.concat([header, ...images]), { file: 'favicon.ico', sizes, source_sha256: markSha });
 }
 await writeFile(metadataUrl, JSON.stringify({ source_sha256: sourceSha, icons, maskable: maskableIcons, favicon }, null, 2) + '\n');
 console.log('Rendered authored Fury Remastered icons: Home Screen 180/192/512, maskable 192/512 and favicon.ico 16/32/48.');

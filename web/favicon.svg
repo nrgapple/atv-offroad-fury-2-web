@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Fury Remastered</title>
+  <defs>
+    <linearGradient id="plate" x2="0" y2="1">
+      <stop stop-color="#392129"/>
+      <stop offset="1" stop-color="#100e14"/>
+    </linearGradient>
+    <linearGradient id="fire" x2="0" y2="1">
+      <stop stop-color="#ff7650"/>
+      <stop offset="1" stop-color="#f1352a"/>
+    </linearGradient>
+    <linearGradient id="gold" x2="0" y2="1">
+      <stop stop-color="#ffe39a"/>
+      <stop offset="1" stop-color="#ffb02e"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="11" fill="url(#plate)"/>
+  <g transform="translate(12 16) skewX(-12)">
+    <path fill="url(#fire)" d="M0 0h20v7H8v6h10v7H8v12H0z"/>
+    <path fill="url(#gold)" fill-rule="evenodd" d="M23 0h18l6 6v10l-6 5 8 11h-10l-8-12v12h-8z M31 7v7h8V7z"/>
+  </g>
+</svg>
