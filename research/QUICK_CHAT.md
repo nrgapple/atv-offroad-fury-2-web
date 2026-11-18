@@ -49,6 +49,36 @@ positive or neutral.
   round the ring, a page switch to the eight emotes and the horn in the
   middle. Targets are at least 48 px and fit at 360 px portrait. Tapping
   outside closes it.
+- Look (issue #742, owner review 2026-11-17: the silver plates read as a
+  panel of buttons, and then the bare lettering read as plain): a dial in
+  the race HUD's silver and gold, no plates. Eight smoked ring segments
+  hold the lines (or emotes), with a dark-outlined silver rim along each
+  segment and ticks across the gaps. The focused or hovered segment fills
+  with gold glass behind a thick gold rim, and a gold pointer on the hub
+  aims at it. The hub is a dark disc with the silver rim, split by a line:
+  the page switch above, the horn below, and the lit half glows gold.
+  "QUICK CHAT" (or "EMOTES") sits over the ring in gold, below it when an
+  open panel leaves no room, and is left out when neither fits clear of the
+  toolbar and the bottom 48 px. Keyboard players see each segment's key
+  (1-8) in its corner. Lines are the HUD's outlined italic lettering, white
+  and larger when lit; it all sits on a soft dark shade. The hit targets
+  are unchanged. Paths are relative to the centre, so each ring size and
+  lit segment rasterises once. On a short view the ring's band narrows
+  (32 px down to 26 px either side of the lines) to stay on screen, and
+  the Free Ride hub's prompts step aside while the wheel is open without
+  room under them, as Quick Play's panel already did.
+
+## First-time tip
+
+Issue #742. In a room with chat, 2 s into the ride, a tip points at the
+CHAT button: "CHAT WITH RIDERS" in gold and "TAP THE BUBBLE" ("CLICK IT OR
+PRESS T" with a mouse) under a bobbing gold arrow, for 12 s. While a hub
+prompt (Challenge, an offer, the map vote) or the Quick Play panel would
+overlap it, it waits, then shows in full half a second after the panel has
+gone. Tapping it opens the wheel. It shows on at most three rides
+(`atv-tip-chat` counts them) and never again once the player has opened
+chat by any means ("done"). Chat goes to the whole room; the tip says
+"riders", not a person.
 - Keyboard: T opens the wheel; with it open 1-8 send a line (Shift+1-8 an
   emote). B sounds the horn. T and B stay gameplay keys when the player binds
   them. They were free in every default layout; H stays help.

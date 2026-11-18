@@ -195,6 +195,12 @@ try {
     null,
     { timeout: 120000 }
   );
+  // The Hop in target shows once the world has crossfaded in.
+  await page.waitForFunction(
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.hits?.some(h => h.id === 2418),
+    null,
+    { timeout: 30000 }
+  );
   const hop = (await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent))).front.hits.find(
     h => h.id === 2418
   );

@@ -89,6 +89,9 @@ pub struct HudInput<'a> {
     pub split_layout: Option<(&'static str, u32)>,
     /// A room's quick chat: bubbles, feed and the wheel's budget.
     pub chat: Option<&'a atv_ui::hud::chat::View>,
+    /// A shared Free Ride room's riders list (its `folded` is the
+    /// overlay's own setting).
+    pub riders: Option<atv_ui::hud::riders::View>,
 }
 
 /// Player 2, 3 or 4's HUD: its speed and stunt text, its race overlays
@@ -118,6 +121,16 @@ struct Press {
 }
 
 pub const MOUSE: u64 = u64::MAX;
+
+/// Settings: the riders list shows only its count ("folded").
+pub const RIDERS_KEY: &str = "atv-hud-riders";
+/// Settings: how many rides showed the chat tip, or "done" once the player
+/// opened chat. Three showings at most.
+pub const CHAT_TIP_KEY: &str = "atv-tip-chat";
+const CHAT_TIP_RIDES: u32 = 3;
+/// The tip waits this long into a chat room, then shows this long (s).
+const CHAT_TIP_DELAY: f64 = 2.;
+const CHAT_TIP_LIFE: f32 = 12.;
 
 /// A laid-out menu: view, state, paint, hits and scroll range.
 type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
@@ -190,6 +203,13 @@ pub struct Overlay {
     /// frame showed chat.
     pub chat: crate::quick_chat::Wheel,
     chat_shown: bool,
+    /// The first-time chat tip: when it appeared (ms), or None; shown at
+    /// most once a ride session (`CHAT_TIP_KEY` counts sessions).
+    chat_tip: Option<f64>,
+    chat_tip_seen: bool,
+    /// The hub's and Quick Play's panels this frame: a tip waits while it
+    /// would cover one.
+    panel_rects: Vec<Rect>,
     ride_started: bool,
     /// Laid-out toolbar and keyboard card, reused while their inputs are
     /// unchanged (the browser HUD's unchanged-state redraw avoidance).
@@ -347,6 +367,9 @@ impl Overlay {
             help_open: false,
             chat: Default::default(),
             chat_shown: false,
+            chat_tip: None,
+            chat_tip_seen: false,
+            panel_rects: Vec::new(),
             tags: 0,
             view_tags: Vec::new(),
             compass_icons: None,
@@ -792,6 +815,16 @@ impl Overlay {
                 if let Some(button) = atv_ui::hud::hub::Button::from_id(p.button) {
                     return Some(Some(Action::Hub(button)));
                 }
+                if p.button == atv_ui::hud::riders::HEADER_HIT {
+                    let folded = self.settings.get(RIDERS_KEY).as_deref() == Some("folded");
+                    self.settings
+                        .set(RIDERS_KEY, if folded { "open" } else { "folded" });
+                    return Some(None);
+                }
+                if p.button == atv_ui::hud::tips::TIP_HIT {
+                    self.chat.toggle();
+                    return Some(None);
+                }
                 if let Some(pick) = self.chat.hit(p.button) {
                     return Some(pick);
                 }
@@ -939,6 +972,7 @@ impl Overlay {
         let started = web_time::Instant::now();
         self.list.clear();
         self.hits.clear();
+        self.panel_rects.clear();
         if let Some([r, g, b]) = self.backdrop {
             self.list.rect(
                 Rect::new(0., 0., self.view.width, self.view.height),
@@ -1757,6 +1791,7 @@ impl Overlay {
         // The Free Ride hub: Challenge, its prompt, the event chip, the map
         // vote and toasts, under the toolbar (one view: rooms do not split).
         let mut hub_bottom = 0f32;
+        let wheel_open = self.chat.open && chat.is_some();
         if let Some((hub, _)) = shown.and_then(|h| h.hub.as_ref())
             && !self.results.shown
         {
@@ -1781,8 +1816,15 @@ impl Overlay {
                 &mut hits,
             );
             hub_bottom = panels_bottom(&list, view.width);
-            self.list.items.extend(list.items);
-            self.hits.extend(hits);
+            // An open chat wheel without room under the hub's prompts takes
+            // the screen meanwhile, as it does over Quick Play's panel.
+            if wheel_open && view.height - hub_bottom < atv_ui::hud::chat::WHEEL_SPACE {
+                hub_bottom = 0.;
+            } else {
+                self.panel_rects.extend(panel_rects(&list, view.width));
+                self.list.items.extend(list.items);
+                self.hits.extend(hits);
+            }
         }
         // Race over: the results panel or the Show Results button.
         match race {
@@ -1842,6 +1884,37 @@ impl Overlay {
             0.
         };
         let panel_bottom = self.paint_quickplay(wheel, below).max(hub_bottom);
+        // A shared Free Ride room: who rides, right under a top-right map
+        // (research/FREERIDE_HUB.md "Riders list").
+        if let Some(mut riders) = shown
+            .and_then(|h| h.riders.clone())
+            .filter(|_| !self.results.shown && second.is_none())
+        {
+            riders.folded = self.settings.get(RIDERS_KEY).as_deref() == Some("folded");
+            let right = view.width - view.safe[1].max(14.);
+            let map_right = map_visible && !self.minimap.settings.bottom_left;
+            let mut top = if map_right {
+                map.bottom() + 6.
+            } else {
+                view.safe[0].max(14.) + 4.
+            };
+            // A narrow view's centred panels reach the right column.
+            if view.width < 760. {
+                top = top.max(panel_bottom + 8.);
+            }
+            atv_ui::hud::riders::paint(
+                &mut self.fonts,
+                &mut self.list,
+                &mut self.hits,
+                right,
+                top,
+                view.hover && self.hovered == Some(atv_ui::hud::riders::HEADER_HIT),
+                &riders,
+            );
+        }
+        // First rides in a chat room: a tip under the CHAT button
+        // (research/QUICK_CHAT.md "First-time tip").
+        self.paint_chat_tip(now, chat.is_some() && !paused);
         if let Some(chat) = chat {
             // The feed runs under the Quick Play panel, not over its title.
             atv_ui::hud::chat::paint_feed(
@@ -1938,6 +2011,80 @@ impl Overlay {
 
     /// Lays out the results (`translate(-50%, -50%)`: measured, then
     /// centred) and adds their paint and buttons.
+    /// The chat tip: once the room offers chat, after a short wait, at most
+    /// [`CHAT_TIP_RIDES`] rides and never after the player opened chat.
+    fn paint_chat_tip(&mut self, now: f64, chat: bool) {
+        let stored = self.settings.get(CHAT_TIP_KEY);
+        if self.chat.open && stored.as_deref() != Some("done") {
+            self.settings.set(CHAT_TIP_KEY, "done");
+        }
+        let done = self.chat.open || stored.as_deref() == Some("done");
+        if !chat || done {
+            if done {
+                self.chat_tip = None;
+            }
+            return;
+        }
+        let start = *self.chat_tip.get_or_insert(now + CHAT_TIP_DELAY * 1000.);
+        let age = ((now - start) / 1000.) as f32;
+        if age < 0. || age > CHAT_TIP_LIFE {
+            return;
+        }
+        if !self.chat_tip_seen {
+            self.chat_tip_seen = true;
+            let rides = stored.and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+            if rides >= CHAT_TIP_RIDES {
+                self.chat_tip = Some(f64::INFINITY);
+                return;
+            }
+            self.settings.set(CHAT_TIP_KEY, &(rides + 1).to_string());
+        }
+        let Some(rect) = self
+            .hits
+            .iter()
+            .find(|(_, id)| *id == toolbar::Button::Chat as u32)
+            .map(|(r, _)| *r)
+        else {
+            return;
+        };
+        let view = self.view;
+        let detail = if view.touch_first {
+            "TAP THE BUBBLE"
+        } else if view.coarse {
+            "TAP IT OR PRESS T"
+        } else {
+            "CLICK IT OR PRESS T"
+        };
+        let tip = atv_ui::hud::tips::Tip {
+            at: [rect.x + rect.w / 2., rect.bottom() - 6.],
+            title: "CHAT WITH RIDERS".into(),
+            detail: detail.into(),
+        };
+        let margin = view.safe[3].max(14.);
+        // A hub prompt or Quick Play panel in the way: the tip waits and
+        // shows in full once it has gone.
+        let area = atv_ui::hud::tips::bounds(&mut self.fonts, &tip, margin);
+        let clear = |r: &Rect| {
+            area.right() + 12. <= r.x
+                || r.right() + 12. <= area.x
+                || area.bottom() <= r.y
+                || r.bottom() <= area.y
+        };
+        if !self.panel_rects.iter().all(clear) {
+            self.chat_tip = Some(now + 500.);
+            return;
+        }
+        atv_ui::hud::tips::paint(
+            &mut self.fonts,
+            &mut self.list,
+            &mut self.hits,
+            &tip,
+            now,
+            atv_ui::hud::tips::fade(age, CHAT_TIP_LIFE),
+            margin,
+        );
+    }
+
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
         // The medal pops in over its first moments (the panel is laid out
@@ -2024,6 +2171,7 @@ impl Overlay {
             if wheel && view.height - bottom < atv_ui::hud::chat::WHEEL_SPACE {
                 return 0.;
             }
+            self.panel_rects.extend(panel_rects(&list, view.width));
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(&hits);
             return bottom;
@@ -2946,6 +3094,14 @@ pub(crate) fn terrain_blocks(
 /// The lowest edge of a laid-out overlay's panels: boxes at least 120 px
 /// wide and short of the whole view (a win flash covers it; buttons and
 /// confetti are narrower), 0 for none.
+/// The panel-sized boxes of a HUD piece (as [`panels_bottom`] counts them).
+fn panel_rects(list: &DisplayList, width: f32) -> impl Iterator<Item = Rect> + '_ {
+    list.items.iter().filter_map(move |item| match item {
+        atv_ui::paint::Item::Box(b) if b.rect.w >= 120. && b.rect.w < width - 1. => Some(b.rect),
+        _ => None,
+    })
+}
+
 fn panels_bottom(list: &DisplayList, width: f32) -> f32 {
     list.items
         .iter()

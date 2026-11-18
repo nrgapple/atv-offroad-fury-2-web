@@ -3562,6 +3562,10 @@ impl App {
                     others,
                     split_layout,
                     chat: ready.net.as_ref().map(|net| &net.chat.view),
+                    riders: ready
+                        .net
+                        .as_ref()
+                        .and_then(|net| net.riders_view(frame.origin, false)),
                 }),
                 Some(&mut riding.bindings),
             );
@@ -10547,6 +10551,7 @@ fn capture(
                     others: Vec::new(),
                     split_layout: None,
                     chat: None,
+                    riders: None,
                 }),
                 bindings.as_mut(),
             );

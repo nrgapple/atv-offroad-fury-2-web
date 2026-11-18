@@ -4,13 +4,14 @@
 //      loader; Free Ride (on whatever venue the shared room is on in the server's
 //      rotation) loads behind it and crossfades in on the stage, a roaming CPU
 //      riding the player's rider. The menus stay the frontend's (no pause overlay);
-//      Hop in sits bottom right beside Back.
+//      Hop in is a pulsing target on the world under the rider (no button beside
+//      Back), and the last keyboard choice once the world shows.
 //   2. Single Player keeps the world on its stage; Back returns to the main menu.
 //   3. Hop in hands the same ride to the player where it stands and the ride's HUD
 //      takes over; Pause → Quit to Main Menu brings the menus back over the world,
 //      the autopilot riding again; a click on the world hops in.
-//   4. A phone held upright, and one held sideways: the world in the stage, Hop in
-//      bottom right.
+//   4. A phone held upright, and one held sideways: the world in the stage, the Hop
+//      in target on it.
 //   5. With the game server unreachable, or Game Settings → Start in: Menu, the
 //      menus show as before with no world and no Hop in.
 //   While the world loads (and offline) the stage shows the player's ATV turning
@@ -192,7 +193,7 @@ try {
   await setup(page, 'freeride');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').home?.loading);
   let ui = await read(page);
-  assert.ok(ui.front.choices.includes('hopin'), 'Hop in while the world loads');
+  assert.ok(!ui.front.choices.includes('hopin'), 'no Hop in choice before the world shows');
   report.loading = await turntable(page, 'desktop');
   if (shots && (await read(page)).home.loading) await page.screenshot({ path: `${shots}/freeride-menu-loading.png` });
   await live(page);
@@ -209,9 +210,13 @@ try {
   const back = await frontHit(page, BACK);
   const world = await frontHit(page, WORLD);
   report.hits = { hop: hop.rect, back: back.rect, world: world.rect };
-  assert.ok(hop.rect.x > 1280 * 0.6 && hop.rect.y > 720 * 0.75, `Hop in bottom right: ${JSON.stringify(hop.rect)}`);
+  // The target sits on the world, under the rider and above Back.
+  assert.ok(
+    hop.rect.x >= world.rect.x && hop.rect.x + hop.rect.width <= 1280 && hop.rect.y > 720 * 0.55,
+    `Hop in target on the world: ${JSON.stringify(hop.rect)}`
+  );
+  assert.ok(hop.rect.y + hop.rect.height <= back.rect.y, 'Hop in target above Back');
   assert.ok(hop.rect.height >= 48, 'Hop in touch target');
-  assert.ok(hop.rect.x > back.rect.x, 'Hop in beside Back');
   assert.ok(world.rect.x > 1280 * 0.4, `the world on the stage: ${JSON.stringify(world.rect)}`);
   // The autopilot rides under the menus.
   let start = await origin(page);
@@ -238,6 +243,13 @@ try {
   while ((await read(page)).front.selection !== single) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await onFront(page, 'single');
+  // The target follows once the page has slid in.
+  await wait(
+    page,
+    id => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.hits?.some(h => h.id === id),
+    HOP_IN,
+    10000
+  );
   ui = await read(page);
   assert.ok(ui.home.live && ui.home.world, 'the world stays behind Single Player');
   assert.ok(ui.front.hits.some(h => h.id === WORLD) && ui.front.hits.some(h => h.id === HOP_IN));
@@ -324,7 +336,10 @@ try {
   const tap = await frontHit(phone, HOP_IN);
   const top = await frontHit(phone, WORLD);
   report.phone = { hop: tap.rect, world: top.rect };
-  assert.ok(tap.rect.x + tap.rect.width > 390 * 0.75 && tap.rect.y > 844 * 0.75, 'Hop in bottom right');
+  assert.ok(
+    tap.rect.y >= Math.max(0, top.rect.y) && tap.rect.y + tap.rect.height <= top.rect.y + top.rect.height,
+    `Hop in target in the top stage: ${JSON.stringify(tap.rect)}`
+  );
   assert.ok(tap.rect.height >= 48, 'Hop in touch target');
   assert.ok(top.rect.y + top.rect.height < 844 * 0.5, 'the world in the top stage');
   await nextFrames(phone, 60);
