@@ -6,7 +6,8 @@
   "title": "Sport and Simulation handling for ATVs and motorcycles",
   "summary": "In a local ride, open Settings \u2192 Game Settings \u2192 Physics. Sport gives the tires more grip for fast corners. Simulation makes it easier to use up the grip available for turning when accelerating or braking.",
   "details": [
-    "Each tire has its own load and tread. Sustained sliding wears the loaded tire, and Game Settings shows the remaining tread of the most worn tire. Six 600-step host runs on Caribou Peak exercised acceleration, cornering and braking on an ATV and a Suzuki RM125 across all three modes. Both optional modes accumulated wear. Original recorded zero wear."
+    "Wheelspin carries through a jump and meets the ground through the tire contact. The ATV applies forces at all four wheels. The motorcycle banks toward the combined support force as it corners. Sport eases the throttle during excessive wheelspin.",
+    "Hard, deep landings gradually weaken individual dampers. Sustained tire scrub consumes tread. Repeated braking heats the brakes and can cause fade. Game Settings shows tread, shocks and brake condition. A fresh ride or race restart supplies fresh components."
   ],
-  "limitation": "These are authored presets tuned for play. Wear covers tires during a ride. Calibration against instrumented vehicles and physical-phone handling tests remain open. Online rooms use Original."
+  "limitation": "These are game-tuned models. Verification uses synthetic force and braking tests and private-content host rides. Instrumented vehicle calibration, rider playtesting and physical-phone measurements remain open. Online rooms use Original."
 }

@@ -570,6 +570,20 @@ impl Ride {
         }
     }
 
+    pub fn shock_wear(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.worst_shock_wear(),
+            Mount::Bike(bike) => bike.tires.worst_shock_wear(),
+        }
+    }
+
+    pub fn brake_heat(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires.hottest_brake(),
+            Mount::Bike(bike) => bike.tires.hottest_brake(),
+        }
+    }
+
     /// The player rides a motorcycle (atv-web's `vehicle_kind`).
     pub fn is_motorcycle(&self) -> bool {
         matches!(self.mount, Mount::Bike(_))
@@ -980,7 +994,9 @@ impl Ride {
         self.sound = None;
         match &mut self.mount {
             Mount::Quad { rig, vehicle } => {
-                **vehicle = Self::place(&self.sim, rig, &self.quad.mesh, start)?;
+                let mut placed = Self::place(&self.sim, rig, &self.quad.mesh, start)?;
+                placed.tires = vehicle.tires;
+                **vehicle = placed;
                 if self.race.is_some() {
                     race::place_racer(vehicle, &self.sim.terrain)?;
                 }

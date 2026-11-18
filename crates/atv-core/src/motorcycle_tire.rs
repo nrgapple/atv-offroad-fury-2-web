@@ -133,13 +133,23 @@ impl Tire {
     /// compressing and bounce damping while extending, with the damper speed
     /// clamped symmetrically by MaxCompressionRate. There is no force cap.
     pub fn normal_load(&self, spring: f32, compression: f32, normal_velocity: f32) -> f32 {
+        self.damped_load(spring, compression, normal_velocity, 1.)
+    }
+
+    pub(super) fn damped_load(
+        &self,
+        spring: f32,
+        compression: f32,
+        normal_velocity: f32,
+        damper_scale: f32,
+    ) -> f32 {
         let rate = normal_velocity.clamp(-self.max_compression_rate, self.max_compression_rate);
         let damping = if rate > 0. {
             self.extension_damping
         } else {
             self.compression_damping
         };
-        (spring * compression - damping * rate).max(0.)
+        (spring * compression - damper_scale * damping * rate).max(0.)
     }
 
     /// Rolled bikes compress less: full until ~50° against the ground, half from 60°.

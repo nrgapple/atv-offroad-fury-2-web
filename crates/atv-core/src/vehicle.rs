@@ -1755,37 +1755,49 @@ impl Vehicle {
             airborne_brake_torque: 0.,
             resistance_torque: 0.,
         }; 4];
-        for (i, output) in drive.iter_mut().enumerate() {
-            let m = materials[self.supports[i].surface];
-            // 001ecc40 always projects through the stored wheel plane,
-            // including when the previous contact flag is airborne.
-            let normal = self.supports[i].normal;
-            let right = transform(b, self.wheel_right[i]);
-            let forward = wheel::cross(right, normal);
-            let velocity = add(
-                self.body.linear_velocity,
-                wheel::cross(
-                    self.wheel_world_angular_velocity,
-                    sub(self.wheel_contact_points[i], cached_world_center),
-                ),
-            );
-            let velocity = sub(velocity, ground_velocities[i]);
-            *output = self.wheels[i].step(
-                self.wheel_config[i],
-                WheelInput {
-                    dt,
-                    grounded: self.contacts[i].grounded,
-                    longitudinal_velocity: dot(velocity, forward),
-                    drive_torque: if i >= 2 {
-                        engine.wheel_torques[i - 2]
-                    } else {
-                        0.0
+        let enhanced = self.tires.mode != crate::tire_wear::Handling::Original;
+        let redline = if enhanced {
+            let config = self.engine.config();
+            let ratio = config.final_ratio * config.gear_ratios[engine.state.gear - 1];
+            config.power_curve.last().expect("validated power curve").0 * std::f32::consts::TAU
+                / (60. * ratio)
+        } else {
+            0.
+        };
+        // Enhanced wheels integrate with suspension at each contact substep below.
+        if !enhanced {
+            for (i, output) in drive.iter_mut().enumerate() {
+                let m = materials[self.supports[i].surface];
+                // 001ecc40 always projects through the stored wheel plane,
+                // including when the previous contact flag is airborne.
+                let normal = self.supports[i].normal;
+                let right = transform(b, self.wheel_right[i]);
+                let forward = wheel::cross(right, normal);
+                let velocity = add(
+                    self.body.linear_velocity,
+                    wheel::cross(
+                        self.wheel_world_angular_velocity,
+                        sub(self.wheel_contact_points[i], cached_world_center),
+                    ),
+                );
+                let velocity = sub(velocity, ground_velocities[i]);
+                *output = self.wheels[i].step(
+                    self.wheel_config[i],
+                    WheelInput {
+                        dt,
+                        grounded: self.contacts[i].grounded,
+                        longitudinal_velocity: dot(velocity, forward),
+                        drive_torque: if i >= 2 {
+                            engine.wheel_torques[i - 2]
+                        } else {
+                            0.0
+                        },
+                        brake,
+                        surface_brake_scale: m.braking,
+                        surface_drive_scale: m.drive,
                     },
-                    brake,
-                    surface_brake_scale: m.braking,
-                    surface_drive_scale: m.drive,
-                },
-            )?;
+                )?;
+            }
         }
         self.clock_ms += dt * 1000.0;
         let lean = if self.forced_landing { 0. } else { raw_axes[1] };
@@ -2014,7 +2026,8 @@ impl Vehicle {
             self.suspension_stop_contacts = 0;
             //001dd830 updates the separate four-point travel-stop actor before
             // the wheel springs. It remains active while the chassis is upright.
-            for (&local, &plane) in self.wheel_stops.iter().zip(&stop_planes) {
+            let pre_stop_velocity = self.body.linear_velocity;
+            for (i, (&local, &plane)) in self.wheel_stops.iter().zip(&stop_planes).enumerate() {
                 let point = add(origin, transform(b, local));
                 let closing_speed = -dot(self.body.linear_velocity, plane.normal);
                 if crate::wheel_stop::resolve(
@@ -2024,6 +2037,10 @@ impl Vehicle {
                     &mut corrections.velocity_delta,
                 )? {
                     self.suspension_stop_contacts += 1;
+                    if enhanced {
+                        self.tires
+                            .hit_stop(i, -dot(pre_stop_velocity, plane.normal));
+                    }
                     observe_impact(
                         &mut self.crash_impact_speed,
                         &mut self.crash_impact_point,
@@ -2052,8 +2069,17 @@ impl Vehicle {
                     ),
                     ground_velocities[i],
                 );
+                let mut suspension = self.suspension_config;
+                let mut stiffness_scale = 1.;
+                if enhanced && available && dot(normal, b[1]) > 0. {
+                    let stroke = dot(sub(ground, bottom), normal) / suspension.travel;
+                    stiffness_scale = self.tires.mode.spring_scale(stroke);
+                    suspension.damping *=
+                        self.tires
+                            .damping_scale(i, stroke, -dot(point_velocity, normal), step);
+                }
                 let output = self.suspension[i].contact(
-                    self.suspension_config,
+                    suspension,
                     SuspensionContact {
                         available,
                         normal,
@@ -2063,7 +2089,7 @@ impl Vehicle {
                         body_up: b[1],
                         body_forward: b[2],
                         point_velocity,
-                        stiffness_scale: 1.0,
+                        stiffness_scale,
                         tilt_angle: dot(normal, b[1]).clamp(-1., 1.).acos_d(),
                     },
                 )?;
@@ -2093,7 +2119,9 @@ impl Vehicle {
                         [0., 0., d.longitudinal_force],
                         application,
                     );
-                } else if output.grounded {
+                    self.body.local_torque[0] += d.airborne_brake_torque;
+                } else {
+                    use crate::tire_wear::{ContactPatch, WheelDrive};
                     let right = if i < 2 {
                         sub(scale(b[0], steering.cos_d()), scale(b[2], steering.sin_d()))
                     } else {
@@ -2101,33 +2129,63 @@ impl Vehicle {
                     };
                     let heading = wheel::cross(right, normal);
                     let length = dot(heading, heading).sqrt();
-                    if length > 0.0001 {
-                        let forward = scale(heading, 1. / length);
-                        let side = wheel::cross(normal, forward);
-                        let lateral_speed = dot(point_velocity, side);
-                        let surface = materials[support.surface];
-                        // Half the recovered axle cornering stiffness per wheel.
-                        let cornering = 22.5 * self.tire_friction * surface.grip;
-                        let scrub = self.wheels[i].angular_speed * self.wheel_config[i].radius
-                            - dot(point_velocity, forward);
-                        let [drive, lateral] = self.tires.forces(
-                            i,
-                            crate::tire_wear::TireContact {
-                                demand: [d.longitudinal_force, -lateral_speed * cornering],
-                                slip: [scrub, lateral_speed],
-                                normal_load: dot(output.force, normal),
-                                static_load: self.body_config.mass * 32.2 / 4.,
-                                friction: surface.grip,
+                    let forward = if length > 0.0001 {
+                        scale(heading, 1. / length)
+                    } else {
+                        [0.; 3]
+                    };
+                    let side = wheel::cross(normal, forward);
+                    let lateral_speed = dot(point_velocity, side);
+                    let surface = materials[support.surface];
+                    let config = self.wheel_config[i];
+                    let wheel = &mut self.wheels[i];
+                    let result = self.tires.step(
+                        i,
+                        WheelDrive {
+                            omega: wheel.angular_speed,
+                            radius: config.radius,
+                            inverse_inertia: config.inverse_inertia,
+                            drive_torque: if i >= 2 {
+                                let torque = engine.wheel_torques[i - 2];
+                                let rpm_fraction = wheel.angular_speed * torque.signum() / redline;
+                                torque * ((1. - rpm_fraction) / 0.05).clamp(0., 1.)
+                            } else {
+                                0.
                             },
-                            step,
-                        );
+                            brake_torque: config.brake_torque * brake * surface.braking,
+                            bearing_torque: config.rolling_resistance,
+                            static_load: self.body_config.mass * 32.2 / 4.,
+                            air_speed: magnitude,
+                        },
+                        ContactPatch {
+                            forward_speed: dot(point_velocity, forward),
+                            lateral_speed,
+                            lateral_demand: -22.5
+                                * self.tire_friction
+                                * surface.grip
+                                * lateral_speed,
+                            load: dot(output.force, normal),
+                            friction: surface.grip,
+                        },
+                        step,
+                    );
+                    if output.grounded {
                         self.body.apply_world_force(
-                            add(scale(forward, drive), scale(side, lateral)),
+                            add(
+                                scale(forward, result.forces[0]),
+                                scale(side, result.forces[1]),
+                            ),
                             output.point,
                         );
+                    } else {
+                        self.body.local_torque[0] +=
+                            result.brake_torque * wheel.angular_speed.signum();
                     }
+                    wheel.angular_speed = result.omega;
+                    wheel.angle = (wheel.angle + result.omega * step + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
                 }
-                self.body.local_torque[0] += d.airborne_brake_torque;
             }
             self.chassis_contact_count = 0;
             for &(local, ground, normal, grip) in &chassis_planes {
@@ -3770,6 +3828,26 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn hard_stop_registers_damper_wear_before_the_solver_clips_landing_velocity() {
+        use crate::tire_wear::Handling;
+        let run = |mode| {
+            let (mut vehicle, terrain) = fixture();
+            vehicle.tires.mode = mode;
+            let origin = [500., -1.3, 500.];
+            vehicle.body.center = add(origin, vehicle.body_config.center_of_mass);
+            vehicle.body.linear_velocity = [0., -30., 0.];
+            let frame = vehicle
+                .step(&terrain, Default::default(), 1. / 60.)
+                .unwrap();
+            assert_eq!(frame.suspension_stop_contacts, 4);
+            vehicle.tires.worst_shock_wear()
+        };
+        assert_eq!(run(Handling::Original), 0.);
+        let sport = run(Handling::Sport);
+        assert!(sport > 0. && sport < run(Handling::Simulation));
+    }
+
     #[test]
     fn suspension_travel_stops_catch_landings_before_springs_on_flat_and_side_slopes() {
         for sloped in [false, true] {

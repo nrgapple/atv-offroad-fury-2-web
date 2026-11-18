@@ -31,6 +31,7 @@ fn corner_and_brake_on_both_mounts() {
                     .unwrap();
                 ride.options.handling = mode;
                 let mut peak = 0_f32;
+                let began = std::time::Instant::now();
                 for tick in 0..600 {
                     let controls = Controls {
                         throttle: if (60..450).contains(&tick) { 1. } else { 0. },
@@ -42,13 +43,40 @@ fn corner_and_brake_on_both_mounts() {
                     assert!(ride.frame().origin.iter().all(|v| v.is_finite()));
                     peak = peak.max(ride.frame().speed);
                 }
+                let step_us = began.elapsed().as_secs_f64() * 1e6 / 600.;
                 eprintln!(
-                    "{id} {mode:?}: peak {peak:.2} ft/s, wear {:.5}",
-                    ride.tire_wear()
+                    "{id} {mode:?}: {step_us:.0} us/step, peak {peak:.2} ft/s, wear {:.5}, brake heat {:.5}",
+                    ride.tire_wear(),
+                    ride.brake_heat()
                 );
                 assert!(peak > 15.);
                 assert_eq!(ride.tire_wear() > 0., mode != Handling::Original);
+                assert_eq!(ride.brake_heat() > 0., mode != Handling::Original);
                 assert_eq!(ride.assisted(), mode != Handling::Original);
+                // Drop back onto the start surface with no throttle. Contact
+                // must return on both vehicles, with wheel state still finite.
+                let (mut drop, yaw) = ride.start_pose();
+                drop[1] = ride.ground(drop[0], drop[2]).unwrap() + 26.;
+                let wear = ride.tire_wear();
+                ride.place_beside(drop, yaw, [0.; 3]).unwrap();
+                assert!(ride.tire_wear() >= wear);
+                let mut airborne = false;
+                let mut landed = false;
+                let shock_before = ride.shock_wear();
+                for _ in 0..150 {
+                    ride.step(&Controls::default(), 0.).unwrap();
+                    let frame = ride.frame();
+                    assert!(frame.linear_velocity.iter().all(|v| v.is_finite()));
+                    let grounded = frame.grounded.iter().any(|g| *g);
+                    landed |= airborne && grounded;
+                    airborne |= !grounded;
+                }
+                assert!(landed);
+                assert!(ride.shock_wear() >= shock_before);
+                eprintln!(
+                    "{id} {mode:?}: drop added {:.5} shock wear",
+                    ride.shock_wear() - shock_before
+                );
             }
         }
     });

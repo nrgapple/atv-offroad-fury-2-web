@@ -2191,7 +2191,12 @@ impl App {
             riding.menu_open =
                 overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
             if let Some(menu) = &mut overlay.menu {
-                menu.tread_percent = Some(((1. - riding.ride.tire_wear()) * 100.).round() as u8);
+                let percent_left = |wear: f32| ((1. - wear) * 100.).round() as u8;
+                menu.vehicle_condition = Some((
+                    percent_left(riding.ride.tire_wear()),
+                    percent_left(riding.ride.shock_wear()),
+                    riding.ride.brake_heat() > 0.55,
+                ));
             }
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
@@ -4152,6 +4157,8 @@ impl App {
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
             game["handling"] = riding.ride.options.handling.name().into();
+            game["shockWear"] = riding.ride.shock_wear().into();
+            game["brakeHeat"] = riding.ride.brake_heat().into();
             game["tireWear"] = riding.ride.tire_wear().into();
             game["worldShadows"] = graphics.world_shadows.into();
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();

@@ -233,8 +233,6 @@ pub struct Request {
     #[serde(default)]
     pub handling: crate::tire_wear::Handling,
     #[serde(default)]
-    pub tread_percent: Option<u8>,
-    #[serde(default)]
     pub online_handling: bool,
     /// Authored CPU riders in a single-player or split-screen free ride
     /// (0-3; research/CPU_MINIGAMES.md); 0, off, is original.
@@ -1872,14 +1870,13 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ),
                 ],
             };
-            let handling_label;
             if request.page == "game-settings" && !request.online_handling {
-                handling_label = match (request.handling, request.tread_percent) {
-                    (crate::tire_wear::Handling::Original, _) => "Physics: Original".into(),
-                    (mode, Some(tread)) => format!("Physics: {mode:?} · Tread {tread}%"),
-                    (mode, None) => format!("Physics: {mode:?}"),
+                let label = match request.handling {
+                    crate::tire_wear::Handling::Original => "Physics: Original",
+                    crate::tire_wear::Handling::Sport => "Physics: Sport",
+                    crate::tire_wear::Handling::Simulation => "Physics: Simulation",
                 };
-                choices.push((&handling_label, "handling"));
+                choices.push((label, "handling"));
             }
             if request.page == "hud-settings" && request.fullscreen {
                 choices.push(("Fullscreen", "fullscreen"));
@@ -2746,7 +2743,6 @@ mod tests {
             flips: false,
             realistic_train: false,
             handling: Default::default(),
-            tread_percent: None,
             online_handling: false,
             free_ride_cpus: 0,
             start_menu: false,

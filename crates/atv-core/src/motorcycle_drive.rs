@@ -312,6 +312,8 @@ pub(super) struct Drive {
     pub delta: f32,
     pub donut: f32,
     pub tires: [TireState; 2],
+    /// Resultant contact force for the optional rider balance controller.
+    support_force: V,
     pub rpm: f32,
     pub gear: usize,
     pub locked: bool,
@@ -655,7 +657,11 @@ impl Motorcycle {
             self.air_control(&p, grounded);
             if self.drive.reverse && self.drive.tires[1].grounded {
                 let f = p.reverse_gain * (p.reverse_speed - speed);
-                self.body.force = add(self.body.force, scale(self.body.basis()[2], f));
+                if self.tires.mode == crate::tire_wear::Handling::Original {
+                    self.body.force = add(self.body.force, scale(self.body.basis()[2], f));
+                } else {
+                    drive = f * p.tires[1].radius;
+                }
             }
         }
         self.tires_step(terrain, &p, drive, h, wreck)?;
@@ -1048,10 +1054,16 @@ impl Motorcycle {
                 if compression > 0. {
                     let mut point = add(bottom, scale(d, t));
                     state.grounded = true;
+                    let before_stop = (compression > tire.strut
+                        && self.tires.mode != crate::tire_wear::Handling::Original)
+                        .then(|| -dot(sub(self.body.velocity_at(point), state.ground), normal));
                     if compression > tire.strut {
                         // Bottoming: push out 90 % of the overshoot, remove
                         // approach speed along the bike up axis, and cancel
                         // accumulated force into the ground.
+                        if let Some(closing) = before_stop {
+                            self.tires.hit_stop(i, closing);
+                        }
                         let over = compression - tire.strut;
                         self.body.center = add(self.body.center, scale(normal, over * 0.9));
                         point = add(point, scale(normal, over * 0.9));
@@ -1071,7 +1083,16 @@ impl Motorcycle {
                     state.compression = compression;
                     state.point = point;
                     let vn = dot(sub(self.body.velocity_at(point), state.ground), normal);
-                    state.load = tire.normal_load(self.springs[i], compression, vn);
+                    state.load = if self.tires.mode == crate::tire_wear::Handling::Original {
+                        tire.normal_load(self.springs[i], compression, vn)
+                    } else {
+                        let stroke = compression / tire.strut;
+                        let spring = self.springs[i] * self.tires.mode.spring_scale(stroke);
+                        let damping =
+                            self.tires
+                                .damping_scale(i, stroke, before_stop.unwrap_or(-vn), h);
+                        tire.damped_load(spring, compression, vn, damping)
+                    };
                     self.body
                         .apply_world_force(scale(normal, state.load), point);
                 }
@@ -1098,6 +1119,7 @@ impl Motorcycle {
                 ),
             );
         }
+        self.drive.support_force = [0.; 3];
         let v_body = dynamics::inverse_transform(basis, self.body.linear_velocity)[2];
         for i in 0..2 {
             let tire = &p.tires[i];
@@ -1126,6 +1148,17 @@ impl Motorcycle {
             }
             let mut out = state;
             out.torque = torque;
+            let enhanced = self.tires.mode != crate::tire_wear::Handling::Original;
+            let wheel = crate::tire_wear::WheelDrive {
+                omega: state.omega,
+                radius: tire.radius,
+                inverse_inertia: 1. / tire.spin_inertia,
+                drive_torque: if i == 1 { drive } else { 0. },
+                brake_torque: tire.max_braking_torque[zone] * brake,
+                bearing_torque: tire.wheel_friction[zone],
+                static_load: p.weight * 0.5,
+                air_speed: v_body,
+            };
             if contact {
                 // Tire frame: heading (front steered about body Y unless pitch
                 // control owns the front), projected onto the ground plane.
@@ -1154,43 +1187,57 @@ impl Motorcycle {
                     SideState::Rolling
                 };
                 let f_lat = grip * tire.lateral(zone, v_lat, v_long, state.load, side_state);
-                let [f_long, f_lat] = if self.tires.mode == crate::tire_wear::Handling::Original {
-                    [l.force, f_lat]
-                } else {
-                    self.tires.forces(
+                let [f_long, f_lat] = if enhanced {
+                    let result = self.tires.step(
                         i,
-                        crate::tire_wear::TireContact {
-                            demand: [l.force, f_lat],
-                            slip: [state.omega * tire.radius - v_long, v_lat],
-                            normal_load: state.load,
-                            static_load: p.weight * 0.5,
+                        wheel,
+                        crate::tire_wear::ContactPatch {
+                            forward_speed: v_long,
+                            lateral_speed: v_lat,
+                            lateral_demand: f_lat,
+                            load: state.load,
                             friction: traction * tire.max_drive[zone],
                         },
                         h,
-                    )
+                    );
+                    out.omega = result.omega;
+                    let scrub = out.omega * tire.radius - v_long;
+                    out.lock = brake > 0. && v_long.abs() > 1. && out.omega.abs() < 0.1;
+                    out.spin = !out.lock && scrub.abs() > 2.;
+                    result.forces
+                } else {
+                    out.spin = l.spin;
+                    out.lock = l.lock;
+                    out.omega = if l.lock {
+                        0.
+                    } else if !l.spin {
+                        v_long / tire.radius
+                    } else {
+                        out.omega + h * (torque - l.force * tire.radius) / tire.spin_inertia
+                    };
+                    [l.force, f_lat]
                 };
                 let force = add(scale(lat, f_lat), scale(long, f_long));
                 self.body.force = add(self.body.force, force);
+                if enhanced {
+                    self.drive.support_force =
+                        add(self.drive.support_force, add(scale(n, state.load), force));
+                }
                 let local = dynamics::inverse_transform(basis, force);
                 self.body.local_torque = add(
                     self.body.local_torque,
                     crate::wheel::cross(tire.force_position, local),
                 );
-                out.spin = l.spin;
-                out.lock = l.lock;
                 out.force = f_long;
-                out.omega = if l.lock {
-                    0.
-                } else if !l.spin {
-                    v_long / tire.radius
-                } else {
-                    out.omega + h * (torque - f_long * tire.radius) / tire.spin_inertia
-                };
             } else {
                 out.spin = false;
                 out.lock = false;
                 out.force = 0.;
-                out.omega += h * torque / tire.spin_inertia;
+                if enhanced {
+                    out.omega = self.tires.step(i, wheel, Default::default(), h).omega;
+                } else {
+                    out.omega += h * torque / tire.spin_inertia;
+                }
             }
             out.angle = (out.angle + out.omega * h + std::f32::consts::PI)
                 .rem_euclid(std::f32::consts::TAU)
@@ -1303,7 +1350,32 @@ impl Motorcycle {
                     .clamp(command.min(target), command.max(target));
             }
             let current = balance::angle(self.body.basis(), reference);
-            let next = current - roll_gain * dt * (current + command * self.drive.steer);
+            let target = -command * self.drive.steer;
+            let next = if self.tires.mode == crate::tire_wear::Handling::Original {
+                current - roll_gain * dt * (current + command * self.drive.steer)
+            } else {
+                // In a steady turn the rider balances over the resultant
+                // contact force (tan(bank) = lateral / normal force on flat
+                // ground). Blend in steering anticipation and retain the
+                // low-speed/donut controller near a stop.
+                let response = if self.tires.mode == crate::tire_wear::Handling::Sport {
+                    0.45
+                } else {
+                    0.85
+                };
+                let blend = response
+                    * ((speed.abs() - 5.) / 15.).clamp(0., 1.)
+                    * (1. - donut.clamp(0., 1.));
+                let bank = balance::supported_bank(
+                    self.body.basis(),
+                    reference,
+                    self.drive.support_force,
+                    max_roll.abs(),
+                    target,
+                );
+                current
+                    + (roll_gain * dt).clamp(0., 1.) * (target + blend * (bank - target) - current)
+            };
             self.body.orientation = balance::rotate(self.body.orientation, next - current);
         }
         let grounded = self.grounded_any();

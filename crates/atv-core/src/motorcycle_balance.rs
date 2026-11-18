@@ -15,6 +15,20 @@ pub(super) fn angle(b: dynamics::Basis, normal: V) -> f32 {
     let right = cross(up, forward);
     (-dot(b[1], right)).atan2_d(dot(b[1], up))
 }
+pub(super) fn supported_bank(
+    b: dynamics::Basis,
+    reference: V,
+    force: V,
+    limit: f32,
+    fallback: f32,
+) -> f32 {
+    // Only support perpendicular to the heading contributes to roll.
+    let transverse = sub(force, scale(b[2], dot(force, b[2])));
+    if dot(transverse, reference) <= 0.0001 {
+        return fallback;
+    }
+    (angle(b, reference) - angle(b, transverse)).clamp(-limit, limit)
+}
 pub(super) fn rotate(q: [f32; 4], change: f32) -> [f32; 4] {
     let (s, c) = (change * 0.5).sin_cos_d();
     let [w, x, y, z] = q;
@@ -36,6 +50,19 @@ impl Motorcycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn balanced_corner_lean_follows_side_force_and_ignores_drive_force() {
+        let basis = dynamics::basis([1., 0., 0., 0.]);
+        let up = [0., 1., 0.];
+        assert_eq!(supported_bank(basis, up, [0., 100., 200.], 1., 0.2), 0.);
+        assert!(
+            (supported_bank(basis, up, [100., 100., 70.], 1., 0.) + std::f32::consts::FRAC_PI_4)
+                .abs()
+                < 1e-5
+        );
+        assert_eq!(supported_bank(basis, up, [-100., 30., 0.], 0.5, 0.), 0.5);
+        assert_eq!(supported_bank(basis, up, [0.; 3], 1., 0.2), 0.2);
+    }
     #[test]
     fn bank_rotates_into_the_turn_and_preserves_heading_and_pitch() {
         let q = [0.973, 0.13, 0.18, 0.04];

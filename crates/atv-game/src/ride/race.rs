@@ -865,6 +865,10 @@ impl Ride {
         };
         self.begin_race(setup, state.settings, false)?;
         self.assisted = false;
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.tires = Default::default(),
+            Mount::Bike(bike) => bike.tires = Default::default(),
+        }
         if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
             race.set_records(records);
         }
