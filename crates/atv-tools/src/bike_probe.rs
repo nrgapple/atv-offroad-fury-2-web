@@ -25,6 +25,7 @@ const LEAVES: u32 = 32;
 const FLAT: f32 = 2048.;
 const WHOOPS: f32 = 1600.;
 const JUMP: f32 = 1200.;
+const ROUGH: f32 = 600.;
 const START_Z: f32 = 400.;
 
 fn smooth(t: f32) -> f32 {
@@ -39,6 +40,9 @@ fn course_height(x: f32, z: f32) -> f32 {
         if (0. ..252.).contains(&along) {
             return 0.45 * (1. - (along * std::f32::consts::TAU / 14.).cos());
         }
+    } else if (x - ROUGH).abs() < 500. && z > 500. {
+        // Rough ground: bumps a few inches high, a few feet apart.
+        return 0.45 + 0.25 * (x / 3.1).sin() * (z / 4.3).sin() + 0.15 * (z / 1.9 + x / 2.3).sin();
     } else if (x - JUMP).abs() < 100. {
         // A 9 ft kicker, a gap, then a 7 ft landing that falls away.
         if (790. ..840.).contains(&z) {
@@ -329,6 +333,28 @@ fn scenarios() -> Vec<Scenario> {
             seconds: 14.,
             lane: WHOOPS,
             script: |_, _| input(1., 0., 0., 0.),
+        },
+        Scenario {
+            name: "rough-straight-45mph",
+            seconds: 14.,
+            lane: ROUGH,
+            script: |_, b| cruise(b, 45.),
+        },
+        Scenario {
+            name: "rough-turn-30mph-full",
+            seconds: 12.,
+            lane: ROUGH,
+            script: |t, b| corner(t, b, 30., 5., 1.),
+        },
+        Scenario {
+            name: "rough-slalom-40mph",
+            seconds: 14.,
+            lane: ROUGH,
+            script: |t, b| {
+                let hold = speed(b) < 40.;
+                let steer = if t > 5. { (t * 2.).sin() } else { 0. };
+                input(if hold { 1. } else { 0.4 }, 0., steer, 0.)
+            },
         },
         Scenario {
             name: "jump",

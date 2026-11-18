@@ -1258,14 +1258,15 @@ impl Motorcycle {
             self.body.linear_velocity[1] = self.body.linear_velocity[1].max(0.);
         }
         let speed = dot(self.body.linear_velocity, self.body.linear_velocity).sqrt();
-        // With an articulated rider, wait for him to stop tumbling too.
+        // With an articulated rider, wait up to four seconds for him to stop
+        // tumbling too.
         let tumbling = self.ragdoll.is_some()
             && self
                 .rider_body
                 .as_ref()
                 .is_some_and(|(_, v)| dot(*v, *v) > 36.);
         if self.wreck_time > 0.5 + self.params.max_wreck_time
-            && ((speed < 3. && !tumbling) || self.wreck_time > 6.)
+            && ((speed < 3. && (!tumbling || self.wreck_time > 4.)) || self.wreck_time > 6.)
         {
             self.recover()?;
             return Ok(true);

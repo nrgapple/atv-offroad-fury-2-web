@@ -554,9 +554,11 @@ impl Motorcycle {
                 handling::Tuning::of(self.tires.mode),
                 input.steer,
                 speed,
-                self.model.wheel_rest[0][2] - self.model.wheel_rest[1][2],
-                handling::LOCK_SCALE * p.tires[0].max_steer,
-                32.2 * p.gravity_scale,
+                handling::Bike {
+                    wheelbase: self.model.wheel_rest[0][2] - self.model.wheel_rest[1][2],
+                    lock: handling::LOCK_SCALE * p.tires[0].max_steer,
+                    gravity: 32.2 * p.gravity_scale,
+                },
                 dt,
             )
         };

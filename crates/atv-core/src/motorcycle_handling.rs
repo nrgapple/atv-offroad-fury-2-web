@@ -96,6 +96,15 @@ impl Tuning {
     }
 }
 
+/// What the steering needs to know of the bike: wheelbase (ft), steering
+/// lock (rad) and gravity (ft/s²).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Bike {
+    pub wheelbase: f32,
+    pub lock: f32,
+    pub gravity: f32,
+}
+
 /// One grounded tire as the side-grip solver sees it.
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Patch {
@@ -142,16 +151,12 @@ pub(super) struct State {
 impl State {
     /// Once per frame: the stick becomes a lean command, a lateral
     /// acceleration and the front steer angle that delivers it.
-    pub fn steer(
-        &mut self,
-        tuning: Tuning,
-        stick: f32,
-        speed: f32,
-        wheelbase: f32,
-        lock: f32,
-        gravity: f32,
-        dt: f32,
-    ) -> f32 {
+    pub fn steer(&mut self, tuning: Tuning, stick: f32, speed: f32, bike: Bike, dt: f32) -> f32 {
+        let Bike {
+            wheelbase,
+            lock,
+            gravity,
+        } = bike;
         let v = speed.abs();
         let t = ((v - 15.) / 85.).clamp(0., 1.);
         let frequency = tuning.response[0] + (tuning.response[1] - tuning.response[0]) * t;
@@ -441,16 +446,21 @@ mod tests {
     fn full_stick_asks_for_the_lock_when_slow_and_the_tires_when_fast() {
         let tuning = Tuning::of(Mode::Original);
         let lock = 30_f32.to_radians();
+        let bike = Bike {
+            wheelbase: 5.,
+            lock,
+            gravity: 32.2,
+        };
         let mut state = State::default();
         let mut slow = 0.;
         let mut fast = 0.;
         for _ in 0..240 {
-            slow = state.steer(tuning, 1., 8., 5., lock, 32.2, 1. / 60.);
+            slow = state.steer(tuning, 1., 8., bike, 1. / 60.);
         }
         assert!((slow - lock).abs() < 0.01);
         let mut state = State::default();
         for _ in 0..240 {
-            fast = state.steer(tuning, 1., 80., 5., lock, 32.2, 1. / 60.);
+            fast = state.steer(tuning, 1., 80., bike, 1. / 60.);
         }
         assert!(fast < 0.1 * lock);
         let g = state.demand / 32.2;
