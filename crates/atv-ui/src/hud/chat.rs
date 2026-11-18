@@ -369,13 +369,18 @@ pub fn paint_wheel(
         ])),
         ..Default::default()
     }));
-    let dial = Dial::new(r);
+    // The band narrows to stay on screen when the wheel fills a short view.
+    let band = 32f32
+        .min(cy - r - 2.)
+        .min(view.height - view.safe[2] - cy - r - 2.)
+        .max(26.);
+    let dial = Dial::new(r, band);
     dial.paint(
         list,
         cx,
         cy,
         lit_index.filter(|&i| i < 8),
-        lit_index.map(|i| i == 8),
+        lit_index.filter(|&i| i >= 8).map(|i| i == 8),
     );
     // The page's name over the ring (under it when a panel leaves no room
     // above), clear of the toolbar row.
@@ -463,7 +468,7 @@ const KEY: Color = Color::rgb(150, 150, 150);
 const OUTLINE: Color = Color::hex("#080808bb");
 const GOLD_GLASS: Color = Color::rgba(218, 192, 31, 0.3);
 const SMOKE: Color = Color::rgba(0, 0, 0, 0.36);
-const HUB_FILL: Color = Color::rgba(0, 0, 0, 0.62);
+const HUB_FILL: Color = Color::rgba(0, 0, 0, 0.78);
 /// A segment's half-width less its gap either side (radians).
 const HALF: f32 = std::f32::consts::FRAC_PI_8 - 0.035;
 
@@ -484,11 +489,11 @@ struct Dial {
 }
 
 impl Dial {
-    fn new(r: f32) -> Self {
+    fn new(r: f32, band: f32) -> Self {
         Self {
-            inner: r - 32.,
-            outer: r + 32.,
-            hub: r - 40.,
+            inner: r - band,
+            outer: r + band,
+            hub: r - band - 8.,
         }
     }
 

@@ -1791,6 +1791,7 @@ impl Overlay {
         // The Free Ride hub: Challenge, its prompt, the event chip, the map
         // vote and toasts, under the toolbar (one view: rooms do not split).
         let mut hub_bottom = 0f32;
+        let wheel_open = self.chat.open && chat.is_some();
         if let Some((hub, _)) = shown.and_then(|h| h.hub.as_ref())
             && !self.results.shown
         {
@@ -1815,9 +1816,15 @@ impl Overlay {
                 &mut hits,
             );
             hub_bottom = panels_bottom(&list, view.width);
-            self.panel_rects.extend(panel_rects(&list, view.width));
-            self.list.items.extend(list.items);
-            self.hits.extend(hits);
+            // An open chat wheel without room under the hub's prompts takes
+            // the screen meanwhile, as it does over Quick Play's panel.
+            if wheel_open && view.height - hub_bottom < atv_ui::hud::chat::WHEEL_SPACE {
+                hub_bottom = 0.;
+            } else {
+                self.panel_rects.extend(panel_rects(&list, view.width));
+                self.list.items.extend(list.items);
+                self.hits.extend(hits);
+            }
         }
         // Race over: the results panel or the Show Results button.
         match race {

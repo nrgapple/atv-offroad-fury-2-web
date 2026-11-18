@@ -62,7 +62,10 @@ positive or neutral.
   (1-8) in its corner. Lines are the HUD's outlined italic lettering, white
   and larger when lit; it all sits on a soft dark shade. The hit targets
   are unchanged. Paths are relative to the centre, so each ring size and
-  lit segment rasterises once.
+  lit segment rasterises once. On a short view the ring's band narrows
+  (32 px down to 26 px either side of the lines) to stay on screen, and
+  the Free Ride hub's prompts step aside while the wheel is open without
+  room under them, as Quick Play's panel already did.
 
 ## First-time tip
 
