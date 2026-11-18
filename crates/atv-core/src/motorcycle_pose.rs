@@ -8,6 +8,26 @@
 use super::*;
 use crate::math::Det;
 
+/// Active rider mass displacement in the bike frame, in feet. A critically
+/// damped response lets the rider change direction without snapping at the hips.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Stance {
+    pub shift: V,
+    velocity: V,
+}
+
+impl Stance {
+    pub fn follow(&mut self, target: V, frequency: f32, dt: f32) {
+        let decay = (-frequency * dt).exp_d();
+        for (axis, target) in target.into_iter().enumerate() {
+            let error = self.shift[axis] - target;
+            let approach = self.velocity[axis] + frequency * error;
+            self.shift[axis] = target + (error + approach * dt) * decay;
+            self.velocity[axis] = (self.velocity[axis] - frequency * approach * dt) * decay;
+        }
+    }
+}
+
 /// Bike state the rider system reads each frame.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Input {
@@ -22,6 +42,7 @@ pub(super) struct Input {
     pub up_y: f32,
     pub grounded: bool,
     pub reverse: bool,
+    pub smooth_release: bool,
     /// Pelvis-point specific force minus the level 1 g, in the bike frame.
     pub load: V,
 }
@@ -35,6 +56,7 @@ pub(super) struct Controls {
     air: f32,
     /// Peg pin strength per foot (left, right).
     pub feet: [f32; 2],
+    pub contact_ik: bool,
     foot_return: [f32; 2],
     /// Pelvis offset (ft, bike frame) and its rate.
     pub pelvis: V,
@@ -79,7 +101,11 @@ impl Controls {
         for ((pin, back), released) in self.feet.iter_mut().zip(&mut self.foot_return).zip(release)
         {
             if released {
-                *pin = 0.;
+                *pin = if input.smooth_release {
+                    (*pin - 8. * dt).max(0.)
+                } else {
+                    0.
+                };
                 // Feet-down pins return over 0.5 s, a slide foot-out over 2 s.
                 *back = if outer { 2. } else { 0.5 };
             } else {
@@ -196,23 +222,45 @@ fn unit(v: V) -> V {
 fn position(m: &M) -> V {
     [m[12], m[13], m[14]]
 }
+/// Fraction of a pelvis translation that leaves a pinned limb within reach.
+/// Intersect the hip/shoulder path with the sphere spanned by its segments.
+fn reachable_shift(origin: V, target: V, reach: f32, shift: V) -> f32 {
+    let delta = sub(origin, target);
+    let a = dot(shift, shift);
+    let span = reach * reach - dot(delta, delta);
+    let b = dot(delta, shift);
+    if a < 1e-9 || a + 2. * b <= span.max(0.) {
+        return 1.;
+    }
+    ((-b + (b * b + a * span.max(0.)).sqrt()) / a).clamp(0., 1.)
+}
 /// Two-bone limb IK that keeps the clip's elbow/knee side and twist: the
 /// joint stays in the plane of its authored position, and only the upper and
 /// lower bones turn by the smallest rotations needed. `end` keeps its clip
 /// orientation relative to the lower bone; the marker (a child of `end`)
 /// lands on `target`.
-fn limb(pose: &mut animation::Pose, nodes: &[mesh::Node], end: usize, marker: usize, target: V) {
+fn limb(
+    pose: &mut animation::Pose,
+    nodes: &[mesh::Node],
+    end: usize,
+    marker: usize,
+    target: V,
+    contact_ik: bool,
+) {
     let lower = nodes[end].parent as usize;
     let upper = nodes[lower].parent as usize;
-    for _ in 0..3 {
+    // The hand or boot and its marker keep their sampled rotation relative to
+    // the forearm or shin. Their combined reach is one rigid segment.
+    let tip = if contact_ik { marker } else { end };
+    for _ in 0..if contact_ik { 1 } else { 3 } {
         let offset = sub(
             position(&pose.world_matrices[marker]),
-            position(&pose.world_matrices[end]),
+            position(&pose.world_matrices[tip]),
         );
         let goal = sub(target, offset);
         let s = position(&pose.world_matrices[upper]);
         let e = position(&pose.world_matrices[lower]);
-        let w = position(&pose.world_matrices[end]);
+        let w = position(&pose.world_matrices[tip]);
         let (a, b) = (
             dot(sub(e, s), sub(e, s)).sqrt(),
             dot(sub(w, e), sub(w, e)).sqrt(),
@@ -235,7 +283,7 @@ fn limb(pose: &mut animation::Pose, nodes: &[mesh::Node], end: usize, marker: us
         );
         rotate_world(pose, nodes, upper, elbow, sub(joint, s));
         let e = position(&pose.world_matrices[lower]);
-        let w = position(&pose.world_matrices[end]);
+        let w = position(&pose.world_matrices[tip]);
         rotate_world(pose, nodes, lower, sub(w, e), sub(goal, e));
     }
 }
@@ -317,14 +365,63 @@ impl Model {
         angles: [f32; 2],
         compression: [f32; 2],
         steering: f32,
-    ) -> Result<(animation::Pose, f32)> {
+    ) -> Result<(animation::Pose, V)> {
         let mut pose = self.riding_channels(c)?.pose(&self.rider.nodes)?;
-        // Pelvis offset in the bike frame; the upper body follows it.
+        let bike = self.pose(steering, angles, compression);
+        let nodes = &self.rider.nodes;
+        let peg = |name: &str| {
+            self.mesh
+                .nodes
+                .iter()
+                .position(|n| n.name.eq_ignore_ascii_case(name))
+                .ok_or("missing motorcycle foot peg")
+        };
+        let pins = [
+            (
+                self.node("HandL")?,
+                self.node("Dummy_hand_L")?,
+                self.grips[0],
+                1.,
+            ),
+            (
+                self.node("HandR")?,
+                self.node("Dummy_hand_R")?,
+                self.grips[1],
+                1.,
+            ),
+            (
+                self.node("FootL")?,
+                self.node("Dummy_foot_L")?,
+                peg("Dummy_Foot_L")?,
+                c.feet[0],
+            ),
+            (
+                self.node("FootR")?,
+                self.node("Dummy_foot_R")?,
+                peg("Dummy_Foot_R")?,
+                c.feet[1],
+            ),
+        ];
+        let mut shift = c.pelvis;
+        if c.contact_ik {
+            let mut available = 1_f32;
+            for (end, marker, anchor, weight) in pins {
+                let lower = nodes[end].parent as usize;
+                let upper = nodes[lower].parent as usize;
+                let at = |i| position(&pose.world_matrices[i]);
+                let a = sub(at(lower), at(upper));
+                let b = sub(at(marker), at(lower));
+                let reach = dot(a, a).sqrt() + dot(b, b).sqrt();
+                let limit = reachable_shift(at(upper), position(&bike[anchor]), reach, shift);
+                available = available.min(1. - weight * (1. - limit));
+            }
+            shift = scale(shift, available);
+        }
         let pelvis = self.node("Pelvis")?;
-        if c.pelvis.iter().any(|v| *v != 0.) {
+        if shift.iter().any(|v| *v != 0.) {
             let mut world = pose.world_matrices[pelvis];
             for k in 0..3 {
-                world[12 + k] += c.pelvis[k];
+                world[12 + k] += shift[k];
             }
             let parent = self.rider.nodes[pelvis].parent;
             pose.local_matrices[pelvis] = if parent >= 0 {
@@ -334,49 +431,20 @@ impl Model {
             };
             compose(&mut pose, &self.rider.nodes);
         }
-        let bike = self.pose(steering, angles, compression);
-        for (hand, marker, grip) in [
-            ("HandL", "Dummy_hand_L", self.grips[0]),
-            ("HandR", "Dummy_hand_R", self.grips[1]),
-        ] {
-            let target = position(&bike[grip]);
-            limb(
-                &mut pose,
-                &self.rider.nodes,
-                self.node(hand)?,
-                self.node(marker)?,
-                target,
-            );
-        }
-        for (i, (foot, marker, peg)) in [
-            ("FootL", "Dummy_foot_L", "Dummy_Foot_L"),
-            ("FootR", "Dummy_foot_R", "Dummy_Foot_R"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let weight = c.feet[i];
+        for (i, (end, marker, anchor, weight)) in pins.into_iter().enumerate() {
             if weight <= 0. {
                 continue;
             }
-            let peg = self
-                .mesh
-                .nodes
-                .iter()
-                .position(|n| n.name.eq_ignore_ascii_case(peg))
-                .ok_or("missing motorcycle foot peg")?;
-            let marker = self.node(marker)?;
-            let clip = position(&pose.world_matrices[marker]);
-            let target = add(clip, scale(sub(position(&bike[peg]), clip), weight));
-            limb(
-                &mut pose,
-                &self.rider.nodes,
-                self.node(foot)?,
-                marker,
-                target,
-            );
+            let anchor = position(&bike[anchor]);
+            let target = if i < 2 {
+                anchor
+            } else {
+                let clip = position(&pose.world_matrices[marker]);
+                add(clip, scale(sub(anchor, clip), weight))
+            };
+            limb(&mut pose, nodes, end, marker, target, c.contact_ik);
         }
-        Ok((pose, steering))
+        Ok((pose, shift))
     }
     pub(super) fn foot_errors(&self, rider: &[M], bike: &[M]) -> [f32; 2] {
         [
@@ -424,6 +492,22 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stance_is_continuous_at_input_reversals_and_independent_of_step_size() {
+        let mut coarse = Stance::default();
+        let mut fine = Stance::default();
+        for goal in [[0.2, 0.15, -0.26], [-0.2, 0., 0.12], [0.; 3]] {
+            for _ in 0..12 {
+                coarse.follow(goal, 11., 1. / 60.);
+                for _ in 0..4 {
+                    fine.follow(goal, 11., 1. / 240.);
+                }
+                for (a, b) in coarse.shift.iter().zip(fine.shift) {
+                    assert!((a - b).abs() < 1e-5);
+                }
+            }
+        }
+    }
     #[test]
     fn steering_keeps_wheel_on_slanted_fork_line() {
         let pivot = [0., 3.9, 0.95];

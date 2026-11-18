@@ -301,6 +301,7 @@ fn window(value: f32, [min, max]: [f32; 2]) -> f32 {
 #[derive(Debug, Clone, Default)]
 pub(super) struct Drive {
     pub steer: f32,
+    pub stance: super::pose::Stance,
     pub lean: f32,
     pub gas: f32,
     pub brake: f32,
@@ -373,6 +374,7 @@ pub(super) struct TireState {
     pub compression: f32,
     pub display: f32,
     pub spin: bool,
+    pub scrub_speed: f32,
     pub lock: bool,
     pub omega: f32,
     pub angle: f32,
@@ -544,7 +546,8 @@ impl Motorcycle {
         }
         // Rider weight: raw stick Y moves the centre of gravity fore/aft.
         let base = if wreck { p.wreck_cofg } else { p.cofg };
-        let y = input.lean;
+        let enhanced = self.tires.mode != crate::tire_wear::Handling::Original;
+        let y = if enhanced { d.lean } else { input.lean };
         let mut z = base[2]
             + if y < 0. {
                 -p.travel_forward * y
@@ -577,7 +580,39 @@ impl Motorcycle {
         for (hold, held) in d.hold.iter_mut().zip(held) {
             *hold = if held { *hold + dt * 60. } else { 0. };
         }
-        let cofg = [base[0], base[1], z];
+        let mut cofg = [base[0], base[1], z];
+        if enhanced && !wreck && self.active_stunt.is_none() {
+            let pace = (speed.abs() / 20.).clamp(0., 1.);
+            let stroke = d
+                .tires
+                .iter()
+                .zip(&p.tires)
+                .map(|(t, spec)| t.compression / spec.strut)
+                .fold(0_f32, f32::max);
+            let touchdown = if d.was_airborne {
+                (-self.body.linear_velocity[1] / 24.).clamp(0., 1.)
+            } else {
+                0.
+            };
+            // Stand on the pegs in motion, let the bike come up into bent
+            // knees on compression, and move back to brace under braking.
+            let target = [
+                0.24 * d.steer * pace,
+                0.21 * pace + 0.12 * touchdown - 0.26 * stroke,
+                pace * (0.12 * d.gas - 0.26 * d.brake) - 0.13 * d.lean,
+            ];
+            let response = if self.tires.mode == crate::tire_wear::Handling::Sport {
+                15.
+            } else {
+                11.
+            };
+            d.stance.follow(target, response, dt);
+            // The combined body already includes the rider. Shift its centre
+            // by the rider share while leaving the chassis origin fixed.
+            cofg = add(cofg, scale(d.stance.shift, 0.32));
+        } else {
+            d.stance = Default::default();
+        }
         self.set_cofg(cofg);
         for (i, tire) in self.params.tires.iter().enumerate() {
             self.springs[i] = tire.spring_rate(
@@ -1148,6 +1183,7 @@ impl Motorcycle {
             }
             let mut out = state;
             out.torque = torque;
+            out.scrub_speed = 0.;
             let enhanced = self.tires.mode != crate::tire_wear::Handling::Original;
             let wheel = crate::tire_wear::WheelDrive {
                 omega: state.omega,
@@ -1202,6 +1238,7 @@ impl Motorcycle {
                     );
                     out.omega = result.omega;
                     let scrub = out.omega * tire.radius - v_long;
+                    out.scrub_speed = scrub.hypot(v_lat);
                     out.lock = brake > 0. && v_long.abs() > 1. && out.omega.abs() < 0.1;
                     out.spin = !out.lock && scrub.abs() > 2.;
                     result.forces

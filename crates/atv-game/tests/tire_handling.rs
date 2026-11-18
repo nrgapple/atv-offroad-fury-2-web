@@ -24,23 +24,51 @@ fn corner_and_brake_on_both_mounts() {
         let venue = atv_game::venue::load(&content, "env01", false)
             .await
             .unwrap();
-        for id in [1, 29] {
+        for id in [1, 29, 27] {
             for mode in [Handling::Original, Handling::Sport, Handling::Simulation] {
                 let mut ride = atv_game::ride::load(&content, &venue, id, 0, |_| {})
                     .await
                     .unwrap();
                 ride.options.handling = mode;
                 let mut peak = 0_f32;
+                let mut glow = 0_f32;
+                let mut hand_error = 0_f32;
+                let mut peg_error = 0_f32;
+                let mut attached = 0;
                 let began = std::time::Instant::now();
                 for tick in 0..600 {
                     let controls = Controls {
                         throttle: if (60..450).contains(&tick) { 1. } else { 0. },
-                        steer: if tick >= 300 { -0.55 } else { 0. },
+                        steer: if (360..510).contains(&tick) {
+                            -0.40
+                        } else {
+                            0.
+                        },
                         brake: if tick >= 450 { 0.8 } else { 0. },
                         ..Default::default()
                     };
                     ride.step(&controls, 0.).unwrap();
                     assert!(ride.frame().origin.iter().all(|v| v.is_finite()));
+                    if tick % 10 == 0 {
+                        let pose = ride.pose().unwrap();
+                        glow = glow.max(pose.brake_glow.into_iter().fold(0., f32::max));
+                        if let Some(bike) = ride.motorcycle()
+                            && let Some(errors) =
+                                bike.grip_errors(&pose.rider_nodes, &pose.quad_nodes)
+                        {
+                            attached += 1;
+                            hand_error = errors.into_iter().fold(hand_error, f32::max);
+                            let errors = bike
+                                .foot_errors(&pose.rider_nodes, &pose.quad_nodes)
+                                .unwrap();
+                            for (pin, error) in bike.frame().rider_foot_pins.into_iter().zip(errors)
+                            {
+                                if pin >= 0.999 {
+                                    peg_error = peg_error.max(error);
+                                }
+                            }
+                        }
+                    }
                     peak = peak.max(ride.frame().speed);
                 }
                 let step_us = began.elapsed().as_secs_f64() * 1e6 / 600.;
@@ -49,8 +77,51 @@ fn corner_and_brake_on_both_mounts() {
                     ride.tire_wear(),
                     ride.brake_heat()
                 );
+                eprintln!(
+                    "peak rotor emission {glow:.3}, grip/peg errors {hand_error:.3}/{peg_error:.3} ft"
+                );
+
+                if ride.is_motorcycle() {
+                    assert!(attached > 20);
+                    let tolerance = if mode == Handling::Original {
+                        0.32
+                    } else {
+                        0.10
+                    };
+                    assert!(
+                        hand_error < tolerance && peg_error < tolerance,
+                        "{id} {mode:?} grip {hand_error} ft, peg {peg_error} ft"
+                    );
+                }
                 assert!(peak > 15.);
                 assert_eq!(ride.tire_wear() > 0., mode != Handling::Original);
+                // Reach the braking marker on throttle. Keep the entry speed
+                // comparable across engines, including the mini bike.
+                let (start, yaw) = ride.start_pose();
+                ride.place_beside(start, yaw, [0.; 3]).unwrap();
+                let gas = Controls {
+                    throttle: 0.82,
+                    ..Default::default()
+                };
+                for _ in 0..450 {
+                    ride.step(&gas, 0.).unwrap();
+                    if ride.frame().speed > 30. {
+                        break;
+                    }
+                }
+                let entry = ride.frame().speed;
+                assert!(entry > 20., "{id} {mode:?} braking entry {entry} ft/s");
+                let brake = Controls {
+                    brake: 1.,
+                    ..Default::default()
+                };
+                for _ in 0..70 {
+                    ride.step(&brake, 0.).unwrap();
+                    let rotors = ride.pose().unwrap().brake_glow;
+                    glow = glow.max(rotors.into_iter().fold(0., f32::max));
+                }
+                eprintln!("braking entry {entry:.2} ft/s, peak rotor emission {glow:.3}");
+                assert_eq!(glow > 0., mode != Handling::Original);
                 assert_eq!(ride.brake_heat() > 0., mode != Handling::Original);
                 assert_eq!(ride.assisted(), mode != Handling::Original);
                 // Drop back onto the start surface with no throttle. Contact

@@ -386,6 +386,8 @@ pub struct RideOptions {
 /// World pose of the player's quad and rider for drawing.
 #[derive(Clone, Debug, Default)]
 pub struct Pose {
+    /// Rotor emission, in physics wheel order (front/rear on a bike).
+    pub brake_glow: [f32; 4],
     pub quad_world: [f32; 16],
     pub quad_nodes: Vec<[f32; 16]>,
     pub rider_world: [f32; 16],
@@ -1968,6 +1970,7 @@ impl Ride {
                     None => (quad_world, rig.animator.pose(nodes)?.world_matrices),
                 };
                 Ok(Pose {
+                    brake_glow: vehicle.tires.brake_glow(),
                     quad_world,
                     quad_nodes,
                     rider_world,
@@ -1975,6 +1978,10 @@ impl Ride {
                 })
             }
             Mount::Bike(bike) => Ok(Pose {
+                brake_glow: {
+                    let [front, rear] = bike.tires.brake_glow();
+                    [front, rear, 0., 0.]
+                },
                 quad_world,
                 quad_nodes: bike.matrices(),
                 rider_world: self.rider_world(),

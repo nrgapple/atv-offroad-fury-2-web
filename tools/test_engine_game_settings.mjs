@@ -40,7 +40,7 @@ try {
   for (const mode of ['sport', 'simulation', 'original']) {
     await click(page, 'handling');
     assert.equal((await settings(page)).handling, mode);
-    if (mode === 'simulation' && shots) await page.screenshot({ path: `${shots}/simulation-tread.png` });
+    if (mode === 'simulation' && shots) await page.screenshot({ path: `${shots}/simulation-mode.png` });
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-handling')), mode);
   }
   await click(page, 'measurement');

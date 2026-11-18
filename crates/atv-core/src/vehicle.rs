@@ -246,6 +246,7 @@ pub struct Vehicle {
     stiction_speed: f32,
     axis_config: AxisConfig,
     smoothed_axes: [f32; 2],
+    rider_brace: [f32; 2],
     rider_crouch: crate::rider_pose::Crouch,
     pose_preload_axis: f32,
     base_center: Vec3,
@@ -475,6 +476,7 @@ impl Vehicle {
             stiction_speed: data.first_scalar("Tires", "StictionSpeed")?,
             axis_config: AxisConfig::from_physics(data)?,
             smoothed_axes: [0.; 2],
+            rider_brace: [0.; 2],
             rider_crouch: crate::rider_pose::Crouch::default(),
             pose_preload_axis: 0.0,
             base_center: center,
@@ -1121,6 +1123,7 @@ impl Vehicle {
         // velocity until the next grounded substep overwrites it.
         self.engine.state = crate::drivetrain::EngineState::default();
         self.smoothed_axes = [0.; 2];
+        self.rider_brace = [0.; 2];
         self.rider_state = RiderState::default();
         self.rider_crouch = crate::rider_pose::Crouch::default();
         self.lean_gesture = LeanGesture::default();
@@ -1409,10 +1412,20 @@ impl Vehicle {
             flip_events: self.flip_events.clone(),
         }
     }
+    fn riding_axes(&self) -> [f32; 2] {
+        if self.tires.mode == crate::tire_wear::Handling::Original {
+            return self.smoothed_axes;
+        }
+        std::array::from_fn(|i| {
+            let stick = self.smoothed_axes[i];
+            (stick + self.rider_brace[i] * (1. - stick.abs())).clamp(-1., 1.)
+        })
+    }
+
     /// Recovered riding inputs, with the separate touch preload also expressed
     /// through the original lean clips. Look-target acquisition remains separate.
     pub fn rider_pose_input(&self) -> crate::rider_pose::Input {
-        let mut axes = self.smoothed_axes;
+        let mut axes = self.riding_axes();
         if self.contacts.iter().any(|contact| contact.grounded) && axes[1].abs() < 0.01 {
             axes[1] += self.pose_preload_axis;
         }
@@ -1567,10 +1580,30 @@ impl Vehicle {
             self.stunt_state_four,
             dt,
         )?;
+        if self.tires.mode != crate::tire_wear::Handling::Original {
+            // Shift into an established turn and brace rearward under brakes.
+            // Full manual lean takes priority over the automatic posture.
+            let pace = if rider_grounded && !crashed && !self.forced_landing {
+                (speed / 24.).clamp(0., 1.)
+            } else {
+                0.
+            };
+            let yaw = self.body.local_angular_velocity[1];
+            let target = [
+                0.38 * (speed * yaw / 32.2).clamp(-1., 1.) * pace,
+                0.35 * brake * pace,
+            ];
+            let blend = 1. - (-9. * dt).exp_d();
+            for (axis, target) in self.rider_brace.iter_mut().zip(target) {
+                *axis += (target - *axis) * blend;
+            }
+        } else {
+            self.rider_brace = [0.; 2];
+        }
         let riding_center = rider_control::shifted_center(
             self.base_center,
             self.center_range,
-            self.smoothed_axes,
+            self.riding_axes(),
             speed,
             self.rider_stand_up_speed,
         );

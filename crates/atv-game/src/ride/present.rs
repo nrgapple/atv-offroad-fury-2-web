@@ -28,6 +28,7 @@ pub struct Physical {
 /// The fields of one delivered state the browser's presentation reads.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
+    pub brake_glow: [f32; 4],
     pub origin: [f32; 3],
     pub orientation: [f32; 4],
     pub reset_count: u32,
@@ -86,6 +87,7 @@ impl Snapshot {
                 .collect()
         });
         let snapshot = Self {
+            brake_glow: pose.brake_glow,
             origin: frame.origin,
             orientation: frame.orientation,
             reset_count: frame.reset_count,
@@ -150,6 +152,7 @@ impl Snapshot {
     pub fn pose(&self) -> Pose {
         let quad_world = quaternion_world(self.origin, self.orientation);
         Pose {
+            brake_glow: self.brake_glow,
             quad_world,
             quad_nodes: self.quad_nodes.clone(),
             rider_world: self.rider_world.unwrap_or(quad_world),
@@ -166,6 +169,7 @@ impl Snapshot {
                 let p = o.physical.as_ref()?;
                 let quad_world = quaternion_world(o.origin, p.orientation);
                 Some(Pose {
+                    brake_glow: [0.; 4],
                     quad_world,
                     quad_nodes: p.quad_nodes.clone(),
                     rider_world: p.rider_world.unwrap_or(quad_world),
@@ -440,6 +444,7 @@ fn blend_bike(s: &Segment, frame: &Snapshot, alpha: f32) -> Snapshot {
     let orientation = mix(a.orientation, q, alpha);
     let n = length(&orientation);
     let mut out = frame.clone();
+    out.brake_glow = mix(a.brake_glow, b.brake_glow, alpha);
     out.origin = mix(a.origin, frame.origin, alpha);
     out.orientation = orientation.map(|v| v / n);
     out.quad_nodes = blend_all(&a.quad_nodes, &b.quad_nodes, alpha);
@@ -454,6 +459,7 @@ fn blend_bike(s: &Segment, frame: &Snapshot, alpha: f32) -> Snapshot {
 fn blend_quad(s: &Segment, t: f32) -> Snapshot {
     let (a, b) = (&s.previous, &s.current);
     let mut out = b.clone();
+    out.brake_glow = mix(a.brake_glow, b.brake_glow, t);
     out.origin = mix(a.origin, b.origin, t);
     out.orientation = slerpish(a.orientation, b.orientation, t);
     out.quad_nodes = blend_all(&a.quad_nodes, &b.quad_nodes, t);
@@ -571,6 +577,7 @@ mod tests {
     /// A quad moving one unit per step along X.
     fn at(x: f32) -> Snapshot {
         Snapshot {
+            brake_glow: [0.; 4],
             origin: [x, 0., 0.],
             orientation: [0., 0., 0., 1.],
             reset_count: 0,

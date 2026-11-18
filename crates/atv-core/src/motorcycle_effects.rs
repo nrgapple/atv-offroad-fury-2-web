@@ -157,6 +157,7 @@ impl Effects {
         config: &Config,
         bike: &crate::motorcycle::Frame,
         world: &[f32; 16],
+        rear_roost: Option<([f32; 3], f32)>,
         dt: f32,
         terrain: &crate::terrain::Terrain,
     ) -> Result<()> {
@@ -171,10 +172,12 @@ impl Effects {
         let rear = bike.grounded[1];
         let zone = bike.surfaces[1];
         let wet = matches!(zone, 6 | 7);
+        let scrub = rear_roost.map_or(0., |(_, speed)| speed);
+        let dirt_speed = bike.speed.abs().max(scrub);
         let enables = [
-            rear && !wet && !wreck && bike.speed.abs() > 15.,
-            rear && !wreck && bike.speed.abs() > 3.,
-            rear && !wreck && bike.speed.abs() > 15.,
+            rear && !wet && !wreck && dirt_speed > 15.,
+            rear && !wreck && dirt_speed > 3.,
+            rear && !wreck && dirt_speed > 15.,
             !wreck && !wet && bike.speed.abs() < 15.,
             wreck && bike.crash_impact_speed > 18.,
         ];
@@ -184,12 +187,15 @@ impl Effects {
                 continue;
             }
             let e = config.emitters[index].clone();
-            let rate = self.range(e.rate)
+            let mut rate = self.range(e.rate)
                 * (if index == 1 {
-                    bike.speed.abs().min(60.) / 60.
+                    dirt_speed.min(60.) / 60.
                 } else {
                     1.
                 });
+            if index < 3 && rear_roost.is_some() {
+                rate *= 0.45 + 1.55 * (scrub / 16.).clamp(0., 1.);
+            }
             self.residual[index] += rate * dt;
             let emit = (self.residual[index] as usize).min(40);
             self.residual[index] -= emit as f32;
@@ -223,7 +229,14 @@ impl Effects {
                 let size = self.range(e.size);
                 let particle = Particle {
                     kind,
-                    position: crate::obstacle::transform_point(world, p),
+                    position: match rear_roost {
+                        Some((point, _)) if index < 3 => [
+                            point[0] + p[0] * world[0],
+                            point[1] + 0.07 + p[0] * world[1],
+                            point[2] + p[0] * world[2],
+                        ],
+                        _ => crate::obstacle::transform_point(world, p),
+                    },
                     velocity: add(
                         velocity,
                         scale(

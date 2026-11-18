@@ -131,6 +131,17 @@ impl<const N: usize> Tires<N> {
             (self.shock_wear[i] + excess_energy / (2. * 32.2 * service_distance)).min(1.);
     }
 
+    /// Artistic rotor emission. Make heat visible before fade begins.
+    pub fn brake_glow(&self) -> [f32; N] {
+        if self.mode == Handling::Original {
+            return [0.; N];
+        }
+        self.brake_heat.map(|heat| {
+            let warm = (heat - 0.02).max(0.);
+            warm / (warm + 0.09)
+        })
+    }
+
     pub fn hottest_brake(&self) -> f32 {
         self.brake_heat.iter().copied().fold(0., f32::max)
     }

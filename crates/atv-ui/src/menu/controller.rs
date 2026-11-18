@@ -163,8 +163,6 @@ pub struct PauseMenu {
     /// The ride is a race: Pause's second row is Restart Race
     /// (frontend.js `raceActive`).
     pub race_active: bool,
-    /// Remaining tread, damper condition and whether a brake is fading.
-    pub vehicle_condition: Option<(u8, u8, bool)>,
     /// The ride is the Training Course (Restart Training).
     pub training_active: bool,
     /// The ride is a mini-game (Restart Game).
@@ -237,7 +235,6 @@ impl PauseMenu {
             notice: None,
             seek_to: None,
             race_active: false,
-            vehicle_condition: None,
             training_active: false,
             game_active: false,
             editor_active: false,
@@ -353,18 +350,10 @@ impl PauseMenu {
                 _ => None,
             },
             // `.pause-header .pause-status`: Audio's soundtrack line.
-            status: match self.page.as_str() {
-                "music" => ctx.music.map(music_status),
-                "game-settings"
-                    if ctx.lobby.is_none()
-                        && ctx.prefs.handling != atv_core::tire_wear::Handling::Original =>
-                {
-                    self.vehicle_condition.map(|(tread, shocks, hot)| {
-                        let brakes = if hot { "fading" } else { "ready" };
-                        format!("Tread {tread}% · Shocks {shocks}% · Brakes {brakes}")
-                    })
-                }
-                _ => None,
+            status: if self.page == "music" {
+                ctx.music.map(music_status)
+            } else {
+                None
             },
         }
     }

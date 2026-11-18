@@ -1997,6 +1997,7 @@ impl Ride {
                 let (s, c) = (cpu.yaw / 2.).sin_cos_d();
                 let world = super::quaternion_world(cpu.origin, [c, 0., s, 0.]);
                 Some(super::Pose {
+                    brake_glow: [0.; 4],
                     quad_world: world,
                     quad_nodes: quads.get(index)?.clone(),
                     rider_world: world,
@@ -2020,6 +2021,7 @@ impl Ride {
                     let (s, c) = (cpu.yaw / 2.).sin_cos_d();
                     let world = super::quaternion_world(cpu.origin, [c, 0., s, 0.]);
                     super::Pose {
+                        brake_glow: [0.; 4],
                         quad_world: world,
                         quad_nodes: quad.clone(),
                         rider_world: world,
@@ -2037,6 +2039,7 @@ impl Ride {
                 let frame = cpu.vehicle.frame();
                 let quad_world = super::quaternion_world(frame.origin, physical.orientation);
                 Some(super::Pose {
+                    brake_glow: [0.; 4],
                     quad_world,
                     quad_nodes: physical.quad_matrices.clone(),
                     rider_world: physical.rider_world_matrix.unwrap_or(quad_world),

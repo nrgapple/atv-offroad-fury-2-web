@@ -275,6 +275,7 @@ impl Local {
                 }
                 let quad_world = s.atv.to_column_major();
                 return Ok(Pose {
+                    brake_glow: [0.; 4],
                     quad_world,
                     quad_nodes: bike.pose(
                         a.steering,
@@ -338,6 +339,7 @@ impl Local {
             )
         };
         Ok(Pose {
+            brake_glow: [0.; 4],
             quad_world,
             quad_nodes,
             rider_world,
