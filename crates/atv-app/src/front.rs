@@ -1744,6 +1744,35 @@ impl Front {
             self.list
                 .translate_range(range, 0., moved_since_layout(span));
         }
+        // The live world's Hop in target pulses over the stage, painted
+        // each frame on the cached page (research/FREERIDE_MENU.md).
+        if motion.is_none()
+            && screen
+                .live
+                .as_ref()
+                .is_some_and(|l| l.ready && l.fade >= 0.99)
+            && let Some(area) = self
+                .hits
+                .iter()
+                .find(|(_, id)| *id == atv_ui::front::WORLD)
+                .map(|(r, _)| *r)
+        {
+            let selected = screen
+                .choices
+                .get(screen.selection)
+                .is_some_and(|(a, _)| a == "hopin");
+            let now = self.now();
+            atv_ui::front::paint_hop_target(
+                &mut self.fonts,
+                &mut self.list,
+                &mut self.hits,
+                area,
+                [self.view.width, self.view.height],
+                now,
+                self.touch.coarse,
+                selected,
+            );
+        }
         self.content = start..self.list.items.len();
     }
 

@@ -66,14 +66,20 @@ no shared world.
   with the CPU's controls (an online ride keeps stepping under its menus,
   research/MULTIPLAYER.md), so the room sees it riding normally and the
   camera follows it.
-- **Hop in.** Bottom right beside Back on every page with Back (not the
-  title, the garage or the split-screen seats), the frontend's gold pill
-  with an arrow, at least 48 px tall. It is also the last keyboard/pad
-  choice after the rows, Start hops in, and a click or tap on the world on
-  the stage hops in. Pressed while the world still loads it waits and reads
-  "Loading…", then rides once ready. Multiplayer → Free Ride while the world
-  is there also hops in. Hop in hands the same ride to the player where it
-  stands (no respawn or teleport); the menus go and the ride's HUD shows.
+- **Hop in.** A pulsing target on the world in the stage (issue #742,
+  owner request 2026-11-17, replacing the gold Hop in pill beside Back,
+  which read as a confusing extra button): the touch coach's gold ring
+  (touch-hint-pulse, 1.4 s) under the rider with "CLICK TO HOP IN" ("TAP TO
+  HOP IN" on touch screens) beside it, at least 48 px tall. A click or tap
+  anywhere on the world hops in; the target only says so. It shows once the
+  world has crossfaded in, on every page whose stage shows the world. Hop
+  in is then also the last keyboard/pad choice after the rows (the target's
+  lettering turns gold and its ring stops pulsing while it is chosen), and
+  pad Start hops in from any page with Back, also while the world loads
+  (it waits, then rides once ready). Multiplayer → Free Ride while the
+  world is there also hops in. Hop in hands the same ride to the player
+  where it stands (no respawn or teleport); the menus go and the ride's HUD
+  shows.
 - **Pause** in that ride is the ride's own pause menu; its last row reads
   Quit to Main Menu and brings the menus back over the world, the autopilot
   riding again. Change ATV and Rider holds the room in the garage as any
@@ -81,7 +87,7 @@ no shared world.
 - **Other modes.** Starting any other ride or room (Single Player modes,
   Quick Play, Training, Host/Join, Split Screen) leaves the world first, as
   leaving Free Ride does; back on the menus it loads again behind them.
-- **Fallback.** No world, no caption and no Hop in, the ATV turning on the
+- **Fallback.** No world, no caption and no Hop in target, the ATV turning on the
   stage without its name (with Start in: Menu, the name too, as before), when
   the game server has not answered (offline, unreachable),
   when the claim or the load fails, or after a dropped room (which ends on
@@ -103,7 +109,8 @@ no shared world.
   over it at the crossfade's opacity. `Renderer::add_texture` registers the
   scene texture as a live image (the layer cache redraws it every frame).
   `front::LiveWorld` carries the image, fade, readiness and caption;
-  `hints` draws Hop in; `Event::HopIn`.
+  `front::paint_hop_target` paints the Hop in target each frame over the
+  cached page (`atv_app::front` `render_page`); `Event::HopIn`.
 - `atv_app`: `home.rs` keeps the states (loading, world, live, waiting, the
   probe and failures). `home_check` starts the load from the frontend frame;
   `home_ready` hands over the surface; `step` runs the frontend's input and

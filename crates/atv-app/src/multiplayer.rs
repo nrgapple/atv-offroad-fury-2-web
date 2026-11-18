@@ -1906,6 +1906,34 @@ impl Net {
             .collect()
     }
 
+    /// A shared Free Ride room's riders list (hud::riders): everyone in the
+    /// room, the nearest few named with their distance from `origin`.
+    pub fn riders_view(&self, origin: [f32; 3], folded: bool) -> Option<atv_ui::hud::riders::View> {
+        if !self.shared() {
+            return None;
+        }
+        let mut riders: Vec<atv_ui::hud::riders::Rider> = self
+            .session
+            .others()
+            .map(|p| atv_ui::hud::riders::Rider {
+                slot: p.id,
+                paint: paint_of(p),
+                name: p.name.clone(),
+                feet: self
+                    .presented
+                    .iter()
+                    .find(|(peer, _, stale, _)| *peer == p.id && !*stale)
+                    .map(|(_, at, ..)| (at[0] - origin[0]).hypot(at[2] - origin[2])),
+            })
+            .collect();
+        atv_ui::hud::riders::sort(&mut riders);
+        Some(atv_ui::hud::riders::View {
+            count: riders.len() as u32 + 1,
+            riders,
+            folded,
+        })
+    }
+
     /// The Free Ride hub's HUD this frame; `venue` names a map id.
     pub fn hub_view(
         &self,

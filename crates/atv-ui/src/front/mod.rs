@@ -96,13 +96,109 @@ impl LiveWorld {
     }
 }
 
+/// The Hop in target on the live world (research/FREERIDE_MENU.md "Hop
+/// in"): the touch coach's pulsing gold ring (touch-hint-pulse, 1.4 s)
+/// with "CLICK TO HOP IN" beside it, painted each frame over the world
+/// `area` (the WORLD hit's rect) so it can pulse without a new layout.
+/// `selected`: the keyboard or pad choice is on it (gold lettering, ring
+/// at full size). Adds its own HOP_IN hit over the ring and label.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_hop_target(
+    fonts: &mut crate::text::Fonts,
+    list: &mut crate::paint::DisplayList,
+    hits: &mut Vec<(crate::paint::Rect, u32)>,
+    area: crate::paint::Rect,
+    screen: [f32; 2],
+    now: f64,
+    touch: bool,
+    selected: bool,
+) {
+    use crate::paint::{BoxPaint, Item, Rect};
+    use crate::text::Join;
+    // The visible part of the stage.
+    let (left, right) = (area.x.max(0.), area.right().min(screen[0]));
+    let (top, bottom) = (area.y.max(0.), area.bottom().min(screen[1]));
+    if right - left < 120. || bottom - top < 120. {
+        return;
+    }
+    let portrait = screen[1] > screen[0];
+    // Under the rider (world_centre puts it mid-stage, higher upright),
+    // above the caption.
+    let cy = top + (bottom - top) * if portrait { 0.66 } else { 0.76 };
+    let phase = ((now % 1400.) / 1400.) as f32;
+    let t = if selected {
+        1.
+    } else {
+        0.5 - 0.5 * (phase * std::f32::consts::TAU).cos()
+    };
+    let scale = 0.9 + 0.15 * t;
+    let alpha = 0.7 + 0.3 * t;
+    let label = if touch {
+        "TAP TO HOP IN"
+    } else {
+        "CLICK TO HOP IN"
+    };
+    let style = TextStyle::new(
+        display(17., 800, true),
+        if selected {
+            Color::hex("#fffaa1")
+        } else {
+            Color::WHITE
+        },
+    )
+    .spacing(17. * 0.045)
+    .stroke(2., Color::BLACK, Join::Miter)
+    .shadow(0., 1., 2., Color::BLACK);
+    let label_w = fonts
+        .measure(label, &style.font, style.letter_spacing)
+        .width;
+    let base = 24.;
+    let gap = 10.;
+    let whole = base * 2. + gap + label_w;
+    let cx = (left + right) / 2. - whole / 2. + base;
+    let r = base * scale;
+    list.opacity(alpha);
+    let far = (r - 3.) * std::f32::consts::SQRT_2;
+    list.push(Item::Box(BoxPaint {
+        rect: Rect::new(cx - r, cy - r, r * 2., r * 2.),
+        radii: [r; 4],
+        fill: Some(Fill::radial(&[
+            (0., Color::hex("#fffaa1")),
+            (7. / far, Color::hex("#fffaa1")),
+            (8. / far, Color::hex("#e5d36066")),
+            (10. / far, Color::TRANSPARENT),
+        ])),
+        border: [3. * scale; 4],
+        border_color: Color::hex("#e9e9e9aa"),
+        shadows: vec![
+            BoxShadow {
+                spread: scale,
+                ..BoxShadow::outer(0., 0., 0., Color::hex("#0008"))
+            },
+            BoxShadow {
+                spread: scale,
+                ..BoxShadow::inset(0., 0., 0., Color::hex("#0008"))
+            },
+        ],
+        ..Default::default()
+    }));
+    list.unopacity();
+    let m = fonts.measure(label, &style.font, style.letter_spacing);
+    let x = cx + base + gap;
+    list.text(label, &style, x, cy + (m.ascent - m.descent) / 2.);
+    hits.push((
+        Rect::new(cx - base - 8., cy - base - 8., whole + 16., base * 2. + 16.),
+        HOP_IN,
+    ));
+}
+
 /// Pages whose stage shows the world: the logo-and-vehicle showcase, and
 /// Options laid over the main menu.
 pub fn world_page(page: &str) -> bool {
     page == "stage" || (stage_page(page) && page != "splitseats")
 }
 
-/// Pages that offer Hop in beside Back.
+/// Pages where Start hops in (the target shows only where the world does).
 pub fn hop_page(page: &str) -> bool {
     !matches!(
         page,
@@ -3390,46 +3486,6 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
             .id(SHARE)
             .child(text(s.choices[index].1.clone(), style, size))
         });
-    // Hop in beside Back while the live Free Ride world loads or runs: the
-    // gold of the selection pill, its arrow pointing on.
-    let hop = s.live.as_ref().filter(|_| hop_page(&s.page)).map(|live| {
-        let index = s.choices.iter().position(|(a, _)| a == "hopin");
-        let selected = index.is_some_and(|i| i == s.selection);
-        let hovered = s.hovered == Some(HOP_IN);
-        let ink = Color::hex("#0d0b00");
-        let style = TextStyle::new(display(size + 1., 800, true), ink)
-            .spacing(0.3)
-            .shadow(0., 1., 0., Color::hex("#fff6b066"));
-        let mut paint = pill_shadows(Paint::fill(gold_pill()).radius(5.));
-        if selected || hovered {
-            paint.border = [2.; 4];
-            paint.border_color = Color::hex("#fffbe0");
-        }
-        let label = if live.waiting && !live.ready {
-            "Loading…"
-        } else {
-            "Hop in"
-        };
-        El::new(Style {
-            display: Display::Flex,
-            align_items: AlignItems::CENTER,
-            justify_content: JustifyContent::CENTER,
-            gap: Size {
-                width: px(8.),
-                height: px(0.),
-            },
-            min_size: Size {
-                width: length(if m.short { 112. } else { 128. }),
-                height: length(48.),
-            },
-            padding: sides(0., 14., 0., 16.),
-            ..Default::default()
-        })
-        .paint(paint)
-        .id(HOP_IN)
-        .child(text(label, style, size + 1.))
-        .child(arrow(false, 16., ink, false))
-    });
     let mut bar = row(clamp(14., m.w * 0.024, 30.));
     bar.min_size.height = length(if m.short { 44. } else { 50. });
     if m.portrait {
@@ -3450,7 +3506,7 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
         );
         bar.padding = sides(0., m.sides().1, 0., 26.);
     }
-    Some(El::new(bar).children(share).child(back).children(hop))
+    Some(El::new(bar).children(share).child(back))
 }
 
 /// The selected choice's action.

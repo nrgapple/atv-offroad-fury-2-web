@@ -111,6 +111,35 @@ builds follow the lobby's map exactly as in private rooms, so nobody is
 left on the old venue; the cost is a reload every 2 hours. Turn it off
 with `FURY_HUB_ROTATION_SECS=off` if that proves disruptive.
 
+## Riders list
+
+Issue #742 (owner request 2026-11-17). Port addition: who rides the shared
+room shows on the ride HUD at once, without Pause → Players.
+
+- Shown in shared Free Ride rooms (`Net::shared`), right-aligned under a
+  top-right GPS map (else at the top right), clear of a narrow view's
+  centred hub and Quick Play panels; hidden over race results and in split
+  screen.
+- No panel or plates: the race HUD's lettering (italic 800 with the
+  overlays' dark outline, `classic::hud_style`) on a soft dark shade. The
+  room's count in big gold with "RIDING" in overlay silver, then the five
+  nearest riders in their colours (paint, else slot; dark colours outlined
+  light, as name tags) with their distance in gold ("120 FT", "0.4 MI"
+  from a quarter mile), then "+N MORE". Riders without a pose sort last;
+  distances sort in 50 ft steps so neighbours do not swap every frame.
+  Alone: "JUST YOU".
+- A tap or click on the count folds the names away ("RIDING ›") and
+  back; the choice is saved (`atv-hud-riders`). Names are not targets:
+  mute, block and report stay on Pause → Players.
+- Code: `atv_ui::hud::riders`, `Net::riders_view`, `Overlay::prepare`.
+
+## First-time tips
+
+Issue #742. A tip is a gold arrow bobbing (1.4 s) toward a control and two
+lines of HUD lettering under it, no box, fading in and out over 0.4 s; a
+tap on it does what it points at (`atv_ui::hud::tips`). The chat tip is the
+first: research/QUICK_CHAT.md "First-time tip".
+
 ## Spawn spots
 
 Issue #710 (owner request 2026-11-16). Port addition, not recovered

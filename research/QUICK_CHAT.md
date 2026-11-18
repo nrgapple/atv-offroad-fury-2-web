@@ -49,6 +49,22 @@ positive or neutral.
   round the ring, a page switch to the eight emotes and the horn in the
   middle. Targets are at least 48 px and fit at 360 px portrait. Tapping
   outside closes it.
+- Look (issue #742, owner review 2026-11-17: the silver plates read as a
+  panel of buttons): no plates. Lines are the race HUD's lettering (overlay
+  silver with the dark outline, gold and larger when focused or hovered),
+  the horn and page icons the toolbar's outlined icons, and emotes their
+  own art, all on a soft dark radial shade behind the ring so they read
+  over snow. The hit targets are unchanged.
+
+## First-time tip
+
+Issue #742. In a room with chat, 2 s into the ride, a tip points at the
+CHAT button: "CHAT WITH RIDERS" in gold and "TAP THE BUBBLE · LINES, EMOTES,
+HORN" ("CLICK OR PRESS T · …" with a mouse) under a bobbing gold arrow, for
+12 s. Tapping it opens the wheel. It shows on at most three rides
+(`atv-tip-chat` counts them) and never again once the player has opened
+chat by any means ("done"). Chat goes to the whole room; the tip says
+"riders", not a person.
 - Keyboard: T opens the wheel; with it open 1-8 send a line (Shift+1-8 an
   emote). B sounds the horn. T and B stay gameplay keys when the player binds
   them. They were free in every default layout; H stays help.

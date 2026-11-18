@@ -1,11 +1,13 @@
 //! Quick chat on the ride HUD (research/QUICK_CHAT.md): bubbles over the
 //! senders' riders, a short feed, horn rings and the pick wheel. Authored
 //! port presentation; the PS2 game had no chat of this kind. Bubbles and
-//! the feed are lettered like the name tags; the wheel's targets are the
-//! front end's silver plates and gold pill (research/UI_AUDIT_HUD.md).
+//! the feed are lettered like the name tags; the wheel's targets are bare
+//! race-HUD lettering, overlay silver and gold when lit, on a soft dark
+//! glow, so it reads as part of the HUD rather than a panel of buttons.
+use super::race::{RACE_GOLD, RACE_TEXT};
 use super::{Viewport, classic, peers};
 use crate::{
-    color::Color,
+    color::{Color, Fill},
     paint::{BoxPaint, DisplayList, Item, Rect},
     text::{Font, Fonts, Join, Shape, Stroke, TextStyle},
 };
@@ -350,9 +352,21 @@ pub fn paint_wheel(
     hovered: Option<u32>,
 ) {
     let full = Rect::new(0., 0., view.width, view.height);
-    // A light dim only: the ride stays in view.
-    list.rect(full, Color::hex("#00000026"));
     hits.push((full, CLOSE_HIT));
+    // No plates: a soft dark glow behind the ring keeps the lettering
+    // readable over snow and sky, and the ride stays in view round it.
+    let (cx, cy, r) = wheel_geometry(view, top);
+    let glow = r + PILL.0 * 0.75;
+    list.push(Item::Box(BoxPaint {
+        rect: Rect::new(cx - glow, cy - glow, glow * 2., glow * 2.),
+        radii: [glow; 4],
+        fill: Some(Fill::radial(&[
+            (0., Color::hex("#0000008c")),
+            (0.6, Color::hex("#00000066")),
+            (1., Color::TRANSPARENT),
+        ])),
+        ..Default::default()
+    }));
     for (index, (rect, id)) in wheel_targets(view, top, emotes).into_iter().enumerate() {
         let ready = match id {
             HORN_HIT => chat.ready[2],
@@ -363,32 +377,28 @@ pub fn paint_wheel(
         let lit = focus == Some(index) || hovered == Some(id);
         let (x, y) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
         list.opacity(if ready { 1. } else { 0.4 });
-        // The front end's silver plate; the glossy gold pill when lit.
-        let paint = if lit {
-            classic::gold_paint(5.)
-        } else {
-            classic::silver_paint(5.)
-        };
-        list.push(Item::Box(BoxPaint {
-            rect,
-            radii: [5.; 4],
-            fill: paint.fill,
-            shadows: paint.shadows,
-            ..Default::default()
-        }));
-        let ink = classic::INK;
+        // The race HUD's lettering: overlay silver, gold when lit.
+        let color = if lit { RACE_GOLD } else { RACE_TEXT };
         match id {
-            HORN_HIT => icon(list, HORN_ICON, ink, x, y, 26.),
+            HORN_HIT => hud_icon(list, HORN_ICON, color, x, y, if lit { 28. } else { 24. }),
             // The other page's look: a face for emotes, a bubble for lines.
-            PAGE_HIT if emotes => icon(list, CHAT_ICON, ink, x, y, 24.),
-            PAGE_HIT => paint_emote(list, 1, x, y, 26.),
-            id if id >= EMOTE_HIT => paint_emote(list, (id - EMOTE_HIT) as u8, x, y, 30.),
+            PAGE_HIT if emotes => {
+                hud_icon(list, CHAT_ICON, color, x, y, if lit { 28. } else { 24. })
+            }
+            PAGE_HIT => paint_emote(list, 1, x, y, if lit { 30. } else { 26. }),
+            id if id >= EMOTE_HIT => paint_emote(
+                list,
+                (id - EMOTE_HIT) as u8,
+                x,
+                y,
+                if lit { 36. } else { 30. },
+            ),
             id => {
                 let text = lines[(id - LINE_HIT) as usize];
-                // The race-over buttons' lettering.
-                let style = TextStyle::new(Font::display(15., 700, false), ink).spacing(0.45);
+                let size = if lit { 21. } else { 18. };
+                let style = classic::hud_style(size, color);
                 let width = fonts.measure(text, &style.font, 0.).width;
-                list.text(text, &style, x - width / 2., y + 5.);
+                list.text(text, &style, x - width / 2., y + size * 0.36);
             }
         }
         list.unopacity();
@@ -396,6 +406,27 @@ pub fn paint_wheel(
             hits.push((rect, id));
         }
     }
+}
+
+/// An icon in the race HUD's lettering (hud::toolbar): a fill with the
+/// overlays' dark outline.
+fn hud_icon(list: &mut DisplayList, path: &str, color: Color, x: f32, y: f32, size: f32) {
+    let mut s = shape(
+        path,
+        color,
+        Some(Stroke {
+            width: 2.5,
+            color: Color::hex("#080808bb"),
+            join: Join::Round,
+        }),
+    );
+    s.unit = size / 20.;
+    list.push(Item::Shape {
+        shape: s,
+        x: x - size / 2.,
+        y: y - size / 2.,
+        rotation: 0.,
+    });
 }
 
 #[cfg(test)]

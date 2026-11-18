@@ -822,11 +822,12 @@ impl Frontend {
     }
 
     /// ui_menu rows for the page (labels and keyboard order), then Hop in
-    /// while the live Free Ride world is there (drawn beside Back).
+    /// while the live Free Ride world shows on the stage (drawn there as the
+    /// pulsing target, `paint_hop_target`).
     pub fn refresh(&mut self, view: &Viewport) {
         self.refresh_rows(view);
-        if self.live.is_some()
-            && super::hop_page(&self.page)
+        if self.live.as_ref().is_some_and(|l| l.ready)
+            && super::world_page(&self.page)
             && !self.choices.iter().any(|(a, _)| a == "hopin")
         {
             self.choices.push(("hopin".into(), "Hop in".into()));
@@ -836,7 +837,8 @@ impl Frontend {
     /// The live Free Ride world (None: none, or it went): Hop in comes and
     /// goes with it.
     pub fn set_live(&mut self, live: Option<super::LiveWorld>, view: &Viewport) {
-        let changed = live.is_some() != self.live.is_some();
+        let ready = |l: &Option<super::LiveWorld>| l.as_ref().map(|l| l.ready);
+        let changed = ready(&live) != ready(&self.live);
         self.live = live;
         if changed {
             self.refresh(view);
@@ -2975,7 +2977,10 @@ impl Frontend {
         // Start accepts, except over a held room: there it leaves the
         // garage or course picker for the ride (frontend.js pause action).
         // With the live Free Ride world it hops in, as on the ride's pause.
-        if fresh & 1 << 2 != 0 && event.is_none() && self.choices.iter().any(|(a, _)| a == "hopin")
+        if fresh & 1 << 2 != 0
+            && event.is_none()
+            && self.live.is_some()
+            && super::hop_page(&self.page)
         {
             return Some(Event::HopIn);
         }
