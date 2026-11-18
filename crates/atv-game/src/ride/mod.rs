@@ -788,6 +788,12 @@ impl Ride {
             Mount::Quad { .. } => None,
         }
     }
+    pub fn motorcycle_mut(&mut self) -> Option<&mut Motorcycle> {
+        match &mut self.mount {
+            Mount::Bike(bike) => Some(bike),
+            Mount::Quad { .. } => None,
+        }
+    }
 
     /// Dresses the ATV rider in the Garage gear and paints the quad
     /// (`rideAppearance` in game.js); motorcycles keep their original look.

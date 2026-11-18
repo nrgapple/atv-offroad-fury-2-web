@@ -122,7 +122,7 @@ impl Response {
 }
 
 impl Motorcycle {
-    fn chassis_world(&self, local: V) -> V {
+    pub(super) fn chassis_world(&self, local: V) -> V {
         add(
             self.body.origin(&self.body_config),
             dynamics::transform(self.body.basis(), local),

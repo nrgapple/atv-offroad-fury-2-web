@@ -119,7 +119,17 @@ pub fn record(ride: &Ride, step: u64) -> Value {
     }
     let bike = ride.is_motorcycle();
     let (camera, mode) = ride.camera();
-    json!({
+    // A thrown motorcycle rider: pelvis and the segments touching scenery
+    // and his bike.
+    let rider = ride
+        .motorcycle()
+        .zip(ride.detached_rider_world())
+        .map(|(m, w)| {
+            let f = m.frame();
+            json!({"pelvis": [w[12], w[13], w[14]], "scene": f.rider_scene_contacts,
+                "bike": f.rider_bike_contacts})
+        });
+    let mut row = json!({
         "step": step,
         "origin": frame.origin,
         "orientation": frame.orientation,
@@ -141,7 +151,11 @@ pub fn record(ride: &Ride, step: u64) -> Value {
             "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position,
                 "laps": s.laps, "progress": s.progress, "stunt": s.stunt, "player": s.player})).collect::<Vec<_>>(),
         })),
-    })
+    });
+    if let Some(rider) = rider {
+        row["rider"] = rider;
+    }
+    row
 }
 
 /// A traced replay: one record per step (step 0 is the loaded state) and,

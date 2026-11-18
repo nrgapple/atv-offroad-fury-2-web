@@ -304,6 +304,7 @@ export const TESTS = {
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
+  'test_engine_motorcycle_rider_scene.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': {
     group: 'manual',
     reason: 'Compares with the JavaScript presenters of the pinned pre-switch build: run python3 tools/js_reference.py prepare first'
