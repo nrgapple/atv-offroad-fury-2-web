@@ -175,9 +175,10 @@ The 50cc and 500cc match the 125 in the cornering rows. On ENV01 terrain with
 its own surface table the full-stick turns peak at 3 to 14° (landings while
 steering) against 60 to 80° before, keep their speed, and twelve scenarios
 including wheelies over its bumps and a 30 s flat-out weave end without a
-wreck. From the ENV01 start line (`crates/atv-game/tests/bike_feel.rs`) mean
-sideslip through 3 s turns is 1 to 8° and the bank peaks at 29 to 50° across
-the 50, 125 and 500; the recovered model measured 3 to 22° and banks to 81°.
+wreck. From the ENV01 start line (`crates/atv-game/tests/bike_feel.rs`, fourteen
+turns at 30 to 55 ft/s) mean sideslip through 3 s turns is 1 to 8° and the
+bank peaks at 19 to 49° across the 50, 125 and 500; the recovered model
+measured 3 to 22° and banks to 81°.
 
 ## Limits
 
@@ -187,6 +188,10 @@ the 50, 125 and 500; the recovered model measured 3 to 22° and banks to 81°.
 - Pitch, the suspension and whoops behaviour are the recovered controller's;
   the bike still pitches about 20° through whoops at 35 mph.
 - The thrown rider collides with terrain only.
+- The chassis collision response is the recovered one. On steep ENV01 faces
+  a 50cc can still clip the ground with its chassis while just airborne and
+  be flipped over backwards (one of its six test turns; it wrecked more often
+  there before, when it also slid).
 - Bike records and ghosts set on the earlier handling were set on a slower
   cornering model.
 - CPU racers do not ride motorcycles.

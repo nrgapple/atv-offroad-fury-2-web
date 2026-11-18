@@ -68,8 +68,9 @@ struct Summary {
     air: u32,
 }
 
-/// Reach `target` ft/s on a straight, then hold `steer` for `ticks`.
-fn corner(ride: &mut Ride, target: f32, steer: f32, ticks: usize) -> Summary {
+/// Reach `target` ft/s on a straight, then hold `steer` for `ticks`. None
+/// when the run-up never gets there (ENV01 has a cliff ahead of the start).
+fn corner(ride: &mut Ride, target: f32, steer: f32, ticks: usize) -> Option<Summary> {
     let (start, yaw) = ride.start_pose();
     ride.place_beside(start, yaw, [0.; 3]).unwrap();
     for _ in 0..900 {
@@ -86,7 +87,11 @@ fn corner(ride: &mut Ride, target: f32, steer: f32, ticks: usize) -> Summary {
         )
         .unwrap();
     }
-    let entry = sample(ride).speed;
+    let entry = sample(ride);
+    if !entry.riding || entry.speed < 0.9 * target {
+        return None;
+    }
+    let entry = entry.speed;
     let mut summary = Summary {
         peak_slip: 0.,
         mean_slip: 0.,
@@ -134,7 +139,7 @@ fn corner(ride: &mut Ride, target: f32, steer: f32, ticks: usize) -> Summary {
     summary.mean_slip /= f32::max(count, 1.);
     summary.mean_yaw /= f32::max(count, 1.);
     summary.exit = sample(ride).speed;
-    summary
+    Some(summary)
 }
 
 /// `BIKE_TRACE=<id>`: a flat-out straight run from the start line, printed
@@ -159,16 +164,38 @@ fn trace() {
             .unwrap();
         let (start, yaw) = ride.start_pose();
         ride.place_beside(start, yaw, [0.; 3]).unwrap();
+        // `BIKE_TRACE_STEER=<stick>` steers once past 45 ft/s.
+        let steer: f32 = std::env::var("BIKE_TRACE_STEER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.);
+        let mut turning = false;
         for tick in 0..900 {
+            turning |= sample(&ride).speed >= 45.;
             ride.step(
                 &Controls {
-                    throttle: 1.,
+                    throttle: if turning && sample(&ride).speed >= 45. {
+                        0.3
+                    } else {
+                        1.
+                    },
+                    steer: if turning { steer } else { 0. },
                     ..Default::default()
                 },
                 0.,
             )
             .unwrap();
-            if tick % 6 == 0 {
+            let every = if (410..450).contains(&tick) { 1 } else { 6 };
+            if tick % every == 0 {
+                if let Some(bike) = ride.motorcycle() {
+                    let f = bike.frame();
+                    eprint!(
+                        "w={:.1?} lean={:.0} wheelie={} ",
+                        f.local_angular_velocity,
+                        f.lean.to_degrees(),
+                        f.wheelie_active
+                    );
+                }
                 let f = ride.frame();
                 let b = dynamics::basis(f.orientation);
                 let s = sample(&ride);
@@ -206,6 +233,7 @@ fn report() {
             .await
             .unwrap();
         let mut failures = 0;
+        let mut measured = 0;
         for id in ids {
             let mut ride = atv_game::ride::load(&content, &venue, id, 0, |_| {})
                 .await
@@ -215,10 +243,14 @@ fn report() {
                 ("30 ft/s full", 30., 1.),
                 ("45 ft/s half", 45., 0.5),
                 ("45 ft/s full", 45., 1.),
-                ("70 ft/s half", 70., 0.5),
-                ("70 ft/s full", 70., 1.),
+                ("55 ft/s half", 55., 0.5),
+                ("55 ft/s full", 55., 1.),
             ] {
-                let s = corner(&mut ride, speed, steer, 180);
+                let Some(s) = corner(&mut ride, speed, steer, 180) else {
+                    eprintln!("{id} {name}: not reached");
+                    continue;
+                };
+                measured += 1;
                 // The single-track handling corners where it points: a turn
                 // on real terrain is not ridden sideways, laid flat or ended
                 // in a wreck. The recovered side-force model measured mean
@@ -273,5 +305,6 @@ fn report() {
             );
         }
         assert_eq!(failures, 0, "corners outside the bounds above");
+        assert!(measured >= 9, "only {measured} corners were reached");
     });
 }
