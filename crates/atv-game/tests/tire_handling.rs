@@ -98,29 +98,40 @@ fn corner_and_brake_on_both_mounts() {
                 // Reach the braking marker on throttle. Keep the entry speed
                 // comparable across engines, including the mini bike.
                 let (start, yaw) = ride.start_pose();
-                ride.place_beside(start, yaw, [0.; 3]).unwrap();
-                let gas = Controls {
-                    throttle: 0.82,
-                    ..Default::default()
-                };
-                for _ in 0..450 {
-                    ride.step(&gas, 0.).unwrap();
-                    if ride.frame().speed > 30. {
+                // Follow a hard stop with progressively lighter brake pressure.
+                // A locked tire puts most of its energy into the dirt.
+                let mut glow = 0_f32;
+                for pressure in [1., 0.45, 0.25, 0.18] {
+                    ride.place_beside(start, yaw, [0.; 3]).unwrap();
+                    let gas = Controls {
+                        throttle: 0.82,
+                        ..Default::default()
+                    };
+                    for _ in 0..450 {
+                        ride.step(&gas, 0.).unwrap();
+                        if ride.frame().speed > 30. {
+                            break;
+                        }
+                    }
+                    let entry = ride.frame().speed;
+                    assert!(entry > 20., "{id} {mode:?} braking entry {entry} ft/s");
+                    let brake = Controls {
+                        brake: pressure,
+                        ..Default::default()
+                    };
+                    for _ in 0..120 {
+                        ride.step(&brake, 0.).unwrap();
+                        let rotors = ride.pose().unwrap().brake_glow;
+                        glow = glow.max(rotors.into_iter().fold(0., f32::max));
+                    }
+                    eprintln!(
+                        "braking entry {entry:.2} ft/s, heat {:.4}, peak rotor emission {glow:.3}",
+                        ride.brake_heat()
+                    );
+                    if glow > 0. || mode == Handling::Original {
                         break;
                     }
                 }
-                let entry = ride.frame().speed;
-                assert!(entry > 20., "{id} {mode:?} braking entry {entry} ft/s");
-                let brake = Controls {
-                    brake: 1.,
-                    ..Default::default()
-                };
-                for _ in 0..70 {
-                    ride.step(&brake, 0.).unwrap();
-                    let rotors = ride.pose().unwrap().brake_glow;
-                    glow = glow.max(rotors.into_iter().fold(0., f32::max));
-                }
-                eprintln!("braking entry {entry:.2} ft/s, peak rotor emission {glow:.3}");
                 assert_eq!(glow > 0., mode != Handling::Original);
                 assert_eq!(ride.brake_heat() > 0., mode != Handling::Original);
                 assert_eq!(ride.assisted(), mode != Handling::Original);

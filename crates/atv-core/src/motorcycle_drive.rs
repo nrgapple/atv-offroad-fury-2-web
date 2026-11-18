@@ -1238,7 +1238,7 @@ impl Motorcycle {
                     );
                     out.omega = result.omega;
                     let scrub = out.omega * tire.radius - v_long;
-                    out.scrub_speed = scrub.hypot(v_lat);
+                    out.scrub_speed = scrub.hypot_d(v_lat);
                     out.lock = brake > 0. && v_long.abs() > 1. && out.omega.abs() < 0.1;
                     out.spin = !out.lock && scrub.abs() > 2.;
                     result.forces
