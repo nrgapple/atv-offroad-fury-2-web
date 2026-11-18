@@ -160,9 +160,10 @@ The model here:
   (through the wheels, and along the seat and tank). The rider is pushed by
   it but never pushes it, ignores it until he first comes clear of the saddle,
   and is woken if it slides into him at rest. Measured on ENV01 with the
-  RM125 ridden into eight trees: in the first second after the throw he went
-  between 23 ft short of and 21 ft past each tree's center; with terrain-only
-  collision he went 14 to 55 ft past (`crates/atv-game/tests/thrown_rider.rs`).
+  RM125 ridden into eight trees, in seven runs he travelled 15 to 35 ft less
+  past the tree in the first second after the throw than with terrain-only
+  collision; in the eighth he glanced off
+  (`crates/atv-game/tests/thrown_rider.rs`).
   The ATV crash ragdoll is unchanged. Source fact: none; the original
   motorcycle rider never collides after a wreck. Assumed: the bike capsule
   sizes are hand-set, not taken from the bike mesh.
