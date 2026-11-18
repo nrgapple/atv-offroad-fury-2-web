@@ -353,9 +353,10 @@ pub fn paint_wheel(
 ) {
     let full = Rect::new(0., 0., view.width, view.height);
     hits.push((full, CLOSE_HIT));
-    // No plates: a soft dark glow behind the ring keeps the lettering
-    // readable over snow and sky, and the ride stays in view round it.
     let (cx, cy, r) = wheel_geometry(view, top);
+    let targets = wheel_targets(view, top, emotes);
+    let lit_index = (0..targets.len()).find(|&i| focus == Some(i) || hovered == Some(targets[i].1));
+    // A soft dark glow keeps it all readable over snow and sky.
     let glow = r + PILL.0 * 0.75;
     list.push(Item::Box(BoxPaint {
         rect: Rect::new(cx - glow, cy - glow, glow * 2., glow * 2.),
@@ -368,25 +369,58 @@ pub fn paint_wheel(
         ])),
         ..Default::default()
     }));
-    for (index, (rect, id)) in wheel_targets(view, top, emotes).into_iter().enumerate() {
+    let dial = Dial::new(r);
+    dial.paint(
+        list,
+        cx,
+        cy,
+        lit_index.filter(|&i| i < 8),
+        lit_index.map(|i| i == 8),
+    );
+    // The page's name over the ring (under it when a panel leaves no room
+    // above), clear of the toolbar row.
+    let title = if emotes { "EMOTES" } else { "QUICK CHAT" };
+    let style = classic::hud_style(16., RACE_GOLD);
+    let width = fonts.measure(title, &style.font, 0.).width;
+    let above = cy - dial.outer - 12.;
+    let below = cy + dial.outer + 24.;
+    let clear_top = (top + 18.).max(view.safe[0].max(14.) + 44. + 18.);
+    if above >= clear_top {
+        list.text(title, &style, cx - width / 2., above);
+    } else if below <= view.height - view.safe[2] - 6. {
+        list.text(title, &style, cx - width / 2., below);
+    }
+    for (index, (rect, id)) in targets.into_iter().enumerate() {
         let ready = match id {
             HORN_HIT => chat.ready[2],
             PAGE_HIT => true,
             id if id >= EMOTE_HIT => chat.ready[1],
             _ => chat.ready[0],
         };
-        let lit = focus == Some(index) || hovered == Some(id);
+        let lit = lit_index == Some(index);
         let (x, y) = (rect.x + rect.w / 2., rect.y + rect.h / 2.);
         list.opacity(if ready { 1. } else { 0.4 });
         // The race HUD's lettering: overlay silver, gold when lit.
         let color = if lit { RACE_GOLD } else { RACE_TEXT };
         match id {
-            HORN_HIT => hud_icon(list, HORN_ICON, color, x, y, if lit { 28. } else { 24. }),
+            HORN_HIT => hud_icon(
+                list,
+                HORN_ICON,
+                color,
+                x,
+                y - 2.,
+                if lit { 26. } else { 22. },
+            ),
             // The other page's look: a face for emotes, a bubble for lines.
-            PAGE_HIT if emotes => {
-                hud_icon(list, CHAT_ICON, color, x, y, if lit { 28. } else { 24. })
-            }
-            PAGE_HIT => paint_emote(list, 1, x, y, if lit { 30. } else { 26. }),
+            PAGE_HIT if emotes => hud_icon(
+                list,
+                CHAT_ICON,
+                color,
+                x,
+                y + 2.,
+                if lit { 26. } else { 22. },
+            ),
+            PAGE_HIT => paint_emote(list, 1, x, y + 2., if lit { 28. } else { 24. }),
             id if id >= EMOTE_HIT => paint_emote(
                 list,
                 (id - EMOTE_HIT) as u8,
@@ -396,17 +430,202 @@ pub fn paint_wheel(
             ),
             id => {
                 let text = lines[(id - LINE_HIT) as usize];
-                let size = if lit { 21. } else { 18. };
-                let style = classic::hud_style(size, color);
+                let size = if lit { 20. } else { 17. };
+                let style = classic::hud_style(size, if lit { Color::WHITE } else { color });
                 let width = fonts.measure(text, &style.font, 0.).width;
                 list.text(text, &style, x - width / 2., y + size * 0.36);
             }
+        }
+        // Keyboards send 1-8 (Shift for emotes): each segment's key sits in
+        // its leading corner, as a dial's numerals.
+        if index < 8 && !view.touch_first {
+            let a = segment_angle(index) - 0.29;
+            let at = dial.outer - 11.;
+            let key = (index + 1).to_string();
+            let style = classic::hud_style(10., if lit { RACE_GOLD } else { KEY });
+            let w = fonts.measure(&key, &style.font, 0.).width;
+            list.text(
+                &key,
+                &style,
+                cx + a.cos() * at - w / 2.,
+                cy + a.sin() * at + 4.,
+            );
         }
         list.unopacity();
         if ready {
             hits.push((rect, id));
         }
     }
+}
+
+/// The key numerals' dim silver.
+const KEY: Color = Color::rgb(150, 150, 150);
+const OUTLINE: Color = Color::hex("#080808bb");
+const GOLD_GLASS: Color = Color::rgba(218, 192, 31, 0.3);
+const SMOKE: Color = Color::rgba(0, 0, 0, 0.36);
+const HUB_FILL: Color = Color::rgba(0, 0, 0, 0.62);
+/// A segment's half-width less its gap either side (radians).
+const HALF: f32 = std::f32::consts::FRAC_PI_8 - 0.035;
+
+/// Segment `i`'s centre angle: 0 at the top, clockwise.
+fn segment_angle(i: usize) -> f32 {
+    -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::FRAC_PI_4
+}
+
+/// The wheel's dial: eight smoked segments round the lines with a silver
+/// rim and ticks between them, a lit segment in gold glass with a pointer
+/// from the hub, and the hub's rimmed disc split between the page switch
+/// and the horn. Paths are relative to the centre, so each size and lit
+/// segment rasterises once.
+struct Dial {
+    inner: f32,
+    outer: f32,
+    hub: f32,
+}
+
+impl Dial {
+    fn new(r: f32) -> Self {
+        Self {
+            inner: r - 32.,
+            outer: r + 32.,
+            hub: r - 40.,
+        }
+    }
+
+    fn paint(
+        &self,
+        list: &mut DisplayList,
+        cx: f32,
+        cy: f32,
+        lit: Option<usize>,
+        top: Option<bool>,
+    ) {
+        let place = |list: &mut DisplayList, path: String, fill: Color, stroke: Option<Stroke>| {
+            let e = self.outer + 12.;
+            list.push(Item::Shape {
+                shape: Shape {
+                    path,
+                    bounds: [-e, -e, e, e],
+                    unit: 1.,
+                    fill,
+                    stroke,
+                    drop_shadow: None,
+                },
+                x: cx,
+                y: cy,
+                rotation: 0.,
+            });
+        };
+        let line = |width: f32, color: Color| {
+            Some(Stroke {
+                width,
+                color,
+                join: Join::Miter,
+            })
+        };
+        // The segments, smoked; the lit one in gold glass.
+        let mut smoke = String::new();
+        for i in (0..8).filter(|&i| Some(i) != lit) {
+            smoke += &sector(self.inner, self.outer, segment_angle(i), HALF);
+        }
+        place(list, smoke, SMOKE, None);
+        // The rim: a dark-outlined silver arc along each segment's edge,
+        // and ticks across the gaps.
+        let mut rim = String::new();
+        let mut ticks = String::new();
+        for i in 0..8 {
+            let a = segment_angle(i);
+            rim += &arc(self.outer, a - HALF, a + HALF);
+            let b = a + std::f32::consts::FRAC_PI_8;
+            let (c, s) = (b.cos(), b.sin());
+            let (r0, r1) = (self.outer - 6., self.outer + 7.);
+            ticks += &format!("M{:.2} {:.2}L{:.2} {:.2}", c * r0, s * r0, c * r1, s * r1);
+        }
+        place(list, rim.clone(), Color::TRANSPARENT, line(5., OUTLINE));
+        place(list, rim, Color::TRANSPARENT, line(2.5, RACE_TEXT));
+        place(list, ticks.clone(), Color::TRANSPARENT, line(4., OUTLINE));
+        place(list, ticks, Color::TRANSPARENT, line(1.5, RACE_TEXT));
+        if let Some(i) = lit {
+            let a = segment_angle(i);
+            place(
+                list,
+                sector(self.inner, self.outer, a, HALF),
+                GOLD_GLASS,
+                None,
+            );
+            let edge = arc(self.outer, a - HALF, a + HALF);
+            place(list, edge.clone(), Color::TRANSPARENT, line(7., OUTLINE));
+            place(list, edge, Color::TRANSPARENT, line(4., RACE_GOLD));
+            place(
+                list,
+                arc(self.inner, a - HALF, a + HALF),
+                Color::TRANSPARENT,
+                line(1.5, RACE_GOLD),
+            );
+        }
+        // The hub: a dark disc with the silver rim, split in two.
+        let h = self.hub;
+        let disc = format!("M{h} 0A{h} {h} 0 1 1 {} 0A{h} {h} 0 1 1 {h} 0Z", -h);
+        place(list, disc.clone(), HUB_FILL, line(5., OUTLINE));
+        if let Some(upper) = top {
+            // The lit half (the page switch above, the horn below) in gold.
+            let sweep = if upper { 0 } else { 1 };
+            let half = format!("M{h} 0A{h} {h} 0 0 {sweep} {} 0Z", -h);
+            place(list, half, GOLD_GLASS, None);
+        }
+        place(list, disc, Color::TRANSPARENT, line(2.5, RACE_TEXT));
+        let bar = h * 0.62;
+        place(
+            list,
+            format!("M{} 0L{bar} 0", -bar),
+            Color::TRANSPARENT,
+            line(1.5, KEY),
+        );
+        // A gold pointer on the hub's rim toward the lit segment.
+        if let Some(i) = lit {
+            let a = segment_angle(i);
+            let (c, s) = (a.cos(), a.sin());
+            let (tip, base, w) = (h + 13., h + 2., 7.);
+            let path = format!(
+                "M{:.2} {:.2}L{:.2} {:.2}L{:.2} {:.2}Z",
+                c * tip,
+                s * tip,
+                c * base - s * w,
+                s * base + c * w,
+                c * base + s * w,
+                s * base - c * w,
+            );
+            place(list, path, RACE_GOLD, line(2., OUTLINE));
+        }
+    }
+}
+
+/// An arc of radius `r` from angle `a0` to `a1` (clockwise, radians).
+fn arc(r: f32, a0: f32, a1: f32) -> String {
+    let large = u8::from(a1 - a0 > std::f32::consts::PI);
+    format!(
+        "M{:.2} {:.2}A{r:.2} {r:.2} 0 {large} 1 {:.2} {:.2}",
+        r * a0.cos(),
+        r * a0.sin(),
+        r * a1.cos(),
+        r * a1.sin()
+    )
+}
+
+/// A ring segment between radii `ri` and `ro`, `half` either side of `a`.
+fn sector(ri: f32, ro: f32, a: f32, half: f32) -> String {
+    let (a0, a1) = (a - half, a + half);
+    format!(
+        "M{:.2} {:.2}A{ro:.2} {ro:.2} 0 0 1 {:.2} {:.2}L{:.2} {:.2}A{ri:.2} {ri:.2} 0 0 0 {:.2} {:.2}Z",
+        ro * a0.cos(),
+        ro * a0.sin(),
+        ro * a1.cos(),
+        ro * a1.sin(),
+        ri * a1.cos(),
+        ri * a1.sin(),
+        ri * a0.cos(),
+        ri * a0.sin()
+    )
 }
 
 /// An icon in the race HUD's lettering (hud::toolbar): a fill with the

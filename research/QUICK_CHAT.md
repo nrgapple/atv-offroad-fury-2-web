@@ -50,11 +50,19 @@ positive or neutral.
   middle. Targets are at least 48 px and fit at 360 px portrait. Tapping
   outside closes it.
 - Look (issue #742, owner review 2026-11-17: the silver plates read as a
-  panel of buttons): no plates. Lines are the race HUD's lettering (overlay
-  silver with the dark outline, gold and larger when focused or hovered),
-  the horn and page icons the toolbar's outlined icons, and emotes their
-  own art, all on a soft dark radial shade behind the ring so they read
-  over snow. The hit targets are unchanged.
+  panel of buttons, and then the bare lettering read as plain): a dial in
+  the race HUD's silver and gold, no plates. Eight smoked ring segments
+  hold the lines (or emotes), with a dark-outlined silver rim along each
+  segment and ticks across the gaps. The focused or hovered segment fills
+  with gold glass behind a thick gold rim, and a gold pointer on the hub
+  aims at it. The hub is a dark disc with the silver rim, split by a line:
+  the page switch above, the horn below, and the lit half glows gold.
+  "QUICK CHAT" (or "EMOTES") sits over the ring in gold, below it when an
+  open panel leaves no room. Keyboard players see each segment's key
+  (1-8) in its corner. Lines are the HUD's outlined italic lettering, white
+  and larger when lit; it all sits on a soft dark shade. The hit targets
+  are unchanged. Paths are relative to the centre, so each ring size and
+  lit segment rasterises once.
 
 ## First-time tip
 
