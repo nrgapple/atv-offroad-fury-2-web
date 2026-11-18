@@ -1,0 +1,14 @@
+{
+  "id": "thrown-motorcycle-rider-hits-scenery-ea1dd3abb54d4f87b4fda6c7eac1c12c",
+  "timestamp": "2026-11-18T18:14:43.555522+00:00",
+  "recorded_at": "2026-11-18T18:15:37.031314+00:00",
+  "kind": "build",
+  "title": "Thrown motorcycle rider hits scenery",
+  "summary": "The rider thrown in a motorcycle crash now collides with trees, props, the train and his own bike, not just terrain. ATV ragdoll is unchanged.",
+  "details": [
+    "The rider reuses the bike's per-frame scenery mesh selection, widened to reach him within 40 ft. PR #753 (merge 87610b40), closes #751. Verification: 4 new ragdoll unit tests and 841 atv-core lib tests pass; content test thrown_rider.rs stopped the rider short of 8/8 ENV01 trees versus terrain-only; browser test test_engine_motorcycle_rider_scene.mjs passed on the PR CI build."
+  ],
+  "limitation": "A fast limb can still clip a branch it grazes; no scenery collision beyond 40 ft from the bike; bike collision shapes are hand-estimated; host only, not phone-measured.",
+  "image": "/devlog-images/thrown-motorcycle-rider-hits-scenery-ea1dd3abb54d4f87b4fda6c7eac1c12c.png",
+  "caption": "Thrown motorcycle rider colliding with scenery (contact sheet)"
+}
