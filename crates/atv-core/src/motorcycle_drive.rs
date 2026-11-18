@@ -17,6 +17,31 @@ use crate::motorcycle_tire::{SideState, Tire};
 
 const MPH: f32 = 1.46666;
 const RPM_PER_RAD: f32 = 9.549296;
+/// Steepest wheelie the pitch controller is asked to hold (rad).
+const WHEELIE_LIMIT: f32 = 0.87;
+/// Share of the turn the lean asks for that a wheelie makes.
+const WHEELIE_TURN: f32 = 0.6;
+/// How far a held stick lays the bike over and swings its tail in the air
+/// (rad). Inside the landing forgiveness, well short of the crossup wreck.
+/// How far the stick trims the bike's pitch in the air (rad).
+const AIR_TRIM: f32 = 0.55;
+const WHIP_ROLL: f32 = 0.38;
+const WHIP_YAW: f32 = 0.36;
+/// The pitch (rad, nose up positive) a bike in the air should hold: along
+/// its arc early in the jump, matched to the ground it is about to land on
+/// (a little rear wheel first) over the last half second.
+fn flight_pitch(velocity: V, landing_in: f32, landing_slope: f32) -> f32 {
+    let level = (velocity[0] * velocity[0] + velocity[2] * velocity[2]).sqrt();
+    let path = (0.6 * velocity[1].atan2_d(level.max(1e-3))).clamp(-0.5, 0.45);
+    let ground = (landing_slope + 0.06).clamp(-0.6, 0.5);
+    let near = (1. - (landing_in - 0.15) / 0.6).clamp(0., 1.);
+    path + (ground - path) * near
+}
+/// Assisted backflip and three-sixty rates (rad/s): unhurried on a long
+/// jump, quick on a short one. The source's fixed torques turn at 2.2 to
+/// 3.1 rad/s, two to three seconds a rotation; few ATV2 jumps last that long.
+const FLIP_RATES: [f32; 2] = [3., 6.6];
+const SPIN_RATES: [f32; 2] = [3.2, 7.2];
 
 /// Tuning resolved once from the source `.phy` with the parser's conversions.
 #[derive(Debug, Clone)]
@@ -341,6 +366,13 @@ pub(super) struct Drive {
     pub airtime: f32,
     pub crab: f32,
     pub was_airborne: bool,
+    /// Seconds until the ballistic path meets the terrain and the slope of
+    /// the ground there along the travel (rad, uphill positive), while
+    /// airborne (see `Motorcycle::predict_landing`).
+    pub landing_in: f32,
+    pub landing_slope: f32,
+    /// Frames resting on the chassis with no tire down.
+    pub stranded: u32,
 }
 impl Drive {
     /// Per-frame peak body-frame contact velocity change, per axis.
@@ -397,6 +429,31 @@ pub(super) struct Spin {
     pub torque: [f32; 2],
     pub timer: f32,
     pub recovering: bool,
+    /// Rotation made and asked for (rad) under the authored assist.
+    pub turned: f32,
+    pub goal: f32,
+}
+impl Spin {
+    /// Rate (rad/s) that finishes `left` radians shortly before the
+    /// predicted touchdown and eases to a stop as it completes. A long jump
+    /// still turns at the lazy end of the range; a short one at the quick end.
+    fn assist_rate(left: f32, landing_in: f32, [lazy, quick]: [f32; 2]) -> f32 {
+        (left / (landing_in - 0.18).max(0.1))
+            .clamp(lazy, quick)
+            .min(8. * left + 0.4)
+    }
+    /// Rotation a backflip has left. Its last quarter is measured against
+    /// the attitude the landing wants (`landing_pitch`, nose up positive)
+    /// instead of the attitude it started from, so it comes round to the
+    /// ground and not to the angle of the ramp.
+    fn left(&self, pitch: f32, upright: bool, landing_pitch: f32) -> f32 {
+        let turns = (self.goal - self.turned).max(0.);
+        if turns < std::f32::consts::FRAC_PI_2 + 0.4 && upright {
+            (landing_pitch - pitch).clamp(0., turns + 0.6)
+        } else {
+            turns
+        }
+    }
 }
 
 impl Motorcycle {
@@ -409,6 +466,13 @@ impl Motorcycle {
     }
     fn pitch(&self) -> f32 {
         self.body.basis()[2][1].clamp(-1., 1.).asin_d()
+    }
+    fn flight_pitch(&self) -> f32 {
+        flight_pitch(
+            self.body.linear_velocity,
+            self.drive.landing_in,
+            self.drive.landing_slope,
+        )
     }
     /// Original roll: positive when the body +x side is low.
     fn roll(&self) -> f32 {
@@ -485,8 +549,20 @@ impl Motorcycle {
         // Kinematic front steer.
         d.delta = if wreck {
             0.
-        } else {
+        } else if self.classic {
             p.tires[0].max_steer * d.steer * p.steer_scale(speed)
+        } else {
+            self.handling.steer(
+                handling::Tuning::of(self.tires.mode),
+                input.steer,
+                speed,
+                handling::Bike {
+                    wheelbase: self.model.wheel_rest[0][2] - self.model.wheel_rest[1][2],
+                    lock: handling::LOCK_SCALE * p.tires[0].max_steer,
+                    gravity: 32.2 * p.gravity_scale,
+                },
+                dt,
+            )
         };
         // Donut factor: both wheels down, slow, full gas and the stick pushed
         // forward on a diagonal, peaking MinDonutAngle below horizontal.
@@ -581,7 +657,36 @@ impl Motorcycle {
             *hold = if held { *hold + dt * 60. } else { 0. };
         }
         let mut cofg = [base[0], base[1], z];
-        if enhanced && !wreck && self.active_stunt.is_none() {
+        if !self.classic && !wreck && self.active_stunt.is_none() {
+            let pace = (speed.abs() / 20.).clamp(0., 1.);
+            let stroke = d
+                .tires
+                .iter()
+                .zip(&p.tires)
+                .map(|(t, spec)| t.compression / spec.strut)
+                .fold(0_f32, f32::max);
+            let touchdown = if d.was_airborne {
+                (-self.body.linear_velocity[1] / 24.).clamp(0., 1.)
+            } else {
+                0.
+            };
+            let corner = (self.handling.lean / 0.8).clamp(-1., 1.);
+            // Motocross form: stand on the pegs on a straight and in the
+            // air, sit forward and to the outside in a corner, come down
+            // into bent knees as the suspension compresses and move back
+            // under braking.
+            let target = [
+                -0.1 * corner,
+                0.22 * pace * (1. - 0.8 * corner.abs()) + 0.12 * touchdown - 0.24 * stroke,
+                pace * (0.1 * d.gas - 0.24 * d.brake + 0.1 * corner.abs()) - 0.13 * d.lean,
+            ];
+            d.stance.follow(target, 11., dt);
+            // Sport and Simulation also move the combined centre of mass by
+            // the rider's share.
+            if enhanced {
+                cofg = add(cofg, scale(d.stance.shift, 0.32));
+            }
+        } else if enhanced && !wreck && self.active_stunt.is_none() {
             let pace = (speed.abs() / 20.).clamp(0., 1.);
             let stroke = d
                 .tires
@@ -742,7 +847,25 @@ impl Motorcycle {
             return;
         }
         let pitch = self.body.basis()[2][1].clamp(-1., 1.).asin_d();
-        let rate = self.body.local_angular_velocity[0];
+        // The source pitches about the body's own axis. On a leaned bike
+        // that axis also turns it, so a wheelie in a corner would yaw into
+        // the turn and feed on itself. The single-track handling pitches
+        // about the level axis across the bike instead.
+        let basis = self.body.basis();
+        let level = crate::wheel::cross([0., 1., 0.], basis[2]);
+        let across = (!self.classic && dot(level, level) > 1e-6).then(|| {
+            let mut local = dynamics::inverse_transform(basis, unit(level));
+            local[2] = 0.;
+            local
+        });
+        let rate = match across {
+            Some(axis) => dot(axis, self.body.local_angular_velocity),
+            None => self.body.local_angular_velocity[0],
+        };
+        let apply = |torque: f32, target: &mut V| match across {
+            Some(axis) => *target = add(*target, scale(axis, torque)),
+            None => target[0] += torque,
+        };
         if d.stoppie && (rear || d.brake == 0. || d.lean > -0.1 || speed <= 7.) {
             d.stoppie = false;
         }
@@ -752,11 +875,18 @@ impl Motorcycle {
         let wheelie =
             rear && d.gas > 0. && speed > 5. && d.brake == 0. && d.clutch == 0. && d.lean >= 0.5;
         if wheelie {
-            let target = (2. * d.lean - 1.) * p.max_pitch;
+            let mut target = (2. * d.lean - 1.) * p.max_pitch;
+            if !self.classic {
+                // The 50cc source command (95 degrees) loops the bike over.
+                target = target.min(WHEELIE_LIMIT);
+            }
             let e = p.pitch_gain * (pitch - target) - rate;
             d.wheelie_i += 500. * e * h;
             let fade = (1. - speed / p.wheelie_top).clamp(0., 1.);
-            self.body.local_torque[0] += fade * (p.pitch_rate_gain * e + d.wheelie_i);
+            apply(
+                fade * (p.pitch_rate_gain * e + d.wheelie_i),
+                &mut self.body.local_torque,
+            );
             d.pitch_control = true;
         } else {
             d.wheelie_i = 0.;
@@ -766,7 +896,10 @@ impl Motorcycle {
             let target = f * p.max_stoppie * (2. * d.lean + 1.);
             let e = p.stoppie_gain * (pitch - target) - rate;
             d.stoppie_i += 500. * e * h;
-            self.body.local_torque[0] += p.pitch_rate_gain * e + d.stoppie_i;
+            apply(
+                p.pitch_rate_gain * e + d.stoppie_i,
+                &mut self.body.local_torque,
+            );
             let n = d.tires[1].normal;
             let n = if dot(n, n) > 0. { n } else { [0., 1., 0.] };
             let omega = self.body.world_angular_velocity();
@@ -827,7 +960,13 @@ impl Motorcycle {
         let spin_busy = self.drive.spin.active;
         let attitude_ok = self.roll().abs() < std::f32::consts::FRAC_PI_2
             && (-p.air_pitch[0]..p.air_pitch[1]).contains(&self.pitch());
-        let early_air = !grounded && self.drive.airtime < 0.6;
+        // Authored: not on the first frames off the ground, which a bump on
+        // the ramp face also produces.
+        let settled = self.classic || self.drive.airtime >= 0.08;
+        let early_air = !grounded && settled && self.drive.airtime < 0.6;
+        let pitch = self.pitch();
+        let upright = self.body.basis()[1][1] > 0.;
+        let landing_pitch = self.flight_pitch();
         let f = &mut self.drive.backflip;
         if !f.active && early_air && mask & 0xf == 4 && y > 0.8 && !spin_busy {
             // Authored browser adaptation: trick button plus pull-back early in
@@ -837,6 +976,7 @@ impl Motorcycle {
                 active: true,
                 airborne: true,
                 torque: [-1.25 * p.backflip[0], 0.],
+                goal: std::f32::consts::TAU,
                 ..Spin::default()
             };
         } else if !f.active {
@@ -855,6 +995,7 @@ impl Motorcycle {
                     active: true,
                     torque: [-torque, 0.],
                     timer: 0.6,
+                    goal: std::f32::consts::TAU,
                     ..Spin::default()
                 };
             }
@@ -867,18 +1008,38 @@ impl Motorcycle {
                     *f = Spin::default();
                 }
             }
-        } else if grounded || f.torque[0].abs() < p.backflip[0] {
+        } else if grounded
+            || (self.classic && f.torque[0].abs() < p.backflip[0])
+            || (!self.classic && f.left(pitch, upright, landing_pitch) < 0.05)
+        {
             let recovering = f.recovering && !grounded;
             *f = Spin::default();
             f.recovering = recovering;
             if grounded {
                 self.drive.recovery = 1.;
             }
-        } else {
+        } else if self.classic {
             if mask == 0 && y <= 0. {
                 f.torque[0] -= h * y * p.backflip_decrease;
             }
             self.body.local_torque[0] += f.torque[0];
+            f.recovering = true;
+        } else {
+            // Authored assist: turn at the rate that completes the flip
+            // before the predicted landing. Holding the flip input with air
+            // to spare goes round again; pushing forward slows it.
+            let rate = self.body.local_angular_velocity[0];
+            f.turned += (-rate).max(0.) * h;
+            if f.goal - f.turned < 0.9 && mask & 0xf == 4 && y > 0.8 && self.drive.landing_in > 1.4
+            {
+                f.goal += std::f32::consts::TAU;
+            }
+            let left = f.left(pitch, upright, landing_pitch);
+            let mut target = Spin::assist_rate(left, self.drive.landing_in, FLIP_RATES);
+            if mask == 0 && y < -0.5 {
+                target *= 0.6;
+            }
+            self.body.local_torque[0] += self.body_config.inertia[0] * 10. * (-target - rate);
             f.recovering = true;
         }
         if f.recovering && !f.active && (attitude_ok || grounded) {
@@ -894,7 +1055,8 @@ impl Motorcycle {
         let (mask, x) = (self.trick_mask, self.trick_axes[0]);
         let hold = self.drive.hold[2];
         let flipping = self.drive.backflip.active;
-        let early_air = !grounded && self.drive.airtime < 0.6;
+        let settled = self.classic || self.drive.airtime >= 0.08;
+        let early_air = !grounded && settled && self.drive.airtime < 0.6;
         let s = &mut self.drive.spin;
         if !s.active && early_air && mask & 0xf == 4 && x.abs() > 0.7 && !flipping {
             // Authored browser adaptation, as for the backflip: trick button
@@ -907,6 +1069,7 @@ impl Motorcycle {
                     -p.spin_x[0],
                     x.signum() * p.spin_y[0].max(0.5 * p.spin_y[1]),
                 ],
+                goal: std::f32::consts::TAU,
                 ..Spin::default()
             };
         } else if !s.active {
@@ -922,6 +1085,7 @@ impl Motorcycle {
                     active: true,
                     torque: [-lerp(p.spin_x), self.drive.spin_dir * lerp(p.spin_y)],
                     timer: 0.9,
+                    goal: std::f32::consts::TAU,
                     ..Spin::default()
                 };
             }
@@ -934,11 +1098,31 @@ impl Motorcycle {
                     *s = Spin::default();
                 }
             }
-        } else if grounded || s.torque[1].abs() < p.spin_y[0] {
+        } else if grounded
+            || (self.classic && s.torque[1].abs() < p.spin_y[0])
+            || (!self.classic && s.goal - s.turned < 0.06)
+        {
             *s = Spin::default();
             if grounded {
                 self.drive.recovery = 1.;
             }
+        } else if !self.classic {
+            // Authored assist, as for the backflip: a level spin about the
+            // bike's up axis that finishes before the predicted landing.
+            let dir = self.drive.spin_dir;
+            let rate = self.body.local_angular_velocity[1];
+            s.turned += (dir * rate).max(0.) * h;
+            if s.goal - s.turned < 0.9
+                && mask & 0xf == 4
+                && x.abs() > 0.7
+                && x.signum() == dir
+                && self.drive.landing_in > 1.4
+            {
+                s.goal += std::f32::consts::TAU;
+            }
+            let target = Spin::assist_rate(s.goal - s.turned, self.drive.landing_in, SPIN_RATES);
+            self.body.local_torque[1] += self.body_config.inertia[1] * 10. * (dir * target - rate);
+            s.recovering = true;
         } else {
             let dir = self.drive.spin_dir;
             if mask == 0 && x.signum() == -dir && x != 0. {
@@ -982,15 +1166,45 @@ impl Motorcycle {
             torque = torque.map(|t| t * fade);
         }
         let steep = basis[2][1].abs() >= 0.9396926;
-        if steep || d.steer.abs() >= 0.1 || flipping || d.backflip.recovering || d.recovery > 0. {
+        // The authored rotation assists own their axis (pitch for a flip,
+        // yaw for a spin); the source damping would hold them back.
+        let assisted = [
+            !self.classic && d.backflip.active,
+            !self.classic && d.spin.active,
+            false,
+        ];
+        let settled = !steep && !flipping && !d.backflip.recovering && d.recovery == 0.;
+        // Authored whip: the stick lays the bike over and swings its tail to
+        // set angles and brings it back when released, instead of turning it
+        // at a rate for as long as it is held (which lands a held stick
+        // sideways).
+        let whip = !self.classic && settled;
+        if !whip
+            && (steep
+                || d.steer.abs() >= 0.1
+                || flipping
+                || d.backflip.recovering
+                || d.recovery > 0.)
+        {
             for i in 0..3 {
-                torque[i] -= p.air_damping * omega[i];
+                if !assisted[i] {
+                    torque[i] -= p.air_damping * omega[i];
+                }
             }
         } else {
             // Auto-level: unroll toward upright, unyaw heading toward travel.
             let roll = -basis[0][1].atan2_d(basis[1][1]);
-            torque[2] += p.unroll_torque * (p.unroll_gain * roll - omega[2]);
-            torque[1] += p.unyaw_torque * (p.unyaw_gain * d.crab - omega[1]);
+            let (lay, swing, firm) = if whip {
+                torque[1] = 0.;
+                torque[2] = 0.;
+                // Not over a bump: the whip comes in with the airtime.
+                let held = d.steer * ((d.airtime - 0.1) / 0.3).clamp(0., 1.);
+                (WHIP_ROLL * held, -WHIP_YAW * held, 3.)
+            } else {
+                (0., 0., 1.)
+            };
+            torque[2] += firm * p.unroll_torque * (p.unroll_gain * (roll - lay) - omega[2]);
+            torque[1] += p.unyaw_torque * (p.unyaw_gain * (d.crab - swing) - omega[1]);
             if omega[0].abs() > 0.1 {
                 torque[0] -= p.air_damping * omega[0];
             }
@@ -1000,6 +1214,30 @@ impl Motorcycle {
         }
         if self.active_stunt.is_none() && d.brake > 0. {
             torque[0] += p.brake_gyro;
+        }
+        // Authored: the bike follows the arc of its jump and comes down
+        // matched to the ground it will land on, instead of holding the
+        // attitude it left the lip with (the source only damps pitch, which
+        // lands every jump nose high). The stick trims that attitude nose up
+        // or down by an angle; the source turns the bike at a rate for as
+        // long as the stick is held, which loops it over when the stick is
+        // still back from a wheelie.
+        if !self.classic
+            && !flipping
+            && !d.backflip.recovering
+            && !steep
+            && d.brake == 0.
+            && d.airtime > 0.12
+        {
+            let v = self.body.linear_velocity;
+            if v[0] * v[0] + v[2] * v[2] > 64. {
+                let pitch = basis[2][1].clamp(-1., 1.).asin_d();
+                let fade = (1. - d.recovery).clamp(0., 1.);
+                let target = flight_pitch(v, d.landing_in, d.landing_slope) + AIR_TRIM * d.stick[1];
+                // Positive body-x rate is nose down.
+                torque[0] =
+                    fade * self.body_config.inertia[0] * (-20. * (target - pitch) - 7.5 * omega[0]);
+            }
         }
         self.body.local_torque = add(self.body.local_torque, torque);
         let v = self.body.linear_velocity;
@@ -1155,6 +1393,8 @@ impl Motorcycle {
             );
         }
         self.drive.support_force = [0.; 3];
+        let single_track = !self.classic && !wreck;
+        let mut patches = [handling::Patch::default(); 2];
         let v_body = dynamics::inverse_transform(basis, self.body.linear_velocity)[2];
         for i in 0..2 {
             let tire = &p.tires[i];
@@ -1199,7 +1439,15 @@ impl Motorcycle {
                 // Tire frame: heading (front steered about body Y unless pitch
                 // control owns the front), projected onto the ground plane.
                 let n = state.normal;
-                let heading = if i == 0 && !self.drive.pitch_control {
+                let heading = if i == 0 && !self.drive.pitch_control && single_track {
+                    // Steer in the ground plane, so a leaned bike turns as
+                    // sharply as the lean asks for.
+                    let forward = unit(sub(basis[2], scale(n, dot(basis[2], n))));
+                    add(
+                        scale(forward, self.drive.delta.cos_d()),
+                        scale(crate::wheel::cross(n, forward), self.drive.delta.sin_d()),
+                    )
+                } else if i == 0 && !self.drive.pitch_control {
                     add(
                         scale(basis[2], self.drive.delta.cos_d()),
                         scale(basis[0], self.drive.delta.sin_d()),
@@ -1222,7 +1470,11 @@ impl Motorcycle {
                 } else {
                     SideState::Rolling
                 };
-                let f_lat = grip * tire.lateral(zone, v_lat, v_long, state.load, side_state);
+                let f_lat = if single_track {
+                    0.
+                } else {
+                    grip * tire.lateral(zone, v_lat, v_long, state.load, side_state)
+                };
                 let [f_long, f_lat] = if enhanced {
                     let result = self.tires.step(
                         i,
@@ -1254,9 +1506,40 @@ impl Motorcycle {
                     };
                     [l.force, f_lat]
                 };
+                if single_track && state.grounded {
+                    // Side grip relative to standard dirt, from the source
+                    // side-force scales of this zone and the map's material.
+                    let curve = &tire.normal;
+                    let base = curve.scale[0] * curve.speed_scale[0];
+                    let relative = if base > 0. {
+                        (curve.scale[zone] * curve.speed_scale[zone] / base).clamp(0.35, 1.25)
+                    } else {
+                        1.
+                    };
+                    let limit = handling::DRIVE_SHARE * state.load * traction;
+                    patches[i] = handling::Patch {
+                        grounded: true,
+                        point: state.point,
+                        normal: n,
+                        ground: state.ground,
+                        heading: long,
+                        load: state.load,
+                        // An ATV2 SurfaceFriction of 0.1 (ice) scaled a
+                        // damper in the source model. As a friction limit
+                        // it would leave nothing to ride on, so the map's
+                        // value covers the upper half of the grip.
+                        surface: (0.45 + 0.55 * grip).min(1.25) * relative,
+                        used: if limit > 0. {
+                            (f_long.abs() / limit).max(if donut { 1. } else { 0. })
+                        } else {
+                            1.
+                        },
+                        sliding: out.spin || out.lock || donut,
+                    };
+                }
                 let force = add(scale(lat, f_lat), scale(long, f_long));
                 self.body.force = add(self.body.force, force);
-                if enhanced {
+                if enhanced && !single_track {
                     self.drive.support_force =
                         add(self.drive.support_force, add(scale(n, state.load), force));
                 }
@@ -1293,7 +1576,87 @@ impl Motorcycle {
             .min(tire.strut);
             self.drive.tires[i] = out;
         }
+        if single_track {
+            self.side_grip(p, &mut patches, h);
+        }
         Ok(())
+    }
+
+    /// Authored single-track side grip (`motorcycle_handling.rs`): steering
+    /// help while one wheel is up or the bike has just landed, then the
+    /// grip-limited side impulses, from the velocities this substep's other
+    /// forces will leave.
+    fn side_grip(&mut self, p: &Params, patches: &mut [handling::Patch; 2], h: f32) {
+        let tuning = handling::Tuning::of(self.tires.mode);
+        let mass = self.body_config.mass;
+        let inertia = self.body_config.inertia[1];
+        let basis = self.body.basis();
+        let [front, rear] = [patches[0].grounded, patches[1].grounded];
+        if !(front || rear) {
+            return;
+        }
+        let rate = self.body.local_angular_velocity[1];
+        let speed = self.forward_speed();
+        let com = self.body_config.center_of_mass;
+        let arms = [
+            self.model.wheel_rest[0][2] - com[2],
+            com[2] - self.model.wheel_rest[1][2],
+        ];
+        let wheelbase = (arms[0] + arms[1]).max(1e-3);
+        let static_load = [
+            p.weight * arms[1] / wheelbase,
+            p.weight * arms[0] / wheelbase,
+        ];
+        // A front tire that is up or barely loaded cannot steer the bike.
+        // The rider turns it by leaning instead (`wheelie_turn`, once per
+        // frame), by the share this measures.
+        self.handling.light = if rear && !self.drive.stoppie {
+            1. - (patches[0].load / (0.5 * static_load[0])).clamp(0., 1.)
+        } else {
+            0.
+        };
+        let light = self.handling.light;
+        // By that share the turn is made kinematically; turning of the
+        // body's own about the vertical would only swing the bike across its
+        // travel.
+        let turning = self.body.world_angular_velocity()[1];
+        self.body.local_torque[1] -= inertia * 8. * light * turning;
+        if front && rear && self.handling.slide > 0. {
+            // The rider catches a slide: hold the turn that was asked for.
+            let target = self.handling.demand / speed.abs().max(12.) * speed.signum();
+            let slide = (1. - light) * self.handling.slide;
+            self.body.local_torque[1] +=
+                inertia * tuning.catch * slide * (1. + 2. * slide) * (target - rate);
+        }
+        let landing = self.handling.landing / handling::LANDING_TIME;
+        if landing > 0. {
+            // Just landed: the bike straightens toward its travel instead
+            // of the tires snatching the travel round to the heading.
+            let target = (8. * self.drive.crab).clamp(-3., 3.);
+            self.body.local_torque[1] += inertia * 12. * landing * (target - rate);
+        }
+        let velocity = add(self.body.linear_velocity, scale(self.body.force, h / mass));
+        // The rates this substep's torques will leave; roll is held.
+        let inertias = self.body_config.inertia;
+        let mut local: V = std::array::from_fn(|k| {
+            self.body.local_angular_velocity[k] + self.body.local_torque[k] / inertias[k] * h
+        });
+        local[2] = 0.;
+        let angular = dynamics::transform(basis, local);
+        let (force, torque) = self.handling.side_forces(
+            tuning,
+            patches,
+            velocity,
+            angular,
+            self.body.center,
+            basis[1],
+            1. / mass,
+            1. / inertia,
+            static_load,
+            h,
+        );
+        self.body.force = add(self.body.force, force);
+        self.body.local_torque[1] += torque;
     }
 
     /// Constant-acceleration integration; body-frame angular-rate clamps of
@@ -1324,7 +1687,20 @@ impl Motorcycle {
             );
         }
         let inertia = self.body_config.inertia;
-        let mut alpha: V = std::array::from_fn(|i| b.local_torque[i] / inertia[i]);
+        let mut torque = b.local_torque;
+        if lock_roll && !self.classic {
+            // The lean is held about the level forward axis, not only the
+            // bike's own. Pitched up in a wheelie the two differ, and the
+            // torque that would tip a leaned bike over (which the turn
+            // balances) would otherwise turn it instead.
+            let basis = b.basis();
+            let level = [basis[2][0], 0., basis[2][2]];
+            if dot(level, level) > 1e-6 {
+                let axis = dynamics::inverse_transform(basis, unit(level));
+                torque = sub(torque, scale(axis, dot(torque, axis)));
+            }
+        }
+        let mut alpha: V = std::array::from_fn(|i| torque[i] / inertia[i]);
         if lock_roll {
             alpha[2] = 0.;
             b.local_angular_velocity[2] = 0.;
@@ -1366,7 +1742,38 @@ impl Motorcycle {
             .iter()
             .find(|t| t.grounded && t.normal[1] > 0.17)
             .copied();
-        if !wreck && let Some(tire) = tire {
+        if !self.classic {
+            let current = balance::angle(self.body.basis(), [0., 1., 0.]);
+            let lean = self.handling.bank(
+                handling::Tuning::of(self.tires.mode),
+                self.body.linear_velocity,
+                !wreck && tire.is_some(),
+                !self.drive.tires[0].grounded,
+                -current,
+                32.2 * self.params.gravity_scale,
+                dt,
+            );
+            if !wreck && tire.is_some() {
+                // Lean about the line the tires stand on, not the centre of
+                // mass: the wheels stay planted and the rider's weight moves
+                // in and down.
+                let com = self.body_config.center_of_mass;
+                let sag = self
+                    .drive
+                    .tires
+                    .iter()
+                    .filter(|t| t.grounded)
+                    .map(|t| t.compression)
+                    .fold(0_f32, f32::max);
+                let arm = sub(com, [0., sag, 0.]);
+                let pivot = sub(
+                    self.body.center,
+                    dynamics::transform(self.body.basis(), arm),
+                );
+                self.body.orientation = balance::rotate(self.body.orientation, -lean - current);
+                self.body.center = add(pivot, dynamics::transform(self.body.basis(), arm));
+            }
+        } else if !wreck && let Some(tire) = tire {
             let (max_roll, max_roll_speed, roll_gain, donut_roll) = (
                 self.params.max_roll,
                 self.params.max_roll_speed,
@@ -1415,7 +1822,13 @@ impl Motorcycle {
             };
             self.body.orientation = balance::rotate(self.body.orientation, next - current);
         }
+        if !self.classic && !wreck {
+            self.wheelie_turn(dt);
+        }
         let grounded = self.grounded_any();
+        if grounded && self.drive.was_airborne && self.drive.airtime > 0.25 {
+            self.handling.landing = handling::LANDING_TIME;
+        }
         let d = &mut self.drive;
         let airborne = !grounded;
         if airborne {
@@ -1442,6 +1855,38 @@ impl Motorcycle {
         }
     }
 
+    /// On the rear wheel the bike is a unicycle that the body-frame yaw
+    /// torques cannot steer (its up axis points backwards), and a front tire
+    /// that is only skimming the ground cannot steer it either. Turn it
+    /// about the vertical through the rear contact instead, at part of the
+    /// rate the lean asks for and by the share the front has unloaded,
+    /// carrying its travel round with it.
+    fn wheelie_turn(&mut self, dt: f32) {
+        let rear = self.drive.tires[1].grounded;
+        let speed = self.forward_speed();
+        let light = self.handling.light;
+        if !rear || light <= 0. || self.drive.stoppie || speed < 8. {
+            return;
+        }
+        let angle = WHEELIE_TURN * light * self.handling.demand / speed.max(12.) * dt;
+        let (sine, cosine) = angle.sin_cos_d();
+        let turn = |v: V| {
+            [
+                cosine * v[0] + sine * v[2],
+                v[1],
+                cosine * v[2] - sine * v[0],
+            ]
+        };
+        let pivot = self.drive.tires[1].point;
+        self.body.center = add(pivot, turn(sub(self.body.center, pivot)));
+        self.body.linear_velocity = turn(self.body.linear_velocity);
+        let (s, c) = (0.5 * angle).sin_cos_d();
+        let [w, x, y, z] = self.body.orientation;
+        let q = [c * w - s * y, c * x + s * z, c * y + s * w, c * z - s * x];
+        let norm = q.iter().map(|v| v * v).sum::<f32>().sqrt();
+        self.body.orientation = q.map(|v| v / norm);
+    }
+
     /// Wreck decision chain, once per frame. Returns a wreck kind to begin.
     pub(super) fn wreck_check(&mut self) -> Option<crate::wreck::Kind> {
         use crate::wreck::Kind;
@@ -1451,6 +1896,7 @@ impl Motorcycle {
         let pitch = self.pitch();
         let roll = self.roll();
         let tricking = d.backflip.active || d.spin.active;
+        let stranded = !self.classic && !grounded && d.chassis_hit && !tricking;
         let imp = d.impact;
         let landing = d.was_airborne && grounded;
         let crossup = ((d.crab + p.max_crossup) / (2. * p.max_crossup)).clamp(0., 1.);
@@ -1477,9 +1923,25 @@ impl Motorcycle {
         {
             // Code 11: any chassis contact during a flip or three-sixty.
             Some(Kind::Back)
-        } else if (grounded || d.chassis_hit) && self.active_stunt.is_some() && self.stunt_hold {
+        } else if (grounded || d.chassis_hit)
+            && self.active_stunt.is_some()
+            && self.stunt_hold
+            && (self.classic || self.stunt_exposed())
+        {
             // Code 12: touching down while a stunt animation is still held.
             Some(Kind::Vertical)
+        } else if stranded && d.stranded > 20 && pitch.abs().max(roll.abs()) > 0.95 {
+            // Authored: a bike lying on its tail, nose or side with no tire
+            // down is a wreck, not a ride.
+            Some(if pitch > 0.95 {
+                Kind::Back
+            } else if pitch < -0.95 {
+                Kind::Front
+            } else if roll > 0. {
+                Kind::Left
+            } else {
+                Kind::Right
+            })
         } else if landing
             && d.airtime > p.crossup_time
             && (crossup > p.crossup_wreck || crossup < 1. - p.crossup_wreck)
@@ -1493,6 +1955,7 @@ impl Motorcycle {
             None
         };
         let d = &mut self.drive;
+        d.stranded = if stranded { d.stranded + 1 } else { 0 };
         d.was_airborne = !grounded;
         d.impact = [0.; 3];
         d.chassis_hit = false;

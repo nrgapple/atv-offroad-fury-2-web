@@ -1,0 +1,18 @@
+{
+  "id": "motorcycles-that-hold-their-line-a-rider-who-gets-thro-dbf1160530c84d2a80be6ade8948f754",
+  "timestamp": "2026-11-18T08:45:07.069134+00:00",
+  "recorded_at": "2026-11-18T08:47:22.607859+00:00",
+  "kind": "build",
+  "title": "Motorcycles that hold their line, a rider who gets thrown, and tricks that fit the jump",
+  "summary": "Motorcycles no longer slide sideways through corners. Steer and the bike leans, turns to match the lean and holds its line. A crash throws the rider, who tumbles and comes to rest. Flips, spins and tricks now pace themselves to the jump you are on.",
+  "details": [
+    "Cornering: the stick asks for a lean, the front wheel steers to deliver it and each tire holds its line up to a grip limit. On a 125 at full stick, sideslip fell from 13 to 45 degrees to under 2 degrees at 30 to 60 mph, with no speed lost. From the ENV01 start line the three bike classes average 1 to 8 degrees through a turn (3 to 22 before) and bank 19 to 49 degrees (up to 81 before).",
+    "Slides are something you do on purpose: brake while turning in and the rear steps out to an angle it holds. A slide cannot spin the bike, on any surface. Wheelies steer, and rough ground no longer kicks the bike off line.",
+    "In the air the bike follows the arc of the jump and matches the slope it will land on. Holding the stick whips the bike to an angle and brings it back, and the stick trims the nose up or down instead of looping the bike over.",
+    "Tricks: flips and spins turn at the rate that finishes before the predicted landing, and trick animations speed up when the air is short. A tapped trick on a 0.7 second jump, a backflip and a 360 on 1.3 seconds of air all land in the test course. All three wrecked before.",
+    "Rider: he stands on straights, sits to the outside in corners with the bike leaned under him, looks into the turn and absorbs landings. In a crash he leaves the bike as an articulated body that keeps his speed, tumbles and lies where he stops. Other players see the same."
+  ],
+  "limitation": "Handling is tuned from telemetry and screenshots, not yet from long play with a controller. Grip is a game value, about twice real dirt. The thrown rider collides with terrain only, not scenery. On steep ENV01 faces a 50cc can still clip the ground and flip. ATVs are unchanged.",
+  "image": "/devlog-images/motorcycles-that-hold-their-line-a-rider-who-gets-thro-dbf1160530c84d2a80be6ade8948f754.png",
+  "caption": "A crash on ENV01: the rider is thrown clear and tumbles while the bike goes its own way."
+}
