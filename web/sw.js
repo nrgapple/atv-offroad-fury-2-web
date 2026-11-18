@@ -31,7 +31,7 @@ var MANIFEST = /^\/content\/(?:manifest\.json|manifests\/([a-f0-9]{40})\.json)$/
 var ASSET = /^\/[a-z0-9_-]+\.(?:js|css|wasm)$/;
 var VERSIONED = /^\?v=([a-f0-9]{40})$/;
 // Unversioned shell files whose bytes may change between deploys.
-var STATIC = /^\/(?:manifest\.webmanifest|favicon\.ico|fury-remastered\.svg|fury-remastered-(?:home|maskable)-\d+-v\d+\.png|apple-touch-icon(?:-precomposed)?\.png)$/;
+var STATIC = /^\/(?:manifest\.webmanifest|favicon\.(?:ico|svg)|fury-remastered\.svg|fury-remastered-(?:home|maskable)-\d+-v\d+\.png|apple-touch-icon(?:-precomposed)?\.png)$/;
 
 // Which strategy handles a request, or null to leave it to the network untouched:
 // non-GET, ranged (soundtrack .m4a streams), cross-origin, /multiplayer/, /api/,

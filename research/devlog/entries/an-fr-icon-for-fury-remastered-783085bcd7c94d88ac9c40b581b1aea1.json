@@ -1,0 +1,13 @@
+{
+  "id": "an-fr-icon-for-fury-remastered-783085bcd7c94d88ac9c40b581b1aea1",
+  "timestamp": "2026-11-18T02:13:15.901666+00:00",
+  "recorded_at": "2026-11-18T02:13:15.901666+00:00",
+  "kind": "build",
+  "title": "An FR icon for Fury Remastered",
+  "summary": "Fury Remastered has a compact FR monogram for browser tabs and the T3 project.",
+  "details": [
+    "The landing page, game, dev log, and stats page use a scalable SVG, with ICO fallbacks at 16, 32, and 48 pixels. The T3 project uses a 96-pixel PNG. The installed web app keeps its Home Screen wordmark.",
+    "Release icon tests and all 14 service worker tests passed locally."
+  ],
+  "limitation": ""
+}

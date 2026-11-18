@@ -18,7 +18,7 @@ ensure_guard(__file__, sys.argv[1:], kind='compile')
 
 ROOT = Path(__file__).resolve().parents[1]
 # Page-shell files copied as authored (play.html comes from build_engine.py).
-SHELL_FILES = ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html', 'devlog.css', 'devlog.js', 'stats.html', 'stats.css', 'stats.js', 'offline.js', 'sw.js']
+SHELL_FILES = ['favicon.svg', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html', 'devlog.css', 'devlog.js', 'stats.html', 'stats.css', 'stats.js', 'offline.js', 'sw.js']
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
 log = read_devlog(ROOT)
@@ -50,6 +50,8 @@ for icon in icons['maskable']:
         raise ValueError('maskable icon bytes do not match metadata')
     (dist / icon['file']).write_bytes(data)
 favicon = icons['favicon']
+if favicon['source_sha256'] != hashlib.sha256((ROOT / 'web/favicon.svg').read_bytes()).hexdigest():
+    raise ValueError('Re-render the favicon after changing the FR mark')
 data = base64.b64decode(favicon['base64'], validate=True)
 if favicon['file'] != 'favicon.ico' or data[:4] != b'\0\0\1\0' or hashlib.sha256(data).hexdigest() != favicon['sha256']:
     raise ValueError('favicon bytes do not match metadata')

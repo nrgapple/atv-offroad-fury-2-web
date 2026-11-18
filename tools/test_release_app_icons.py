@@ -39,7 +39,10 @@ class AppIconTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(favicon).hexdigest(), metadata['favicon']['sha256'])
         self.assertEqual(favicon[:6], b'\0\0\1\0\3\0')
         self.assertIn('favicon.ico', STATIC_FILES)
-        for name in ['index.html', 'play.html']:
+        self.assertIn('favicon.svg', STATIC_FILES)
+        self.assertEqual(metadata['favicon']['source_sha256'], hashlib.sha256((ROOT / 'web/favicon.svg').read_bytes()).hexdigest())
+        for name in ['index.html', 'play.html', 'devlog.html', 'stats.html']:
+            self.assertIn('rel="icon" href="/favicon.svg"', (ROOT / 'web' / name).read_text())
             self.assertIn('/' + icons[180]['file'], (ROOT / 'web' / name).read_text())
         for size, icon in icons.items():
             data = base64.b64decode(icon['base64'], validate=True)
