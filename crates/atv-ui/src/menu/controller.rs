@@ -422,9 +422,6 @@ impl PauseMenu {
             "chase_assist": p.chase_assist,
             "flips": p.flips,
             "realistic_train": p.realistic_train,
-            "handling": p.handling,
-            "tread_percent": self.tread_percent,
-            "online_handling": ctx.lobby.is_some(),
             "metric": p.metric,
             "ecosystem_collision": p.ecosystem_collision,
             "sound_configuration": p.sound_configuration,
@@ -484,6 +481,11 @@ impl PauseMenu {
         request["menu_world"] = self.world.into();
         request["start_menu"] = p.start_menu.into();
         request["free_ride_cpus"] = p.free_ride_cpus.into();
+        if page == "game-settings" {
+            request["handling"] = p.handling.name().into();
+            request["tread_percent"] = self.tread_percent.into();
+            request["online_handling"] = ctx.lobby.is_some().into();
+        }
         if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p

@@ -4107,8 +4107,6 @@ impl App {
                 "crashMode": riding.crashes.as_ref().map(|c| c.mode.name()),
                 "flips": riding.ride.options.flips,
                 "realisticTrain": riding.ride.options.realistic_train,
-                "handling": riding.ride.options.handling,
-                "tireWear": riding.ride.tire_wear(),
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
@@ -4153,6 +4151,8 @@ impl App {
             });
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
+            game["handling"] = riding.ride.options.handling.name().into();
+            game["tireWear"] = riding.ride.tire_wear().into();
             game["worldShadows"] = graphics.world_shadows.into();
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
             // The streamed soundtrack's routing (web: a graph once not Stereo).

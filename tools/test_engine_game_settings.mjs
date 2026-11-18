@@ -35,7 +35,14 @@ try {
   await key(page, 'Escape'); await onPage(page, 'pause');
   await click(page, 'settings'); await onPage(page, 'settings');
   await click(page, 'game-settings'); await onPage(page, 'game-settings');
-  assert.deepEqual(await labels(page), ['Measurement: Standard (U.S. system)', 'Ecosystem Collision: On', 'Sound Configuration: Stereo', 'New Profiles: Locked (original)', 'Free Ride CPU riders: Off (original)', 'Start in: Menu', 'Back']);
+  assert.deepEqual(await labels(page), ['Measurement: Standard (U.S. system)', 'Ecosystem Collision: On', 'Sound Configuration: Stereo', 'New Profiles: Locked (original)', 'Free Ride CPU riders: Off (original)', 'Start in: Menu', 'Physics: Original', 'Back']);
+  assert.equal((await settings(page)).handling, 'original');
+  for (const mode of ['sport', 'simulation', 'original']) {
+    await click(page, 'handling');
+    assert.equal((await settings(page)).handling, mode);
+    if (mode === 'simulation' && shots) await page.screenshot({ path: `${shots}/simulation-tread.png` });
+    assert.equal(await page.evaluate(() => localStorage.getItem('atv-handling')), mode);
+  }
   await click(page, 'measurement');
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-measurement')), 'metric');
   for (let i = 0; i < 3; i++) await click(page, 'sound-configuration'); // stereo → swapped → dolby → mono
@@ -48,7 +55,7 @@ try {
   await click(page, 'ecosystem'); await onPage(page, 'ecosystem-warning');
   await click(page, 'ecosystem-yes'); await onPage(page, 'game-settings');
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-ecosystem-collision')), 'off');
-  assert.deepEqual(await labels(page), ['Measurement: Metric', 'Ecosystem Collision: Off', 'Sound Configuration: Mono', 'New Profiles: Locked (original)', 'Free Ride CPU riders: Off (original)', 'Start in: Menu', 'Back']);
+  assert.deepEqual(await labels(page), ['Measurement: Metric', 'Ecosystem Collision: Off', 'Sound Configuration: Mono', 'New Profiles: Locked (original)', 'Free Ride CPU riders: Off (original)', 'Start in: Menu', 'Physics: Original', 'Back']);
   if (shots) await page.screenshot({ path: `${shots}/game-settings-page.png` });
   // Back out and ride: the speedometer reads Kph, the quad skips vegetation
   // and the mixer folds to mono.
