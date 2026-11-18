@@ -106,13 +106,26 @@ fn append_rotors(quad: &Model, vertices: &mut Vec<f32>, indices: &mut Vec<u32>) 
         };
         let mut radius = 0_f32;
         let mut face = 0_f32;
+        // On assembled MX bikes the animated wheel is a placement node.
+        // Its tire and rim vertices belong to the attached sub-object.
+        let mut on_wheel = [false; BONES];
+        on_wheel[node] = true;
+        for (i, child) in quad.mesh.nodes.iter().enumerate().skip(node + 1) {
+            on_wheel[i] = child.parent >= 0 && on_wheel[child.parent as usize];
+        }
         for group in &quad.mesh.lods[0].groups {
             for vertex in group
                 .vertices
                 .iter()
-                .filter(|v| usize::from(v.node) == node)
+                .filter(|v| on_wheel[usize::from(v.node)])
             {
-                let [x, y, z] = vertex.local_position;
+                let [x, y, z] = if usize::from(vertex.node) == node {
+                    vertex.local_position
+                } else {
+                    let bind = &wheel.world_matrix;
+                    let from_axle = std::array::from_fn(|i| vertex.position[i] - bind[12 + i]);
+                    inverse_direction(bind, from_axle)
+                };
                 radius = radius.max(y.hypot(z));
                 face = face.max(side * x);
             }

@@ -20,15 +20,16 @@ try {
     assert.equal((await settings()).hotRotors, false);
     for (let stop = 0; stop < 3 && !(await settings()).hotRotors; stop++) {
       await page.keyboard.down('KeyW');
-      await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).ride.speed > 23,
+      await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).ride.speed > 30,
         null, { timeout: 60000 });
       await page.keyboard.up('KeyW');
       await page.keyboard.down('KeyS');
       await nextFrames(page, 20);
       await page.keyboard.up('KeyS');
     }
-    assert.ok((await settings()).hotRotors, 'braking activated the rotor draw');
-    assert.ok((await settings()).brakeHeat > 0.02);
+    const { brakeHeat, hotRotors } = await settings();
+    assert.ok(brakeHeat > 0.02, `vehicle ${quad} reached brake heat ${brakeHeat}`);
+    assert.ok(hotRotors, `vehicle ${quad} drew hot rotors at heat ${brakeHeat}`);
     if (process.env.ATV_SCREENSHOTS) {
       await page.keyboard.down('KeyX');
       await nextFrames(page, 18);

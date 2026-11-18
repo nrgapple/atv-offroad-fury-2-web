@@ -10,5 +10,7 @@
     "The motorcycle rider shifts at the hips, braces under braking and absorbs the bike rising over bumps. Hands track the bars and a sliding boot eases off its peg. The same weight shift affects balance. The ATV rider braces into corners, and rear-tire scrub changes how much dirt the bike throws.",
     "Hard, deep landings gradually weaken individual dampers. Sustained tire scrub consumes tread. Repeated braking heats the brakes and can cause fade. The rotors glow as brakes heat up and dim as they cool. A fresh ride or race restart supplies fresh components."
   ],
-  "limitation": "These are game-tuned models. Verification uses synthetic force and braking tests and private-content host rides. Instrumented vehicle calibration, rider playtesting and physical-phone measurements remain open. Online rooms use Original."
+  "limitation": "These are game-tuned models. Verification uses synthetic force and braking tests and private-content host rides. Instrumented vehicle calibration, rider playtesting and physical-phone measurements remain open. Online rooms use Original.",
+  "image": "/devlog-images/atv-brake-rotor-glow-a9fc15d8.png",
+  "caption": "Brake heat appears as red-orange rotor rings on the ATV\u2019s visible wheels after a stop."
 }
