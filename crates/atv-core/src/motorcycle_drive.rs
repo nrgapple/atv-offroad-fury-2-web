@@ -23,6 +23,8 @@ const WHEELIE_LIMIT: f32 = 0.87;
 const WHEELIE_TURN: f32 = 0.6;
 /// How far a held stick lays the bike over and swings its tail in the air
 /// (rad). Inside the landing forgiveness, well short of the crossup wreck.
+/// How far the stick trims the bike's pitch in the air (rad).
+const AIR_TRIM: f32 = 0.55;
 const WHIP_ROLL: f32 = 0.38;
 const WHIP_YAW: f32 = 0.36;
 /// The pitch (rad, nose up positive) a bike in the air should hold: along
@@ -845,7 +847,25 @@ impl Motorcycle {
             return;
         }
         let pitch = self.body.basis()[2][1].clamp(-1., 1.).asin_d();
-        let rate = self.body.local_angular_velocity[0];
+        // The source pitches about the body's own axis. On a leaned bike
+        // that axis also turns it, so a wheelie in a corner would yaw into
+        // the turn and feed on itself. The single-track handling pitches
+        // about the level axis across the bike instead.
+        let basis = self.body.basis();
+        let level = crate::wheel::cross([0., 1., 0.], basis[2]);
+        let across = (!self.classic && dot(level, level) > 1e-6).then(|| {
+            let mut local = dynamics::inverse_transform(basis, unit(level));
+            local[2] = 0.;
+            local
+        });
+        let rate = match across {
+            Some(axis) => dot(axis, self.body.local_angular_velocity),
+            None => self.body.local_angular_velocity[0],
+        };
+        let apply = |torque: f32, target: &mut V| match across {
+            Some(axis) => *target = add(*target, scale(axis, torque)),
+            None => target[0] += torque,
+        };
         if d.stoppie && (rear || d.brake == 0. || d.lean > -0.1 || speed <= 7.) {
             d.stoppie = false;
         }
@@ -863,7 +883,10 @@ impl Motorcycle {
             let e = p.pitch_gain * (pitch - target) - rate;
             d.wheelie_i += 500. * e * h;
             let fade = (1. - speed / p.wheelie_top).clamp(0., 1.);
-            self.body.local_torque[0] += fade * (p.pitch_rate_gain * e + d.wheelie_i);
+            apply(
+                fade * (p.pitch_rate_gain * e + d.wheelie_i),
+                &mut self.body.local_torque,
+            );
             d.pitch_control = true;
         } else {
             d.wheelie_i = 0.;
@@ -873,7 +896,10 @@ impl Motorcycle {
             let target = f * p.max_stoppie * (2. * d.lean + 1.);
             let e = p.stoppie_gain * (pitch - target) - rate;
             d.stoppie_i += 500. * e * h;
-            self.body.local_torque[0] += p.pitch_rate_gain * e + d.stoppie_i;
+            apply(
+                p.pitch_rate_gain * e + d.stoppie_i,
+                &mut self.body.local_torque,
+            );
             let n = d.tires[1].normal;
             let n = if dot(n, n) > 0. { n } else { [0., 1., 0.] };
             let omega = self.body.world_angular_velocity();
@@ -1189,15 +1215,17 @@ impl Motorcycle {
         if self.active_stunt.is_none() && d.brake > 0. {
             torque[0] += p.brake_gyro;
         }
-        // Authored: with the stick centred the bike follows the arc of its
-        // jump and comes down matched to the ground it will land on, instead
-        // of holding the attitude it left the lip with. The source only damps
-        // pitch, which lands every jump nose high.
+        // Authored: the bike follows the arc of its jump and comes down
+        // matched to the ground it will land on, instead of holding the
+        // attitude it left the lip with (the source only damps pitch, which
+        // lands every jump nose high). The stick trims that attitude nose up
+        // or down by an angle; the source turns the bike at a rate for as
+        // long as the stick is held, which loops it over when the stick is
+        // still back from a wheelie.
         if !self.classic
             && !flipping
             && !d.backflip.recovering
             && !steep
-            && d.stick[1].abs() < 0.15
             && d.brake == 0.
             && d.airtime > 0.12
         {
@@ -1205,11 +1233,10 @@ impl Motorcycle {
             if v[0] * v[0] + v[2] * v[2] > 64. {
                 let pitch = basis[2][1].clamp(-1., 1.).asin_d();
                 let fade = (1. - d.recovery).clamp(0., 1.);
+                let target = flight_pitch(v, d.landing_in, d.landing_slope) + AIR_TRIM * d.stick[1];
                 // Positive body-x rate is nose down.
-                torque[0] = fade
-                    * self.body_config.inertia[0]
-                    * (-20. * (flight_pitch(v, d.landing_in, d.landing_slope) - pitch)
-                        - 7.5 * omega[0]);
+                torque[0] =
+                    fade * self.body_config.inertia[0] * (-20. * (target - pitch) - 7.5 * omega[0]);
             }
         }
         self.body.local_torque = add(self.body.local_torque, torque);
@@ -1580,18 +1607,24 @@ impl Motorcycle {
             p.weight * arms[1] / wheelbase,
             p.weight * arms[0] / wheelbase,
         ];
-        // A front tire that is barely loaded cannot steer the bike; the
-        // rider still turns it by leaning. With the front right off the
-        // ground the turn is made once per frame instead (`wheelie_turn`).
-        let light = 1. - (patches[0].load / (0.5 * static_load[0])).clamp(0., 1.);
-        if front && rear && light > 0. && !self.drive.stoppie {
-            let target = self.handling.demand / speed.abs().max(12.) * speed.signum();
-            self.body.local_torque[1] += inertia * 6. * light * (target - rate);
-        }
+        // A front tire that is up or barely loaded cannot steer the bike.
+        // The rider turns it by leaning instead (`wheelie_turn`, once per
+        // frame), by the share this measures.
+        self.handling.light = if rear && !self.drive.stoppie {
+            1. - (patches[0].load / (0.5 * static_load[0])).clamp(0., 1.)
+        } else {
+            0.
+        };
+        let light = self.handling.light;
+        // By that share the turn is made kinematically; turning of the
+        // body's own about the vertical would only swing the bike across its
+        // travel.
+        let turning = self.body.world_angular_velocity()[1];
+        self.body.local_torque[1] -= inertia * 8. * light * turning;
         if front && rear && self.handling.slide > 0. {
             // The rider catches a slide: hold the turn that was asked for.
             let target = self.handling.demand / speed.abs().max(12.) * speed.signum();
-            let slide = self.handling.slide;
+            let slide = (1. - light) * self.handling.slide;
             self.body.local_torque[1] +=
                 inertia * tuning.catch * slide * (1. + 2. * slide) * (target - rate);
         }
@@ -1654,7 +1687,20 @@ impl Motorcycle {
             );
         }
         let inertia = self.body_config.inertia;
-        let mut alpha: V = std::array::from_fn(|i| b.local_torque[i] / inertia[i]);
+        let mut torque = b.local_torque;
+        if lock_roll && !self.classic {
+            // The lean is held about the level forward axis, not only the
+            // bike's own. Pitched up in a wheelie the two differ, and the
+            // torque that would tip a leaned bike over (which the turn
+            // balances) would otherwise turn it instead.
+            let basis = b.basis();
+            let level = [basis[2][0], 0., basis[2][2]];
+            if dot(level, level) > 1e-6 {
+                let axis = dynamics::inverse_transform(basis, unit(level));
+                torque = sub(torque, scale(axis, dot(torque, axis)));
+            }
+        }
+        let mut alpha: V = std::array::from_fn(|i| torque[i] / inertia[i]);
         if lock_roll {
             alpha[2] = 0.;
             b.local_angular_velocity[2] = 0.;
@@ -1810,16 +1856,19 @@ impl Motorcycle {
     }
 
     /// On the rear wheel the bike is a unicycle that the body-frame yaw
-    /// torques cannot steer (its up axis points backwards). Turn it about
-    /// the vertical through the rear contact instead, at part of the rate
-    /// the lean asks for, carrying its travel round with it.
+    /// torques cannot steer (its up axis points backwards), and a front tire
+    /// that is only skimming the ground cannot steer it either. Turn it
+    /// about the vertical through the rear contact instead, at part of the
+    /// rate the lean asks for and by the share the front has unloaded,
+    /// carrying its travel round with it.
     fn wheelie_turn(&mut self, dt: f32) {
-        let [front, rear] = self.drive.tires.map(|t| t.grounded);
+        let rear = self.drive.tires[1].grounded;
         let speed = self.forward_speed();
-        if front || !rear || self.drive.stoppie || speed < 8. {
+        let light = self.handling.light;
+        if !rear || light <= 0. || self.drive.stoppie || speed < 8. {
             return;
         }
-        let angle = WHEELIE_TURN * self.handling.demand / speed.max(12.) * dt;
+        let angle = WHEELIE_TURN * light * self.handling.demand / speed.max(12.) * dt;
         let (sine, cosine) = angle.sin_cos_d();
         let turn = |v: V| {
             [

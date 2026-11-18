@@ -21,6 +21,10 @@ use crate::tire_wear::Handling as Mode;
 /// fraction of what they can hold.
 const COMMAND_SHARE: f32 = 0.9;
 const SLOW_GRIP: f32 = 0.6;
+/// Share of a tire's sideways motion removed per solver pass. Four passes
+/// per substep leave a few percent, so a kick from a bump is taken up over
+/// a couple of substeps instead of in one.
+const GRIP_RATE: f32 = 0.55;
 /// Seconds of softened side grip and heading alignment after a touchdown.
 pub(super) const LANDING_TIME: f32 = 0.3;
 /// Steering lock relative to the source MaxSteerAngle (30 degrees): a
@@ -144,6 +148,9 @@ pub(super) struct State {
     pub grip: f32,
     /// Share of the rear tire's grip spent driving or braking (0..1).
     pub drive: f32,
+    /// How far the front tire is from steering the bike: 0 loaded, 1 off the
+    /// ground with the rear down (0 again with both in the air).
+    pub light: f32,
     surface: f32,
     travel: Option<f32>,
 }
@@ -213,13 +220,30 @@ impl State {
         let landing = (self.landing / LANDING_TIME).clamp(0., 1.);
         let mut surface = 0.;
         let mut grounded = 0.;
+        let both = patches[0].grounded && patches[1].grounded;
         for (i, p) in patches.iter().enumerate() {
             if !p.grounded {
                 continue;
             }
-            side[i] = crate::wheel::cross(p.normal, p.heading);
-            // Yaw lever of a side force at this contact.
-            arm[i] = dot(crate::wheel::cross(sub(p.point, center), side[i]), up);
+            // Across the wheel on the level, not in the plane of the ground
+            // under it: a wheel bouncing on a bump that slopes sideways is
+            // not sliding, and treating it as one kicks the bike off line.
+            let level = crate::wheel::cross([0., 1., 0.], p.heading);
+            let length = dot(level, level).sqrt();
+            side[i] = if length > 1e-3 {
+                scale(level, 1. / length)
+            } else {
+                crate::wheel::cross(p.normal, p.heading)
+            };
+            // Yaw lever of a side force at this contact. With the other
+            // wheel off the ground or the front only skimming it there is
+            // none: one tire holds the bike's line but does not swing it
+            // round like a castor.
+            arm[i] = if both {
+                (1. - self.light) * dot(crate::wheel::cross(sub(p.point, center), side[i]), up)
+            } else {
+                0.
+            };
             // A tire unloaded over a crest keeps part of its static share, so
             // a bump mid-corner does not throw the bike wide.
             let load = 0.6 * p.load + 0.4 * static_load[i].min(2. * p.load);
@@ -264,7 +288,7 @@ impl State {
                 let spin = crate::wheel::cross(add(angular, scale(up, w)), sub(p.point, center));
                 let across = dot(sub(add(v, spin), p.ground), side[i]);
                 let k = inverse_mass + arm[i] * arm[i] * inverse_yaw_inertia;
-                let next = (impulse[i] - across / k).clamp(-budget[i], budget[i]);
+                let next = (impulse[i] - GRIP_RATE * across / k).clamp(-budget[i], budget[i]);
                 let change = next - impulse[i];
                 impulse[i] = next;
                 v = add(v, scale(side[i], change * inverse_mass));
@@ -330,12 +354,23 @@ impl State {
             self.lean = current;
             return current;
         }
+        // As far as asked and no further: a path bent by a landing, a scrape
+        // or a cambered slope does not lean the bike on its own. Less when
+        // the bike is turning less than asked.
         let margin = 0.3 * gravity;
-        let balanced = self
-            .demand
-            .clamp(self.delivered - margin, self.delivered + margin);
-        // On the rear wheel the bike is balanced nearer upright.
-        let share = if wheelie { 0.45 } else { 1. };
+        let way = if self.demand < 0. { -1. } else { 1. };
+        let balanced = way
+            * self
+                .demand
+                .abs()
+                .min((way * self.delivered + margin).max(0.));
+        // On the rear wheel, or with the front only skimming the ground, the
+        // bike is balanced nearer upright.
+        let share = if wheelie {
+            0.45
+        } else {
+            1. - 0.55 * self.light
+        };
         let target = (share * tuning.lean_scale * balanced / gravity).atan_d();
         let step = ((target - current) * (dt * 14.).min(1.)).clamp(-5. * dt, 5. * dt);
         self.lean = current + step;
@@ -490,5 +525,13 @@ mod tests {
             lean = state.bank(tuning, v, true, false, lean, 32.2, dt);
         }
         assert!(lean < 0.31, "{lean}");
+        // Turning at 1 g with nothing asked (a deflection): upright.
+        state.demand = 0.;
+        for _ in 0..180 {
+            heading += 32.2 / speed * dt;
+            let v = [speed * heading.sin_d(), 0., speed * heading.cos_d()];
+            lean = state.bank(tuning, v, true, false, lean, 32.2, dt);
+        }
+        assert!(lean.abs() < 0.01, "{lean}");
     }
 }

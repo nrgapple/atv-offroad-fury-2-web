@@ -137,6 +137,61 @@ fn corner(ride: &mut Ride, target: f32, steer: f32, ticks: usize) -> Summary {
     summary
 }
 
+/// `BIKE_TRACE=<id>`: a flat-out straight run from the start line, printed
+/// every tenth of a second.
+#[test]
+#[ignore = "requires the private hosted content package (FURY_CONTENT)"]
+fn trace() {
+    let Some(id) = std::env::var("BIKE_TRACE")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+    else {
+        return;
+    };
+    let dir = std::env::var_os("FURY_CONTENT").expect("set FURY_CONTENT");
+    block_on(async {
+        let content = Content::open(Store::Directory(dir.into())).await.unwrap();
+        let venue = atv_game::venue::load(&content, "env01", false)
+            .await
+            .unwrap();
+        let mut ride = atv_game::ride::load(&content, &venue, id, 0, |_| {})
+            .await
+            .unwrap();
+        let (start, yaw) = ride.start_pose();
+        ride.place_beside(start, yaw, [0.; 3]).unwrap();
+        for tick in 0..900 {
+            ride.step(
+                &Controls {
+                    throttle: 1.,
+                    ..Default::default()
+                },
+                0.,
+            )
+            .unwrap();
+            if tick % 6 == 0 {
+                let f = ride.frame();
+                let b = dynamics::basis(f.orientation);
+                let s = sample(&ride);
+                eprintln!(
+                    "t={:.1} v={:.0} pitch={:.0} bank={:.0} slip={:.0} gr={:?} comp={:.2?} y={:.1} ground={:.1} chassis={} riding={} kind={:?}",
+                    tick as f32 / 60.,
+                    s.speed,
+                    b[2][1].clamp(-1., 1.).asin_d().to_degrees(),
+                    s.bank,
+                    s.slip,
+                    [f.grounded[0], f.grounded[2]],
+                    [f.wheel_compression[0], f.wheel_compression[2]],
+                    f.origin[1],
+                    ride.ground(f.origin[0], f.origin[2]).unwrap_or(0.),
+                    f.chassis_contact_count,
+                    s.riding,
+                    f.wreck.kind
+                );
+            }
+        }
+    });
+}
+
 #[test]
 #[ignore = "requires the private hosted content package (FURY_CONTENT)"]
 fn report() {

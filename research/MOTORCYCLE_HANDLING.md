@@ -53,11 +53,14 @@ The model here:
    `δ = atan(a·L/v²)`. At 45 mph that is about 3°; the bars barely move, as on
    a real bike.
 3. **Each tire removes its own sideways motion** with an impulse bounded by
-   its grip × load. Both wheels are solved together (four passes) from the
-   velocities the substep's other forces will leave, including the pitch rate,
-   which moves the contacts sideways on a leaned bike. Under the limit the bike
-   tracks where it points. Asked for more, it runs wide instead of turning
-   harder.
+   its grip × load. Both wheels are solved together (four passes of 55% each)
+   from the velocities the substep's other forces will leave, including the
+   pitch rate, which moves the contacts sideways on a leaned bike. Sideways is
+   measured on the level, not in the plane of the ground under the wheel, so a
+   wheel bouncing on a bump that slopes sideways is not treated as sliding.
+   A tire only swings the bike round when the other one is down too; alone it
+   holds the line. Under the limit the bike tracks where it points. Asked for
+   more, it runs wide instead of turning harder.
 4. **Grip** is 1.7 g at 30 ft/s easing to 1.3 g at 110 ft/s on standard dirt
    (Sport 1.9/1.45, Simulation 1.2/1.05), 60% of that below 8 ft/s. It is
    scaled by the map surface: the upper half of the range follows the ATV2
@@ -73,16 +76,23 @@ The model here:
    digs in (to 1.4 × grip by 24° of slip) while the front pushes. A slide
    settles at an angle. It cannot spin the bike, whatever the surface or the
    throttle.
-6. **The bank is the one that balances the turn**: `atan(k·a/g)` with the
-   lateral acceleration of the path actually ridden (k 0.74 by default so
-   1.7 g shows about 50°; 1 in Simulation). It may lead the path by 0.3 g, so
-   a bike that is running wide stands up. The bike leans about the line its
-   tires stand on, so the wheels stay planted and the centre of mass moves in
-   and down.
-7. **On the rear wheel** the body-frame yaw axis points backwards, so a
-   wheelie is turned about the vertical through the rear contact at 60% of the
-   rate the lean asks for, leaning 45% as far. The 50cc wheelie command (95° in
-   the source, which loops it) is held to 50°.
+6. **The bank is the one that balances the turn**: `atan(k·a/g)` (k 0.74 by
+   default so 1.7 g shows about 50°; 1 in Simulation). It is as far as the
+   rider asked and no further, so a path bent by a landing, a scrape or a
+   cambered slope does not lean the bike on its own; and no more than 0.3 g
+   ahead of the path actually ridden, so a bike that is running wide stands
+   up. The bike leans about the line its tires stand on, so the wheels stay
+   planted and the centre of mass moves in and down. The lean is held about
+   the level forward axis: pitched up in a wheelie, the torque that would tip
+   a leaned bike over would otherwise turn it.
+7. **With the front tire up or only skimming the ground** it cannot steer,
+   and on the rear wheel the body-frame yaw axis points backwards. By the
+   share the front has unloaded, the bike is turned about the vertical through
+   the rear contact at 60% of the rate the lean asks for and leans 45% as far.
+   The wheelie and stoppie controllers pitch about the level axis across the
+   bike (the source uses the bike's own, which on a leaned bike also turns
+   it). The 50cc wheelie command (95° in the source, which loops it) is held
+   to 50°.
 8. **After a landing** side grip is halved for 0.3 s and the heading swings to
    the travel, instead of the tires snatching the travel round to the heading.
 
@@ -92,10 +102,12 @@ The model here:
   21°) as angles that come back when it is released, growing in over the first
   0.4 s of air. The source turns at a rate for as long as the stick is held,
   which lands a held stick past the 44° crossup wreck.
-- **Pitch.** With the stick centred the bike follows the arc of its jump and,
-  over the last half second, matches the slope it will land on, a little rear
-  wheel first. The source only damps pitch, which keeps the ramp's nose-up
-  attitude to the ground. Stick and brake control are unchanged.
+- **Pitch.** The bike follows the arc of its jump and, over the last half
+  second, matches the slope it will land on, a little rear wheel first. The
+  stick trims that by up to 31° either way. The source only damps pitch and
+  turns at a rate while the stick is held: every jump lands nose high, and a
+  stick still held back from a wheelie loops the bike over. The brake still
+  drops the nose.
 - **Landing prediction.** While airborne the ballistic path is stepped against
   the terrain thirty times a second for up to four seconds. Tricks and
   rotations use the time; the pitch assist uses the slope.
@@ -151,15 +163,21 @@ build with `BIKE_PROBE_CLASSIC=1`.
 | Hard left then hard right at 40 mph | 26° | 0.8° |
 | Slalom at 40 mph | 23°, falls to 26 mph | 0.8°, holds speed |
 | Brake hard while turning in at 45 mph | 68° | 6°, drives out |
-| Hold full steer through a 0.7 s jump | lands 43° sideways | lands 4° |
+| Hold full steer through a 0.7 s jump | lands 43° sideways | lands 3° |
+| Straight over rough ground at 45 mph | 1.5° | 0.8° |
+| Full stick over rough ground at 30 mph | 18°, falls to 24 mph | 7° peak, holds speed |
+| Steer while pulling a wheelie at 65 mph | does not lift | lifts to 45°, turns, no sideslip |
 | Tap a trick on a 0.7 s jump | wreck | completes |
 | Backflip, 1.3 s of air | wreck | lands |
 | Three-sixty, 1.3 s of air | wreck | lands |
 
 The 50cc and 500cc match the 125 in the cornering rows. On ENV01 terrain with
-its own surface table the full-stick turns peak at 3 to 13° (landings while
-steering) against 60 to 80° before, keep their speed, and ten scenarios
-including a 30 s flat-out weave end without a wreck.
+its own surface table the full-stick turns peak at 3 to 14° (landings while
+steering) against 60 to 80° before, keep their speed, and twelve scenarios
+including wheelies over its bumps and a 30 s flat-out weave end without a
+wreck. From the ENV01 start line (`crates/atv-game/tests/bike_feel.rs`) mean
+sideslip through 3 s turns is 1 to 8° and the bank peaks at 29 to 50° across
+the 50, 125 and 500; the recovered model measured 3 to 22° and banks to 81°.
 
 ## Limits
 

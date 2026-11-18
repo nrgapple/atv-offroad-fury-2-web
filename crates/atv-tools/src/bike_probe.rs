@@ -548,6 +548,8 @@ pub fn run(
                 "rpm": f.rpm, "gear": f.gear, "riding": riding,
                 "x": f.origin[0], "y": f.origin[1], "z": f.origin[2],
                 "stunt_timer": if bike.stunt_name.is_some() { bike.stunt_timer } else { 0. },
+                "w": f.local_angular_velocity, "chassis": f.chassis_contact_count,
+                "w_up": dynamics::transform(b, f.local_angular_velocity)[1],
                 "pelvis": f.rider_pelvis_offset,
                 "feet": f.rider_foot_pins,
             }));
